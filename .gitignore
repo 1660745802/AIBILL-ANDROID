@@ -1,0 +1,38 @@
+### Android ###
+*.iml
+.gradle/
+/build/
+/app/build/
+/app/schemas/
+/captures/
+.externalNativeBuild/
+.cxx/
+
+### IDE ###
+/.idea/
+*.iws
+*.ipr
+.DS_Store
+Thumbs.db
+
+### Sensitive ###
+local.properties
+*.jks
+*.keystore
+*.env
+secrets.properties
+
+### Build outputs ###
+*.apk
+*.aab
+*.dex
+*.class
+
+### Logs ###
+*.log
+build_log.txt
+build_output.txt
+
+### Gradle Wrapper JAR (optional - some teams include it) ###
+# gradle/wrapper/gradle-wrapper.jar
+app/release/ 

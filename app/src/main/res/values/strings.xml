@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AIBILL</string>
+
+    <!-- App Shortcuts -->
+    <string name="shortcut_quick_record">快速记账</string>
+    <string name="shortcut_quick_record_long">打开手动记账</string>
+    <string name="shortcut_ai_record">AI 记账</string>
+    <string name="shortcut_ai_record_long">AI 智能记账</string>
+    <string name="shortcut_voice_record">语音记账</string>
+    <string name="shortcut_voice_record_long">语音输入记账</string>
+
+    <!-- Widgets -->
+    <string name="widget_quick_record_desc">快速记账小组件，点击打开记账页面</string>
+    <string name="widget_monthly_summary_desc">月度汇总小组件，显示本月收支情况</string>
+</resources>

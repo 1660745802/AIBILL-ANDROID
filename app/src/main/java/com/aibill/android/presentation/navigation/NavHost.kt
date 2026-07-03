@@ -1,0 +1,204 @@
+package com.aibill.android.presentation.navigation
+
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import com.aibill.android.presentation.ui.auth.LoginScreen
+import com.aibill.android.presentation.ui.auth.RegisterScreen
+import com.aibill.android.presentation.ui.auth.ServerConfigScreen
+import com.aibill.android.presentation.ui.account.AccountManageScreen
+import com.aibill.android.presentation.ui.budget.BudgetScreen
+import com.aibill.android.presentation.ui.category.CategoryManageScreen
+import com.aibill.android.presentation.ui.chat.AiChatScreen
+import com.aibill.android.presentation.ui.home.HomeScreen
+import com.aibill.android.presentation.ui.import_.CsvImportScreen
+import com.aibill.android.presentation.ui.notification.NotificationCenterScreen
+import com.aibill.android.presentation.ui.profile.ProfileScreen
+import com.aibill.android.presentation.ui.record.ManualRecordScreen
+import com.aibill.android.presentation.ui.recurring.RecurringScreen
+import com.aibill.android.presentation.ui.settings.AutoRulesScreen
+import com.aibill.android.presentation.ui.settings.PermissionGuideScreen
+import com.aibill.android.presentation.ui.settings.SettingsScreen
+import com.aibill.android.presentation.ui.statistics.StatisticsScreen
+import com.aibill.android.presentation.ui.template.TemplateScreen
+import com.aibill.android.presentation.ui.transactions.TransactionDetailScreen
+import com.aibill.android.presentation.ui.transactions.TransactionsScreen
+import com.aibill.android.presentation.ui.trash.TrashScreen
+
+@Composable
+fun AiBillNavHost(
+    startDestination: Route,
+    navController: NavHostController = rememberNavController(),
+) {
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+
+    val showBottomBar = navBackStackEntry?.destination?.route in listOf(
+        Route.Home::class.qualifiedName,
+        Route.Transactions::class.qualifiedName,
+        Route.Statistics::class.qualifiedName,
+        Route.Profile::class.qualifiedName,
+    )
+
+    Scaffold(
+        bottomBar = {
+            if (showBottomBar) {
+                BottomNavBar(navController = navController)
+            }
+        }
+    ) { innerPadding ->
+        NavHost(
+            navController = navController,
+            startDestination = startDestination,
+            modifier = Modifier.padding(innerPadding),
+        ) {
+            // --- 认证流程 ---
+            composable<Route.ServerConfig> {
+                ServerConfigScreen(
+                    onConfigured = {
+                        navController.navigate(Route.Login) {
+                            popUpTo(Route.ServerConfig) { inclusive = true }
+                        }
+                    }
+                )
+            }
+            composable<Route.Login> {
+                LoginScreen(
+                    onNavigateToHome = {
+                        navController.navigate(Route.Home) {
+                            popUpTo(Route.Login) { inclusive = true }
+                        }
+                    },
+                    onNavigateToRegister = { navController.navigate(Route.Register) },
+                    onNavigateToServerConfig = {
+                        navController.navigate(Route.ServerConfig)
+                    }
+                )
+            }
+            composable<Route.Register> {
+                RegisterScreen(
+                    onRegisterSuccess = {
+                        navController.navigate(Route.Home) {
+                            popUpTo(Route.Register) { inclusive = true }
+                        }
+                    },
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+
+            // --- 主 Tab 页面 ---
+            composable<Route.Home> {
+                HomeScreen()
+            }
+            composable<Route.Transactions> {
+                TransactionsScreen(
+                    onNavigateToDetail = { id ->
+                        navController.navigate(Route.TransactionDetail(id))
+                    }
+                )
+            }
+            composable<Route.Statistics> {
+                StatisticsScreen()
+            }
+            composable<Route.Profile> {
+                ProfileScreen(
+                    onNavigateToAiChat = { navController.navigate(Route.AiChat) },
+                    onNavigateToBudget = { navController.navigate(Route.Budget) },
+                    onNavigateToSettings = { navController.navigate(Route.Settings) },
+                    onNavigateToExport = { navController.navigate(Route.CsvImport) },
+                    onNavigateToNotification = {
+                        navController.navigate(Route.PermissionGuide)
+                    },
+                    onNavigateToCategoryManage = {
+                        navController.navigate(Route.CategoryManage)
+                    },
+                    onNavigateToAccountManage = {
+                        navController.navigate(Route.AccountManage)
+                    },
+                    onNavigateToTrash = {
+                        navController.navigate(Route.Trash)
+                    },
+                    onLogout = {
+                        navController.navigate(Route.Login) {
+                            popUpTo(Route.Home) { inclusive = true }
+                        }
+                    }
+                )
+            }
+
+            // --- 独立页面 ---
+            composable<Route.ManualRecord> {
+                ManualRecordScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable<Route.TransactionDetail> {
+                TransactionDetailScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable<Route.Template> {
+                TemplateScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateToRecord = { _ ->
+                        navController.navigate(Route.ManualRecord)
+                    }
+                )
+            }
+            composable<Route.AiChat> {
+                AiChatScreen()
+            }
+            composable<Route.Budget> {
+                BudgetScreen()
+            }
+            composable<Route.NotificationCenter> {
+                NotificationCenterScreen(
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            composable<Route.CsvImport> {
+                CsvImportScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable<Route.Settings> {
+                SettingsScreen(
+                    onBack = { navController.popBackStack() },
+                    onNavigateToPermissionGuide = {
+                        navController.navigate(Route.PermissionGuide)
+                    },
+                    onNavigateToRecurring = {
+                        navController.navigate(Route.Recurring)
+                    },
+                    onNavigateToAutoRules = {
+                        navController.navigate(Route.AutoRules)
+                    }
+                )
+            }
+            composable<Route.PermissionGuide> {
+                PermissionGuideScreen(onBack = { navController.popBackStack() })
+            }
+            composable<Route.Recurring> {
+                RecurringScreen(onBack = { navController.popBackStack() })
+            }
+            composable<Route.AutoRules> {
+                AutoRulesScreen(onBack = { navController.popBackStack() })
+            }
+            composable<Route.CategoryManage> {
+                CategoryManageScreen(onBack = { navController.popBackStack() })
+            }
+            composable<Route.AccountManage> {
+                AccountManageScreen(onBack = { navController.popBackStack() })
+            }
+            composable<Route.Trash> {
+                TrashScreen(onBack = { navController.popBackStack() })
+            }
+        }
+    }
+}

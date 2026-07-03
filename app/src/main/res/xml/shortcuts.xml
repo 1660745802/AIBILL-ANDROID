@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="quick_record"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_edit"
+        android:shortcutShortLabel="@string/shortcut_quick_record"
+        android:shortcutLongLabel="@string/shortcut_quick_record_long">
+        <intent
+            android:action="com.aibill.android.ACTION_MANUAL_RECORD"
+            android:targetPackage="com.aibill.android"
+            android:targetClass="com.aibill.android.presentation.MainActivity" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="ai_record"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_ai"
+        android:shortcutShortLabel="@string/shortcut_ai_record"
+        android:shortcutLongLabel="@string/shortcut_ai_record_long">
+        <intent
+            android:action="com.aibill.android.ACTION_AI_RECORD"
+            android:targetPackage="com.aibill.android"
+            android:targetClass="com.aibill.android.presentation.MainActivity" />
+    </shortcut>
+
+</shortcuts>
