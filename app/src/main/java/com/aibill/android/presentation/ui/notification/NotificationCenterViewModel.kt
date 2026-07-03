@@ -58,32 +58,67 @@ class NotificationCenterViewModel @Inject constructor(
     fun confirmItem(id: Long) {
         viewModelScope.launch {
             val record = notificationRecordDao.findById(id) ?: return@launch
-
-            val clientId = UUID.randomUUID().toString()
-            val now = Date()
-            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-            val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-
-            val pendingTransaction = PendingTransactionEntity(
-                clientId = clientId,
+            insertTransaction(
+                recordId = id,
                 type = record.parsedType ?: "expense",
-                amount = record.parsedAmount ?: 0,
+                amountCents = record.parsedAmount ?: 0,
                 description = record.parsedDescription,
-                date = dateFormat.format(now),
-                time = timeFormat.format(now),
-                source = "app_notification",
-                sourceDetail = record.packageName,
-                clientCreatedAt = now.toInstant().toString()
+                packageName = record.packageName,
             )
-
-            pendingTransactionDao.insert(pendingTransaction)
-            notificationRecordDao.updateStatus(id, "confirmed", clientId)
-
-            SyncScheduler.scheduleSyncIfNeeded(appContext)
-            WidgetDataUpdater.notifyTransactionAdded(appContext)
-
             _uiEvent.send(UiEvent.ShowToast("已确认"))
         }
+    }
+
+    /**
+     * 确认前编辑：用户在弹窗中修改金额/类型/描述后确认
+     */
+    fun confirmWithEdit(id: Long, type: String, amountCents: Int, description: String) {
+        viewModelScope.launch {
+            if (amountCents <= 0) {
+                _uiEvent.send(UiEvent.ShowToast("请输入有效金额"))
+                return@launch
+            }
+            val record = notificationRecordDao.findById(id) ?: return@launch
+            insertTransaction(
+                recordId = id,
+                type = type,
+                amountCents = amountCents,
+                description = description.ifBlank { record.parsedDescription },
+                packageName = record.packageName,
+            )
+            _uiEvent.send(UiEvent.ShowToast("已记账 ✓"))
+        }
+    }
+
+    private suspend fun insertTransaction(
+        recordId: Long,
+        type: String,
+        amountCents: Int,
+        description: String?,
+        packageName: String,
+    ) {
+        val clientId = UUID.randomUUID().toString()
+        val now = Date()
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+        val pendingTransaction = PendingTransactionEntity(
+            clientId = clientId,
+            type = type,
+            amount = amountCents,
+            description = description,
+            date = dateFormat.format(now),
+            time = timeFormat.format(now),
+            source = "app_notification",
+            sourceDetail = packageName,
+            clientCreatedAt = now.toInstant().toString()
+        )
+
+        pendingTransactionDao.insert(pendingTransaction)
+        notificationRecordDao.updateStatus(recordId, "confirmed", clientId)
+
+        SyncScheduler.scheduleSyncIfNeeded(appContext)
+        WidgetDataUpdater.notifyTransactionAdded(appContext)
     }
 
     fun ignoreItem(id: Long) {
@@ -96,9 +131,17 @@ class NotificationCenterViewModel @Inject constructor(
     fun confirmAll() {
         viewModelScope.launch {
             val items = pendingNotifications.value
-            val count = items.size
+            var confirmed = 0
+            var skipped = 0
             items.forEach { item ->
                 val record = notificationRecordDao.findById(item.id) ?: return@forEach
+
+                // 跳过未识别出有效金额的记录，避免生成 0 元账单
+                val amount = record.parsedAmount ?: 0
+                if (amount <= 0) {
+                    skipped++
+                    return@forEach
+                }
 
                 val clientId = UUID.randomUUID().toString()
                 val now = Date()
@@ -108,7 +151,7 @@ class NotificationCenterViewModel @Inject constructor(
                 val pendingTransaction = PendingTransactionEntity(
                     clientId = clientId,
                     type = record.parsedType ?: "expense",
-                    amount = record.parsedAmount ?: 0,
+                    amount = amount,
                     description = record.parsedDescription,
                     date = dateFormat.format(now),
                     time = timeFormat.format(now),
@@ -119,12 +162,18 @@ class NotificationCenterViewModel @Inject constructor(
 
                 pendingTransactionDao.insert(pendingTransaction)
                 notificationRecordDao.updateStatus(item.id, "confirmed", clientId)
+                confirmed++
             }
 
             SyncScheduler.scheduleSyncIfNeeded(appContext)
             WidgetDataUpdater.notifyTransactionAdded(appContext)
 
-            _uiEvent.send(UiEvent.ShowToast("已确认 $count 条通知"))
+            val msg = when {
+                confirmed == 0 && skipped > 0 -> "无可自动确认的记录，$skipped 条需手动填写金额"
+                skipped > 0 -> "已确认 $confirmed 条，$skipped 条需手动填写金额"
+                else -> "已确认 $confirmed 条通知"
+            }
+            _uiEvent.send(UiEvent.ShowToast(msg))
         }
     }
 }

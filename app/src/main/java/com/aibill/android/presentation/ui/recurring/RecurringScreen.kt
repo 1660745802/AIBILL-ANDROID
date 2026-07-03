@@ -26,7 +26,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -43,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.data.local.entity.RecurringRuleEntity
+import com.aibill.android.presentation.theme.AppTextButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -228,8 +228,9 @@ private fun AddRecurringRuleDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    TextButton(onClick = onDismiss) { Text("取消") }
-                    TextButton(
+                    AppTextButton(text = "取消", onClick = onDismiss)
+                    AppTextButton(
+                        text = "确认",
                         onClick = {
                             val amountCent = ((amountText.toDoubleOrNull() ?: 0.0) * 100).toInt()
                             val day = dayText.toIntOrNull()?.coerceIn(1, 28) ?: 1
@@ -238,7 +239,7 @@ private fun AddRecurringRuleDialog(
                             }
                         },
                         enabled = name.isNotBlank() && amountText.isNotBlank()
-                    ) { Text("确认") }
+                    )
                 }
             }
         }

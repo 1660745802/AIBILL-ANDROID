@@ -568,3 +568,56 @@ AI-assisted: 核心逻辑由 AI 生成，已 review 并调整
 ---
 
 *文档结束*
+
+
+## 十一、通知监听 & AI 记账经验
+
+> 通知自动记账是本项目最易踩坑的模块，以下为实战总结。
+
+### 11.1 通知文本解析
+
+- **金额可能分散在任意字段**：`EXTRA_TITLE` / `EXTRA_TEXT` / `EXTRA_BIG_TEXT` / `EXTRA_SUB_TEXT` / `EXTRA_INFO_TEXT`。必须合并全文再解析，只取 `EXTRA_TEXT` 会导致金额解析为 0。
+  ```kotlin
+  val fullText = listOf(title, text, bigText, subText, infoText)
+      .filter { it.isNotBlank() }.distinct().joinToString(" ")
+  ```
+- 合并全文后，务必确保后续所有引用都用 `fullText`，不要残留旧的 `text`/`title` 变量（编译不报错但逻辑错误）。
+
+### 11.2 AI 兜底调用要「双重拦截」
+
+正则命中优先，正则失败才走 AI。但 AI 调用有成本+隐私风险（会把通知全文发给后端），微信/短信白名单会捕获大量普通聊天，必须预筛：
+
+```kotlin
+// 入库前 & AI 调用前都要判断「支付特征」
+val hasDigit = text.any { it.isDigit() }
+val hasPaymentSignal = text.contains(Regex(
+    "[¥￥$]|元|支付|付款|收款|到账|消费|交易|转账|红包|退款|扣款|余额|账单|还款"
+))
+if (!hasDigit || !hasPaymentSignal) return  // 直接丢弃，不存 raw 不调 AI
+```
+
+否则微信聊天会以 `raw` 状态刷屏通知中心（`observePending` 查 `status IN ('raw','parsed')`），且含数字的聊天会白白触发后端 AI。
+
+### 11.3 隐私：sourceDetail 不要存全文
+
+`PendingTransactionEntity.sourceDetail` 会同步到后端。存来源名（"微信支付"）而非 `fullText`（可能含私聊内容）。三处构造入口（Service 静默入库、ViewModel confirmItem、confirmAll）字段应保持一致。
+
+### 11.4 批量确认要跳过无金额记录
+
+`confirmAll` 必须跳过 `parsedAmount <= 0` 的记录，否则会生成 0 元账单同步到后端（资损/脏数据）。单条确认走编辑对话框（有金额校验），批量确认无对话框保护，需代码兜底。
+
+### 11.5 收支类型不要硬编码
+
+确认通知标题、图标等不要写死"支出"。parser/AI 会产出 income（收款到账、退款），需按 `type` 动态显示，否则收入被标成支出。
+
+### 11.6 通知点击跳转
+
+- `MainActivity` 必须声明 `android:launchMode="singleTop"`，否则点击通知会重建 Activity 而非走 `onNewIntent`，丢失返回栈。
+- `navigate_to` extra 要「一次性消费」：NavHost 的 `LaunchedEffect(navigateTo)` 处理后回调清空，否则解锁/重建时会误跳，且相同值再次点击（key 不变）不触发。
+
+### 11.7 MIUI 测试限制
+
+- MIUI 对 `adb shell cmd notification post` 发的通知**不分发**给 `NotificationListenerService`，无法用 adb 造测通知。用 App 内测试按钮发本地通知，或用真实支付通知验证。
+- `MainActivity` 用 `BiometricPrompt`（应用锁）时必须继承 `FragmentActivity`，`ComponentActivity` 会崩溃。
+
+---

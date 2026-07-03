@@ -7,6 +7,7 @@ import com.aibill.android.domain.model.AiParseResult
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionSource
+import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.domain.repository.AiRepository
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
@@ -36,6 +37,7 @@ class HomeViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val accountRepository: AccountRepository,
     private val statsApi: StatsApi,
+    private val notificationRecordDao: com.aibill.android.data.local.dao.NotificationRecordDao,
 ) : ViewModel() {
 
     data class HomeUiState(
@@ -46,6 +48,7 @@ class HomeViewModel @Inject constructor(
         val isParsing: Boolean = false,
         val aiParseResults: List<AiParseResult>? = null,
         val todayTransactions: List<Transaction> = emptyList(),
+        val pendingNotificationCount: Int = 0,
         val error: String? = null,
     )
 
@@ -65,6 +68,15 @@ class HomeViewModel @Inject constructor(
 
     init {
         refresh()
+        observePendingNotifications()
+    }
+
+    private fun observePendingNotifications() {
+        viewModelScope.launch {
+            notificationRecordDao.observePendingCount().collect { count ->
+                _uiState.update { it.copy(pendingNotificationCount = count) }
+            }
+        }
     }
 
     /**
@@ -145,6 +157,44 @@ class HomeViewModel @Inject constructor(
                     _uiEvent.emit(
                         UiEvent.ShowError("保存失败: ${result.message}")
                     )
+                }
+                is Result.Loading -> Unit
+            }
+        }
+    }
+
+    /**
+     * 用户在确认前编辑了金额/类型/备注后再保存
+     */
+    fun onConfirmEditedItem(
+        original: AiParseResult,
+        amount: Int,
+        type: TransactionType,
+        description: String,
+    ) {
+        viewModelScope.launch {
+            if (amount <= 0) {
+                _uiEvent.emit(UiEvent.ShowError("金额必须大于0"))
+                return@launch
+            }
+            val edited = original.copy(
+                amount = amount,
+                type = type,
+                description = description.ifBlank { null },
+            )
+            when (val result =
+                transactionRepository.createTransactions(listOf(edited.toTransaction()))) {
+                is Result.Success -> {
+                    val remaining =
+                        _uiState.value.aiParseResults?.filter { it !== original }
+                    _uiState.update {
+                        it.copy(aiParseResults = remaining?.ifEmpty { null })
+                    }
+                    _uiEvent.emit(UiEvent.ShowToast("已记录"))
+                    refreshData()
+                }
+                is Result.Error -> {
+                    _uiEvent.emit(UiEvent.ShowError("保存失败: ${result.message}"))
                 }
                 is Result.Loading -> Unit
             }

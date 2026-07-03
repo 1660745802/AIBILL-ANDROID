@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -24,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.aibill.android.presentation.theme.SecondaryButton
 
 @Composable
 fun AppLockScreen(
@@ -63,9 +63,7 @@ fun AppLockScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(32.dp))
-            FilledTonalButton(onClick = { showBiometricPrompt(context, onUnlocked) }) {
-                Text("重新验证")
-            }
+            SecondaryButton(text = "重新验证", onClick = { showBiometricPrompt(context, onUnlocked) })
         }
     }
 }

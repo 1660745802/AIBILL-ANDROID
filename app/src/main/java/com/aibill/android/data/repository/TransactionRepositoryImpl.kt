@@ -61,7 +61,13 @@ class TransactionRepositoryImpl @Inject constructor(
     }
 
     override suspend fun deleteTransaction(id: Int): Result<Unit> {
-        return safeApiCall { transactionApi.deleteTransaction(id) }
+        return try {
+            val response = transactionApi.deleteTransaction(id)
+            if (response.code == 0) Result.Success(Unit)
+            else Result.Error(response.code, response.message)
+        } catch (e: Exception) {
+            Result.Error(-1, e.message ?: "删除失败")
+        }
     }
 
     override fun observePendingCount(): Flow<Int> =

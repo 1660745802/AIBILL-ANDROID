@@ -85,7 +85,8 @@ object NotificationHelper {
         amount: Int,
         description: String?,
         source: String,
-        privacyMode: Boolean = false
+        privacyMode: Boolean = false,
+        type: String = "expense",
     ) {
         createNotificationChannel(context)
 
@@ -143,7 +144,9 @@ object NotificationHelper {
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("💰 检测到一笔支出")
+            .setContentTitle(
+                if (type == "income") "💰 检测到一笔收入" else "💰 检测到一笔支出"
+            )
             .setContentText(contentText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
             .setPriority(NotificationCompat.PRIORITY_HIGH)

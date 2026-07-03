@@ -1,6 +1,8 @@
 package com.aibill.android.presentation.ui.settings
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -14,8 +16,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.presentation.theme.AppTextButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,30 +62,13 @@ fun SettingsScreen(
                 .padding(padding)
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 主题设置
-            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("外观", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色").forEach { (value, label) ->
-                            FilterChip(
-                                selected = uiState.themeMode == value,
-                                onClick = { viewModel.onThemeChanged(value) },
-                                label = { Text(label) }
-                            )
-                        }
-                    }
-                }
-            }
+            // ========== 分组1：自动记账 ==========
+            SettingsSectionLabel("自动记账")
 
-            // 快捷功能
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("快捷功能", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Spacer(modifier = Modifier.height(12.dp))
                     SettingSwitchRow(
                         title = "自动记账",
                         subtitle = "监听支付通知并自动记录账单",
@@ -96,33 +84,49 @@ fun SettingsScreen(
                     )
                 }
             }
-
-            // 周期记账
+            SettingsNavCard(
+                title = "自动记账权限",
+                subtitle = "配置通知监听、弹窗、电池优化等权限",
+                onClick = onNavigateToPermissionGuide
+            )
+            SettingsNavCard(
+                title = "智能免确认",
+                subtitle = "管理自动化规则，让 App 越用越智能",
+                onClick = onNavigateToAutoRules
+            )
             SettingsNavCard(
                 title = "周期记账",
                 subtitle = "设置每月固定收支自动记录",
                 onClick = onNavigateToRecurring
             )
 
-            // 智能免确认规则
-            SettingsNavCard(
-                title = "智能免确认",
-                subtitle = "管理自动化规则，让 App 越用越智能",
-                onClick = onNavigateToAutoRules
-            )
-
-            // 自动记账权限引导
-            SettingsNavCard(
-                title = "自动记账权限",
-                subtitle = "配置通知监听、电池优化等权限",
-                onClick = onNavigateToPermissionGuide
-            )
-
-            // 隐私 & 安全
+            // ========== 分组2：外观 ==========
+            SettingsSectionLabel("外观")
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("隐私 & 安全", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text("深色模式", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "选择跟随系统、始终浅色或始终深色",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色").forEach { (value, label) ->
+                            FilterChip(
+                                selected = uiState.themeMode == value,
+                                onClick = { viewModel.onThemeChanged(value) },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ========== 分组3：隐私与安全 ==========
+            SettingsSectionLabel("隐私与安全")
+            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     SettingSwitchRow(
                         title = "应用锁",
                         subtitle = "从后台返回时需要验证身份",
@@ -143,30 +147,36 @@ fun SettingsScreen(
                         checked = uiState.hideFromRecents,
                         onCheckedChange = { viewModel.onHideFromRecentsChanged(it) }
                     )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showPasswordDialog = true }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("修改密码", style = MaterialTheme.typography.bodyMedium)
+                            Text("更改登录密码", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
 
-            // 服务器信息
+            // ========== 分组4：关于 ==========
+            SettingsSectionLabel("关于")
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("服务器", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("服务器地址", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = uiState.serverUrl.ifBlank { "未配置" },
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
-            }
-
-            // 账号安全
-            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("账号安全", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    TextButton(onClick = { showPasswordDialog = true }) {
-                        Text("修改密码")
-                    }
                 }
             }
         }
@@ -182,6 +192,17 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+@Composable
+private fun SettingsSectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 2.dp)
+    )
 }
 
 @Composable
@@ -264,6 +285,8 @@ private fun ChangePasswordDialog(
                     onValueChange = { oldPwd = it },
                     label = { Text("当前密码") },
                     singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
                 )
@@ -272,6 +295,8 @@ private fun ChangePasswordDialog(
                     onValueChange = { newPwd = it },
                     label = { Text("新密码") },
                     singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
                 )
@@ -280,6 +305,8 @@ private fun ChangePasswordDialog(
                     onValueChange = { confirmPwd = it },
                     label = { Text("确认新密码") },
                     singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
                     isError = passwordMismatch,
@@ -292,13 +319,14 @@ private fun ChangePasswordDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            AppTextButton(
+                text = "确认",
                 onClick = { onConfirm(oldPwd, newPwd) },
                 enabled = canConfirm
-            ) { Text("确认") }
+            )
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            AppTextButton(text = "取消", onClick = onDismiss)
         }
     )
 }

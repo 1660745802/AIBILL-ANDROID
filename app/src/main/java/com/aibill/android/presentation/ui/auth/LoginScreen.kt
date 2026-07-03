@@ -22,6 +22,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.theme.PrimaryButton
 
 @Composable
 fun LoginScreen(
@@ -147,52 +149,31 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(36.dp))
 
-                // FilledTonalButton 登录按钮（更圆润）
-                FilledTonalButton(
+                // 登录按钮（统一主按钮）
+                PrimaryButton(
+                    text = "登录",
                     onClick = { viewModel.login(username, password) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    enabled = !uiState.isLoading
-                ) {
-                    if (uiState.isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Text(
-                            "登录",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !uiState.isLoading,
+                    loading = uiState.isLoading,
+                )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                TextButton(onClick = onNavigateToRegister) {
-                    Text(
-                        "没有账号？点击注册",
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
+                AppTextButton(
+                    text = "没有账号？点击注册",
+                    onClick = onNavigateToRegister,
+                )
             }
 
             // 底部配置服务器链接
-            TextButton(
+            AppTextButton(
+                text = "⚙️ 配置服务器",
                 onClick = onNavigateToServerConfig,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 32.dp),
-            ) {
-                Text(
-                    text = "⚙️ 配置服务器",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
-                )
-            }
+            )
         }
     }
 }

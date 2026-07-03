@@ -33,7 +33,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -48,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.data.local.entity.TemplateEntity
+import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.utils.toYuanDisplay
 import kotlinx.coroutines.flow.collectLatest
 
@@ -282,14 +282,10 @@ private fun AddTemplateDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm, enabled = state.name.isNotBlank()) {
-                Text("保存")
-            }
+            AppTextButton(text = "保存", onClick = onConfirm, enabled = state.name.isNotBlank())
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
+            AppTextButton(text = "取消", onClick = onDismiss)
         },
     )
 }

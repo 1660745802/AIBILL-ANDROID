@@ -33,6 +33,12 @@ secrets.properties
 build_log.txt
 build_output.txt
 
+### Temp / runtime artifacts ###
+temp_db.db
+temp_wal.db
+*.db-shm
+*.db-wal
+
 ### Gradle Wrapper JAR (optional - some teams include it) ###
 # gradle/wrapper/gradle-wrapper.jar
 app/release/ 

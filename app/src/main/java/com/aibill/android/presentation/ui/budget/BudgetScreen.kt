@@ -13,7 +13,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.presentation.theme.SecondaryButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,9 +79,7 @@ fun BudgetScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                FilledTonalButton(onClick = { viewModel.refresh() }) {
-                    Text("重试")
-                }
+                SecondaryButton(text = "重试", onClick = { viewModel.refresh() })
             }
         } else if (state.budgets.isEmpty() && state.totalAmount == 0) {
             Column(
@@ -104,9 +102,7 @@ fun BudgetScreen(
                     color = MaterialTheme.colorScheme.outline,
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                FilledTonalButton(onClick = { showAddDialog = true }) {
-                    Text("添加预算")
-                }
+                SecondaryButton(text = "添加预算", onClick = { showAddDialog = true })
             }
         } else {
             LazyColumn(

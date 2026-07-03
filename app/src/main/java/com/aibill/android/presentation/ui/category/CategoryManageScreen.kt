@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.domain.model.Category
+import com.aibill.android.presentation.theme.AppTextButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -149,18 +150,16 @@ fun CategoryManageScreen(
             title = { Text("停用分类") },
             text = { Text("确定停用「${cat.name}」吗？停用后不会显示在记账选项中。") },
             confirmButton = {
-                TextButton(
+                AppTextButton(
+                    text = "停用",
                     onClick = {
                         viewModel.deleteCategory(cat.id)
                         deleteCategory = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) { Text("停用") }
+                    }
+                )
             },
             dismissButton = {
-                TextButton(onClick = { deleteCategory = null }) { Text("取消") }
+                AppTextButton(text = "取消", onClick = { deleteCategory = null })
             }
         )
     }
@@ -211,17 +210,18 @@ private fun CategoryEditDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            AppTextButton(
+                text = "确定",
                 onClick = {
                     if (name.isNotBlank()) {
                         onConfirm(name, icon, sortOrder.toIntOrNull() ?: 0)
                     }
                 },
                 enabled = name.isNotBlank()
-            ) { Text("确定") }
+            )
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            AppTextButton(text = "取消", onClick = onDismiss)
         }
     )
 }

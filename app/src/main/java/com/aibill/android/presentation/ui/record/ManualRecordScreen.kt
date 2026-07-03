@@ -3,6 +3,9 @@ package com.aibill.android.presentation.ui.record
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -31,6 +35,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -105,21 +110,53 @@ fun ManualRecordScreen(
         },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // 类型切换（固定顶部）
                 TypeSelector(selectedType = state.type, onTypeSelected = viewModel::onTypeChanged)
+
+                // 金额显示（固定，紧凑）
                 AmountDisplay(amountText = state.amountText, amountFen = state.amountFen)
-                RecordCategoryGrid(
-                    categories = state.categories,
-                    selectedId = state.selectedCategoryId,
-                    onSelect = viewModel::onCategorySelected,
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
                 )
-                ExpandableFields(
-                    isExpanded = state.isExpanded, description = state.description,
-                    date = state.date, onExpandToggle = viewModel::onExpandToggle,
+
+                // 分类网格 / 转账账户（填充所有剩余空间，内部可滚动）
+                Box(modifier = Modifier.weight(1f)) {
+                    if (state.type == "transfer") {
+                        Column(
+                            modifier = Modifier.fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp, vertical = 12.dp)
+                        ) {
+                            TransferAccountSection(
+                                accounts = state.accounts,
+                                selectedAccountId = state.accountId,
+                                selectedTargetAccountId = state.targetAccountId,
+                                onAccountSelected = viewModel::onAccountSelected,
+                                onTargetAccountSelected = viewModel::onTargetAccountSelected,
+                            )
+                        }
+                    } else {
+                        RecordCategoryGrid(
+                            categories = state.categories,
+                            selectedId = state.selectedCategoryId,
+                            onSelect = viewModel::onCategorySelected,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+
+                // 备注 + 日期（紧凑一行，固定在键盘上方）
+                CompactNoteRow(
+                    description = state.description,
+                    date = state.date,
                     onDescriptionChanged = viewModel::onDescriptionChanged,
                     onDateChanged = viewModel::onDateChanged,
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+
+                // 数字键盘（固定底部）
                 NumericKeyboard(
                     onInput = viewModel::onAmountInput, onDelete = viewModel::onAmountDelete,
                     onEquals = viewModel::onAmountEquals, onSave = viewModel::onSave,
@@ -159,7 +196,7 @@ private fun TypeSelector(
     selectedType: String, onTypeSelected: (String) -> Unit, modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         TYPE_TABS.forEach { (type, label) ->
@@ -193,59 +230,134 @@ private fun TypeSelector(
 @Composable
 private fun AmountDisplay(amountText: String, amountFen: Int, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 24.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
             text = if (amountText.isEmpty()) "¥0.00" else "¥$amountText",
-            fontSize = 42.sp, fontWeight = FontWeight.Bold,
+            fontSize = 38.sp, fontWeight = FontWeight.Bold,
             maxLines = 1, overflow = TextOverflow.Ellipsis, letterSpacing = (-1).sp,
         )
         if (amountText.contains(Regex("[+\\-*/]"))) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Text("= ${amountFen.toYuanDisplay()}", style = MaterialTheme.typography.bodyMedium,
+            Text("= ${amountFen.toYuanDisplay()}", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-private fun ExpandableFields(
-    isExpanded: Boolean, description: String, date: String,
-    onExpandToggle: () -> Unit, onDescriptionChanged: (String) -> Unit,
-    onDateChanged: (String) -> Unit, modifier: Modifier = Modifier,
+private fun CompactNoteRow(
+    description: String,
+    date: String,
+    onDescriptionChanged: (String) -> Unit,
+    onDateChanged: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp).animateContentSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().clickable(onClick = onExpandToggle)
-                .padding(vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 备注输入（占主要宽度）
+        OutlinedTextField(
+            value = description,
+            onValueChange = onDescriptionChanged,
+            placeholder = { Text("备注...", style = MaterialTheme.typography.bodyMedium) },
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+            ),
+        )
+        // 日期显示（点击可改）
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.height(56.dp),
         ) {
-            Text("更多信息", style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(modifier = Modifier.weight(1f))
-            Icon(
-                imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = if (isExpanded) "收起" else "展开",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp),
-            )
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.padding(horizontal = 14.dp).fillMaxSize(),
+            ) {
+                Text(
+                    text = date.takeLast(5), // MM-DD
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
         }
-        AnimatedVisibility(visible = isExpanded) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    }
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TransferAccountSection(
+    accounts: List<com.aibill.android.domain.model.Account> = emptyList(),
+    selectedAccountId: Int? = null,
+    selectedTargetAccountId: Int? = null,
+    onAccountSelected: (Int) -> Unit = {},
+    onTargetAccountSelected: (Int) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                "💡 转账不计入收支统计",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            // 来源账户
+            var expandedFrom by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(expanded = expandedFrom, onExpandedChange = { expandedFrom = !expandedFrom }) {
                 OutlinedTextField(
-                    value = description, onValueChange = onDescriptionChanged,
-                    label = { Text("备注") }, modifier = Modifier.fillMaxWidth(),
-                    maxLines = 2, shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                    value = accounts.firstOrNull { it.id == selectedAccountId }?.name ?: "选择来源账户",
+                    onValueChange = {}, readOnly = true,
+                    label = { Text("从") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expandedFrom) },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
                 )
+                ExposedDropdownMenu(expanded = expandedFrom, onDismissRequest = { expandedFrom = false }) {
+                    accounts.forEach { account ->
+                        DropdownMenuItem(
+                            text = { Text("${account.icon} ${account.name}") },
+                            onClick = { onAccountSelected(account.id); expandedFrom = false }
+                        )
+                    }
+                }
+            }
+
+            // 目标账户
+            var expandedTo by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(expanded = expandedTo, onExpandedChange = { expandedTo = !expandedTo }) {
                 OutlinedTextField(
-                    value = date, onValueChange = onDateChanged,
-                    label = { Text("日期 (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth(),
-                    singleLine = true, shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                    value = accounts.firstOrNull { it.id == selectedTargetAccountId }?.name ?: "选择目标账户",
+                    onValueChange = {}, readOnly = true,
+                    label = { Text("到") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expandedTo) },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
                 )
+                ExposedDropdownMenu(expanded = expandedTo, onDismissRequest = { expandedTo = false }) {
+                    accounts.filter { it.id != selectedAccountId }.forEach { account ->
+                        DropdownMenuItem(
+                            text = { Text("${account.icon} ${account.name}") },
+                            onClick = { onTargetAccountSelected(account.id); expandedTo = false }
+                        )
+                    }
+                }
             }
         }
     }

@@ -17,6 +17,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.aibill.android.presentation.theme.PrimaryButton
+import com.aibill.android.presentation.theme.SecondaryButton
 import com.aibill.android.util.BatteryOptimizationHelper
 
 /**
@@ -38,6 +40,9 @@ fun PermissionGuideScreen(
     var isBatteryOptimized by remember {
         mutableStateOf(BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context))
     }
+    var isPostNotificationEnabled by remember {
+        mutableStateOf(BatteryOptimizationHelper.isPostNotificationEnabled(context))
+    }
 
     // 返回时自动刷新权限状态
     DisposableEffect(lifecycleOwner) {
@@ -47,13 +52,15 @@ fun PermissionGuideScreen(
                     BatteryOptimizationHelper.isNotificationListenerEnabled(context)
                 isBatteryOptimized =
                     BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
+                isPostNotificationEnabled =
+                    BatteryOptimizationHelper.isPostNotificationEnabled(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val allGranted = isNotificationListenerEnabled && isBatteryOptimized
+    val allGranted = isNotificationListenerEnabled && isBatteryOptimized && isPostNotificationEnabled
     val brandGuideText = remember { BatteryOptimizationHelper.getBrandGuideText() }
 
     Scaffold(
@@ -91,7 +98,18 @@ fun PermissionGuideScreen(
                 }
             )
 
-            // 2. 电池优化白名单
+            // 2. 通知弹窗权限（Android 13+ 发通知需要）
+            PermissionItem(
+                title = "通知弹窗权限",
+                description = "检测到支付时弹窗提醒确认",
+                isGranted = isPostNotificationEnabled,
+                buttonText = "去开启",
+                onAction = {
+                    BatteryOptimizationHelper.openAppNotificationSettings(context)
+                }
+            )
+
+            // 3. 电池优化白名单
             PermissionItem(
                 title = "电池优化白名单",
                 description = "避免系统杀死后台服务",
@@ -102,7 +120,7 @@ fun PermissionGuideScreen(
                 }
             )
 
-            // 3. 后台自启动（品牌特定）— 无法自动检测
+            // 4. 后台自启动（品牌特定）— 无法自动检测
             PermissionItem(
                 title = "后台自启动",
                 description = brandGuideText,
@@ -120,17 +138,12 @@ fun PermissionGuideScreen(
             Spacer(modifier = Modifier.weight(1f))
 
             // 底部按钮
-            Button(
+            PrimaryButton(
+                text = if (allGranted) "已全部开启" else "请完成上述设置",
                 onClick = onBack,
                 enabled = allGranted,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Text(
-                    text = if (allGranted) "已全部开启" else "请完成上述设置",
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-            }
+            )
         }
     }
 }
@@ -176,12 +189,7 @@ private fun PermissionItem(
             }
             if (!isGranted || showAlwaysAction) {
                 Spacer(modifier = Modifier.width(8.dp))
-                FilledTonalButton(
-                    onClick = onAction,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                ) {
-                    Text(buttonText, style = MaterialTheme.typography.labelMedium)
-                }
+                SecondaryButton(text = buttonText, onClick = onAction)
             }
         }
     }

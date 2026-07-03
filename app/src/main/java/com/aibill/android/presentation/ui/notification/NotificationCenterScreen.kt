@@ -19,19 +19,16 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -47,6 +44,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.data.local.entity.NotificationRecordEntity
+import com.aibill.android.presentation.theme.AppOutlinedButton
+import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.theme.PrimaryButton
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -62,6 +62,7 @@ fun NotificationCenterScreen(
     val pendingCount by viewModel.pendingCount.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var ignoreConfirmId by remember { mutableStateOf<Long?>(null) }
+    var editItem by remember { mutableStateOf<NotificationRecordEntity?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.uiEvent.collect { event ->
@@ -73,6 +74,18 @@ fun NotificationCenterScreen(
         }
     }
 
+    // 确认前编辑对话框
+    editItem?.let { item ->
+        NotificationEditDialog(
+            item = item,
+            onDismiss = { editItem = null },
+            onConfirm = { type, amountCents, desc ->
+                viewModel.confirmWithEdit(item.id, type, amountCents, desc)
+                editItem = null
+            }
+        )
+    }
+
     // Ignore confirmation dialog
     if (ignoreConfirmId != null) {
         AlertDialog(
@@ -80,13 +93,13 @@ fun NotificationCenterScreen(
             title = { Text("确认忽略") },
             text = { Text("忽略后该通知将不会被记录为账单，确定忽略吗？") },
             confirmButton = {
-                TextButton(onClick = {
+                AppTextButton(text = "忽略", onClick = {
                     ignoreConfirmId?.let { viewModel.ignoreItem(it) }
                     ignoreConfirmId = null
-                }) { Text("忽略") }
+                })
             },
             dismissButton = {
-                TextButton(onClick = { ignoreConfirmId = null }) { Text("取消") }
+                AppTextButton(text = "取消", onClick = { ignoreConfirmId = null })
             }
         )
     }
@@ -122,14 +135,13 @@ fun NotificationCenterScreen(
         },
         bottomBar = {
             if (pendingItems.isNotEmpty()) {
-                Button(
+                PrimaryButton(
+                    text = "全部确认",
                     onClick = { viewModel.confirmAll() },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp)
-                ) {
-                    Text("全部确认")
-                }
+                )
             }
         }
     ) { paddingValues ->
@@ -146,7 +158,7 @@ fun NotificationCenterScreen(
                 items(pendingItems, key = { it.id }) { item ->
                     NotificationItem(
                         item = item,
-                        onConfirm = { viewModel.confirmItem(item.id) },
+                        onConfirm = { editItem = item },
                         onIgnore = { ignoreConfirmId = item.id }
                     )
                 }
@@ -218,19 +230,15 @@ private fun NotificationItem(
 
             // 操作按钮
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Button(
+                PrimaryButton(
+                    text = "确认",
                     onClick = onConfirm,
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text("确认", style = MaterialTheme.typography.labelSmall)
-                }
+                )
                 Spacer(modifier = Modifier.height(4.dp))
-                OutlinedButton(
+                AppOutlinedButton(
+                    text = "忽略",
                     onClick = onIgnore,
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text("忽略", style = MaterialTheme.typography.labelSmall)
-                }
+                )
             }
         }
     }
@@ -266,4 +274,82 @@ private fun EmptyState(modifier: Modifier = Modifier) {
 private fun formatTime(timestamp: Long): String {
     val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
     return sdf.format(Date(timestamp))
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NotificationEditDialog(
+    item: NotificationRecordEntity,
+    onDismiss: () -> Unit,
+    onConfirm: (type: String, amountCents: Int, description: String) -> Unit,
+) {
+    var type by remember { mutableStateOf(item.parsedType ?: "expense") }
+    var amountText by remember {
+        mutableStateOf(
+            item.parsedAmount?.let { "%.2f".format(it / 100.0) } ?: ""
+        )
+    }
+    var description by remember { mutableStateOf(item.parsedDescription ?: "") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("确认记账") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 类型切换
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("expense" to "支出", "income" to "收入").forEach { (value, label) ->
+                        androidx.compose.material3.FilterChip(
+                            selected = type == value,
+                            onClick = { type = value },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+                // 金额输入
+                androidx.compose.material3.OutlinedTextField(
+                    value = amountText,
+                    onValueChange = { newVal ->
+                        if (newVal.isEmpty() || newVal.matches(Regex("""^\d*\.?\d{0,2}$"""))) {
+                            amountText = newVal
+                        }
+                    },
+                    label = { Text("金额 (元)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                    ),
+                )
+                // 描述输入
+                androidx.compose.material3.OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("备注") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                // 原始通知内容参考
+                Text(
+                    text = "原文：${item.content.take(60)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+        },
+        confirmButton = {
+            AppTextButton(
+                text = "确认记账",
+                onClick = {
+                    val cents = Math.round((amountText.toDoubleOrNull() ?: 0.0) * 100).toInt()
+                    onConfirm(type, cents, description)
+                },
+                enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0
+            )
+        },
+        dismissButton = {
+            AppTextButton(text = "取消", onClick = onDismiss)
+        }
+    )
 }

@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aibill.android.presentation.theme.AiBillTheme
+import com.aibill.android.presentation.theme.PrimaryButton
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -128,11 +129,12 @@ private fun TextShareContent(text: String, onConfirm: (String) -> Unit, modifier
         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
             Text(text = text.take(200), modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
         }
-        Button(onClick = { onConfirm(text) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
-            Icon(Icons.Default.Send, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("发送解析")
-        }
+        PrimaryButton(
+            text = "发送解析",
+            onClick = { onConfirm(text) },
+            modifier = Modifier.fillMaxWidth(),
+            icon = Icons.Default.Send,
+        )
     }
 }
 

@@ -14,14 +14,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -37,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.utils.toYuanDisplay
 
 internal val ExpenseColor = Color(0xFFF44336)
@@ -196,22 +195,16 @@ internal fun TransactionItem(
             text = { Text("确定删除这笔记录吗？删除后可在回收站恢复。") },
             shape = RoundedCornerShape(20.dp),
             confirmButton = {
-                TextButton(
+                AppTextButton(
+                    text = "删除",
                     onClick = {
                         showDeleteDialog = false
                         transaction.id?.let { onDelete(it) }
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error,
-                    ),
-                ) {
-                    Text("删除")
-                }
+                    }
+                )
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("取消")
-                }
+                AppTextButton(text = "取消", onClick = { showDeleteDialog = false })
             },
         )
     }

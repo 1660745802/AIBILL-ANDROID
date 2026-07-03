@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.repository.AuthRepository
+import com.aibill.android.presentation.theme.PrimaryButton
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -133,26 +134,21 @@ fun RegisterScreen(
 
             Spacer(modifier = Modifier.height(36.dp))
 
-            FilledTonalButton(
+            PrimaryButton(
+                text = "注册",
                 onClick = {
                     if (username.isBlank() || password.isBlank() || inviteCode.isBlank()) {
                         scope.launch { snackbarHostState.showSnackbar("请填写所有字段") }
-                        return@FilledTonalButton
+                        return@PrimaryButton
                     }
                     // 注册逻辑在这里直接调 ViewModel 或 Repository
                     // 简化处理：通过 AuthViewModel 复用
                     onRegisterSuccess()
                 },
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                shape = RoundedCornerShape(14.dp),
-                enabled = !isLoading
-            ) {
-                if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                } else {
-                    Text("注册", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                }
-            }
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading,
+                loading = isLoading,
+            )
         }
     }
 }

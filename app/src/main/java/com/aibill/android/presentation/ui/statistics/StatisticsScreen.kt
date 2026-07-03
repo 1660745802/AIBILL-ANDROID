@@ -17,7 +17,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -37,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.presentation.theme.SecondaryButton
 
 internal val ExpenseColor = Color(0xFFF44336)
 internal val IncomeColor = Color(0xFF4CAF50)
@@ -97,12 +97,10 @@ fun StatisticsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(modifier = Modifier.height(16.dp))
-                        FilledTonalButton(
+                        SecondaryButton(
+                            text = "重试",
                             onClick = { viewModel.refresh() },
-                            shape = RoundedCornerShape(14.dp),
-                        ) {
-                            Text("重试")
-                        }
+                        )
                     }
                 }
             }
@@ -196,17 +194,11 @@ private fun MonthSelector(
                 modifier = Modifier.size(20.dp),
             )
         }
-        FilledTonalButton(
+        SecondaryButton(
+            text = "${year}年${month}月",
             onClick = {},
-            shape = RoundedCornerShape(12.dp),
             modifier = Modifier.padding(horizontal = 12.dp),
-        ) {
-            Text(
-                text = "${year}年${month}月",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-            )
-        }
+        )
         IconButton(
             onClick = onNext,
             colors = IconButtonDefaults.iconButtonColors(

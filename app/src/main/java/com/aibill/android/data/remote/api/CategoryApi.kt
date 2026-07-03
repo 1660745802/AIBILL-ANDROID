@@ -20,7 +20,7 @@ interface CategoryApi {
     ): ApiResponse<Any>
 
     @DELETE("categories/{id}")
-    suspend fun deleteCategory(@Path("id") id: Int): ApiResponse<Unit>
+    suspend fun deleteCategory(@Path("id") id: Int): ApiResponse<Any>
 
     @GET("accounts")
     suspend fun getAccounts(): ApiResponse<AccountListResponse>
@@ -35,5 +35,5 @@ interface CategoryApi {
     ): ApiResponse<Any>
 
     @DELETE("accounts/{id}")
-    suspend fun deleteAccount(@Path("id") id: Int): ApiResponse<Unit>
+    suspend fun deleteAccount(@Path("id") id: Int): ApiResponse<Any>
 }

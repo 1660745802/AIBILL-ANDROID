@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -33,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.presentation.theme.PrimaryButton
 import com.aibill.android.util.CsvTransaction
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -124,7 +124,7 @@ private fun SelectFileContent(
     ) {
         Text("支持微信、支付宝导出的 CSV 文件", style = MaterialTheme.typography.bodyMedium)
         Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = onSelectFile) { Text("选择 CSV 文件") }
+        PrimaryButton(text = "选择 CSV 文件", onClick = onSelectFile)
         errorMessage?.let {
             Spacer(modifier = Modifier.height(8.dp))
             Text(text = it, color = MaterialTheme.colorScheme.error)
@@ -146,9 +146,11 @@ private fun PreviewContent(
             items(previewItems) { item -> TransactionPreviewCard(transaction = item) }
         }
         Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth()) {
-            Text("确认导入 $totalCount 条记录")
-        }
+        PrimaryButton(
+            text = "确认导入 $totalCount 条记录",
+            onClick = onConfirm,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -207,6 +209,6 @@ private fun DoneContent(
         Spacer(modifier = Modifier.height(8.dp))
         Text("成功导入 $totalCount 条账单记录")
         Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = onFinish) { Text("完成") }
+        PrimaryButton(text = "完成", onClick = onFinish)
     }
 }

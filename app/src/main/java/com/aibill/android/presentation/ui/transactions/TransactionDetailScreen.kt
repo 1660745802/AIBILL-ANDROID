@@ -14,8 +14,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -42,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.presentation.theme.PrimaryButton
 import kotlinx.coroutines.flow.collectLatest
 
 // 使用 TransactionListItems.kt 中定义的 ExpenseColor / IncomeColor
@@ -182,25 +181,13 @@ fun TransactionDetailScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // 保存按钮
-                Button(
+                PrimaryButton(
+                    text = "保存修改",
                     onClick = viewModel::onSave,
+                    modifier = Modifier.fillMaxWidth(),
                     enabled = !uiState.isSaving,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                    ),
-                ) {
-                    if (uiState.isSaving) {
-                        CircularProgressIndicator(
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.padding(end = 8.dp),
-                        )
-                    }
-                    Text("保存修改", fontWeight = FontWeight.SemiBold)
-                }
+                    loading = uiState.isSaving,
+                )
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }

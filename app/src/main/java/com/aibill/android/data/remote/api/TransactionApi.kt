@@ -37,15 +37,15 @@ interface TransactionApi {
     ): ApiResponse<TransactionDto>
 
     @DELETE("transactions/{id}")
-    suspend fun deleteTransaction(@Path("id") id: Int): ApiResponse<Unit>
+    suspend fun deleteTransaction(@Path("id") id: Int): ApiResponse<Any>
 
     // --- 回收站 ---
     @GET("transactions/trash")
     suspend fun getTrash(): ApiResponse<PaginatedResponse<TransactionDto>>
 
     @POST("transactions/{id}/restore")
-    suspend fun restoreTransaction(@Path("id") id: Int): ApiResponse<Unit>
+    suspend fun restoreTransaction(@Path("id") id: Int): ApiResponse<Any>
 
     @DELETE("transactions/{id}/permanent")
-    suspend fun permanentDeleteTransaction(@Path("id") id: Int): ApiResponse<Unit>
+    suspend fun permanentDeleteTransaction(@Path("id") id: Int): ApiResponse<Any>
 }

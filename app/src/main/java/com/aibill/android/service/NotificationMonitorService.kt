@@ -45,17 +45,42 @@ class NotificationMonitorService : NotificationListenerService() {
         private const val DEDUP_WINDOW_MS = 1000L
 
         private val WHITELIST_PACKAGES = setOf(
-            "com.tencent.mm",
-            "com.eg.android.AlipayGphone",
-            "com.android.mms",
-            "com.google.android.apps.messaging"
+            // 支付平台
+            "com.tencent.mm",                    // 微信
+            "com.eg.android.AlipayGphone",       // 支付宝
+            // 短信
+            "com.android.mms",                   // 系统短信
+            "com.google.android.apps.messaging", // Google Messages
+            "com.samsung.android.messaging",     // 三星短信
+            "com.miui.mms",                      // 小米短信
+            // 银行
+            "com.icbc",                          // 工商银行
+            "com.chinamworld.bocmbci",           // 中国银行
+            "com.ccb.start",                     // 建设银行
+            "com.abchina.abc",                   // 农业银行
+            "cmb.pb",                            // 招商银行
+            "com.chinamworld.main",              // 交通银行
+            "com.cmbchina.ccd.pluto.cmbActivity", // 招行信用卡
+            "com.spdbccc.app",                   // 浦发信用卡
+            "com.pingan.paces.ccardi"            // 平安信用卡
         )
 
         private val SOURCE_NAMES = mapOf(
             "com.tencent.mm" to "微信支付",
             "com.eg.android.AlipayGphone" to "支付宝",
             "com.android.mms" to "短信",
-            "com.google.android.apps.messaging" to "短信"
+            "com.google.android.apps.messaging" to "短信",
+            "com.samsung.android.messaging" to "短信",
+            "com.miui.mms" to "短信",
+            "com.icbc" to "工商银行",
+            "com.chinamworld.bocmbci" to "中国银行",
+            "com.ccb.start" to "建设银行",
+            "com.abchina.abc" to "农业银行",
+            "cmb.pb" to "招商银行",
+            "com.chinamworld.main" to "交通银行",
+            "com.cmbchina.ccd.pluto.cmbActivity" to "招行信用卡",
+            "com.spdbccc.app" to "浦发信用卡",
+            "com.pingan.paces.ccardi" to "平安信用卡"
         )
     }
 
@@ -83,19 +108,37 @@ class NotificationMonitorService : NotificationListenerService() {
         val packageName = sbn.packageName ?: return
         if (packageName !in WHITELIST_PACKAGES) return
 
-        // 3. 防御性检查 extras
+        // 3. 提取通知所有文本字段（金额可能在 title/text/bigText 任一处）
         val extras = sbn.notification?.extras ?: return
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-        if (text.isNullOrBlank()) return
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()
+        val infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString().orEmpty()
+
+        // 合并全部文本用于解析（去重拼接）
+        val fullText = listOf(title, text, bigText, subText, infoText)
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" ")
+        if (fullText.isBlank()) return
 
         // 4. 去重 (1s 内相同包名+内容)
         val since = System.currentTimeMillis() - DEDUP_WINDOW_MS
-        val duplicate = notificationRecordDao.findDuplicate(packageName, text, since)
+        val duplicate = notificationRecordDao.findDuplicate(packageName, fullText, since)
         if (duplicate != null) return
 
-        // 5. 解析通知文本
-        val parseResult = notificationParser.parse(packageName, text)
+        // 5. 解析通知文本（用合并后的全文）
+        val parseResult = notificationParser.parse(packageName, fullText)
+
+        // 5.1 预筛：正则未命中时，若通知无任何支付特征，直接丢弃
+        // 避免微信/短信里的普通聊天消息以 raw 状态刷屏通知中心
+        if (parseResult == null) {
+            val hasPaymentSignal = fullText.contains(Regex(
+                "[¥￥$]|元|支付|付款|收款|到账|消费|交易|转账|红包|退款|扣款|余额|账单|还款"
+            ))
+            if (!hasPaymentSignal) return
+        }
 
         // 6. 通知链关联去重（5分钟窗口内相同金额合并）
         if (parseResult != null) {
@@ -122,8 +165,8 @@ class NotificationMonitorService : NotificationListenerService() {
         // 8. 存入 NotificationRecordEntity
         val entity = NotificationRecordEntity(
             packageName = packageName,
-            title = title,
-            content = text,
+            title = title.ifBlank { null },
+            content = fullText,
             parsedAmount = parseResult?.amount,
             parsedType = parseResult?.type,
             parsedDescription = parseResult?.description,
@@ -144,7 +187,7 @@ class NotificationMonitorService : NotificationListenerService() {
                         description = parseResult.description,
                         date = LocalDate.now().toString(),
                         source = "app_notification",
-                        sourceDetail = text,
+                        sourceDetail = SOURCE_NAMES[packageName] ?: packageName,
                         syncStatus = "pending",
                         clientCreatedAt = Instant.now().toString()
                     )
@@ -166,14 +209,15 @@ class NotificationMonitorService : NotificationListenerService() {
                         amount = parseResult.amount,
                         description = parseResult.description,
                         source = source,
-                        privacyMode = privacyMode
+                        privacyMode = privacyMode,
+                        type = parseResult.type,
                     )
                 }
                 // < 60 存待审，已通过 status 实现
             }
         } else if (parseResult == null) {
             // 正则匹配失败，调 AI 兜底解析
-            tryAiParse(text, recordId)
+            tryAiParse(fullText, recordId)
         }
     }
 
@@ -190,6 +234,14 @@ class NotificationMonitorService : NotificationListenerService() {
      * 将通知文本发给后端 AI，如果解析出结果则弹窗确认
      */
     private suspend fun tryAiParse(text: String, recordId: Long) {
+        // 预筛：必须同时包含"数字"和"支付特征"才值得调 AI
+        // 避免把微信/短信里的普通聊天消息外发给后端，既省成本也保护隐私
+        val hasDigit = text.any { it.isDigit() }
+        val hasPaymentSignal = text.contains(Regex(
+            "[¥￥$]|元|支付|付款|收款|到账|消费|交易|转账|红包|退款|扣款|余额|账单|还款"
+        ))
+        if (!hasDigit || !hasPaymentSignal) return
+
         try {
             val response = aiApi.parse(mapOf("input" to text))
             if (response.code != 0 || response.data == null) return
@@ -197,10 +249,15 @@ class NotificationMonitorService : NotificationListenerService() {
             if (items.isEmpty()) return
 
             val first = items.first()
-            // AI 解析成功，更新通知记录
-            notificationRecordDao.updateStatus(recordId, "parsed")
+            // AI 解析成功，把金额/类型/描述存回记录（否则通知中心看不到金额）
+            notificationRecordDao.updateParsedResult(
+                id = recordId,
+                amount = first.amount,
+                type = first.type,
+                description = first.description ?: first.categoryName,
+            )
 
-            // 弹窗让用户确认（AI 解析置信度默认中等）
+            // 弹窗让用户确认
             val privacyMode = userPreferences.notificationPrivacy.first()
             NotificationHelper.showConfirmNotification(
                 context = this@NotificationMonitorService,
@@ -208,7 +265,8 @@ class NotificationMonitorService : NotificationListenerService() {
                 amount = first.amount,
                 description = first.description ?: first.categoryName,
                 source = "AI 识别",
-                privacyMode = privacyMode
+                privacyMode = privacyMode,
+                type = first.type,
             )
         } catch (e: Exception) {
             // AI 调用失败，静默忽略（通知已存为 raw 待审）

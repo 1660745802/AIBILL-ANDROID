@@ -53,12 +53,12 @@ fun NumericKeyboard(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         keys.forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 row.forEach { key ->
                     val isOperator = key in listOf("+", "-", "×", "=")
@@ -78,13 +78,13 @@ fun NumericKeyboard(
                 }
             }
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Button(
             onClick = onSave,
             enabled = !isSaving,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp),
+                .height(50.dp),
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary,
@@ -113,7 +113,7 @@ private fun KeyboardButton(
     }
     Box(
         modifier = modifier
-            .height(52.dp)
+            .height(46.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(bgColor)
             .clickable(onClick = onClick),
@@ -143,9 +143,8 @@ internal fun RecordCategoryGrid(
         columns = GridCells.Fixed(4),
         modifier = modifier
             .fillMaxWidth()
-            .height(200.dp)
             .padding(horizontal = 12.dp),
-        contentPadding = PaddingValues(4.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 12.dp, start = 4.dp, end = 4.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {

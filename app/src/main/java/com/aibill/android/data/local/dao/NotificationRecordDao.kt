@@ -21,6 +21,9 @@ interface NotificationRecordDao {
     @Query("UPDATE notification_records SET status = :status, linked_client_id = :clientId WHERE id = :id")
     suspend fun updateStatus(id: Long, status: String, clientId: String? = null)
 
+    @Query("UPDATE notification_records SET parsed_amount = :amount, parsed_type = :type, parsed_description = :description, status = :status WHERE id = :id")
+    suspend fun updateParsedResult(id: Long, amount: Int, type: String, description: String?, status: String = "parsed")
+
     @Query("SELECT * FROM notification_records WHERE id = :id LIMIT 1")
     suspend fun findById(id: Long): NotificationRecordEntity?
 

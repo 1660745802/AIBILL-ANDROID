@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.fragment.app.FragmentActivity
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.presentation.navigation.AiBillNavHost
 import com.aibill.android.presentation.theme.AiBillTheme
@@ -28,7 +29,7 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     @Inject
     lateinit var userPreferences: UserPreferences
@@ -37,18 +38,25 @@ class MainActivity : ComponentActivity() {
 
     private var isLocked by mutableStateOf(false)
     private var wasInBackground = false
+    private var navigateTo by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        navigateTo = intent?.getStringExtra("navigate_to")
         setContent {
-            AiBillTheme {
+            val themeMode by userPreferences.themeMode.collectAsState(initial = "system")
+            AiBillTheme(themeMode = themeMode) {
                 if (isLocked) {
                     AppLockScreen(onUnlocked = { isLocked = false })
                 } else {
                     val startupState by mainViewModel.startupState.collectAsState()
                     if (startupState.isReady) {
-                        AiBillNavHost(startDestination = startupState.startRoute)
+                        AiBillNavHost(
+                            startDestination = startupState.startRoute,
+                            navigateTo = navigateTo,
+                            onNavigationHandled = { navigateTo = null },
+                        )
                     } else {
                         Box(
                             modifier = Modifier.fillMaxSize(),
@@ -66,6 +74,13 @@ class MainActivity : ComponentActivity() {
                 applyHideFromRecents()
             }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        // App 已在运行时点击通知，更新导航目标
+        setIntent(intent)
+        navigateTo = intent.getStringExtra("navigate_to")
     }
 
     override fun onStop() {

@@ -63,6 +63,31 @@ object BatteryOptimizationHelper {
     }
 
     /**
+     * 检查是否有发送通知权限（Android 13+ 需要 POST_NOTIFICATIONS）
+     * 用于弹出记账确认通知
+     */
+    fun isPostNotificationEnabled(context: Context): Boolean {
+        return androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+    }
+
+    /**
+     * 跳转应用通知设置页（开启横幅/浮动通知）
+     */
+    fun openAppNotificationSettings(context: Context) {
+        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(intent) }.onFailure {
+            val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:${context.packageName}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            runCatching { context.startActivity(fallback) }
+        }
+    }
+
+    /**
      * 根据 Build.MANUFACTURER 返回对应品牌的引导文案
      */
     fun getBrandGuideText(): String {

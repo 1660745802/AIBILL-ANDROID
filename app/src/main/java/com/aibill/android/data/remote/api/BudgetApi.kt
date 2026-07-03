@@ -25,5 +25,5 @@ interface BudgetApi {
     ): ApiResponse<BudgetDto>
 
     @DELETE("budgets/{id}")
-    suspend fun deleteBudget(@Path("id") id: Int): ApiResponse<Unit>
+    suspend fun deleteBudget(@Path("id") id: Int): ApiResponse<Any>
 }

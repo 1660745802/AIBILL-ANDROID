@@ -21,7 +21,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +35,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.aibill.android.data.remote.dto.response.BudgetDto
 import com.aibill.android.data.remote.dto.response.CategoryDto
+import com.aibill.android.presentation.theme.AppTextButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,17 +108,18 @@ internal fun AddBudgetDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            AppTextButton(
+                text = "确认",
                 onClick = {
-                    val catId = selectedCategory?.id ?: return@TextButton
-                    val cents = amountCents ?: return@TextButton
+                    val catId = selectedCategory?.id ?: return@AppTextButton
+                    val cents = amountCents ?: return@AppTextButton
                     onConfirm(catId, cents)
                 },
                 enabled = canConfirm
-            ) { Text("确认") }
+            )
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            AppTextButton(text = "取消", onClick = onDismiss)
         }
     )
 }

@@ -41,6 +41,7 @@ class StreakTracker @Inject constructor(
         val CURRENT_STREAK = intPreferencesKey("current_streak")
         val LONGEST_STREAK = intPreferencesKey("longest_streak")
         val TOTAL_COUNT = intPreferencesKey("total_count")
+        val LAST_RECORD_DATE = androidx.datastore.preferences.core.stringPreferencesKey("last_record_date")
     }
 
     val streakInfo: Flow<StreakInfo> = dataStore.data.map { prefs ->
@@ -52,37 +53,57 @@ class StreakTracker @Inject constructor(
     }
 
     /**
-     * 记账后调用，更新连续天数
+     * 记账后调用，更新连续天数和总笔数
+     * 逻辑：
+     * - 总笔数每次 +1
+     * - 连续天数：同一天记多笔只算一次；昨天记过则+1；更早或首次则重置为1
      */
     suspend fun onTransactionRecorded() {
-        val current = streakInfo.first()
-        val newTotal = current.totalCount + 1
-        val newStreak = current.currentStreak + 1
-        val newLongest = maxOf(current.longestStreak, newStreak)
+        val today = LocalDate.now()
+        val todayStr = today.format(DateTimeFormatter.ISO_LOCAL_DATE)
 
         dataStore.edit { prefs ->
-            prefs[Keys.TOTAL_COUNT] = newTotal
+            // 总笔数始终 +1
+            prefs[Keys.TOTAL_COUNT] = (prefs[Keys.TOTAL_COUNT] ?: 0) + 1
+
+            val lastDateStr = prefs[Keys.LAST_RECORD_DATE]
+            val currentStreak = prefs[Keys.CURRENT_STREAK] ?: 0
+
+            val newStreak = when {
+                lastDateStr == null -> 1 // 首次记账
+                lastDateStr == todayStr -> currentStreak.coerceAtLeast(1) // 今天已记过，连续天数不变
+                else -> {
+                    val lastDate = runCatching {
+                        LocalDate.parse(lastDateStr, DateTimeFormatter.ISO_LOCAL_DATE)
+                    }.getOrNull()
+                    val daysBetween = if (lastDate != null) {
+                        today.toEpochDay() - lastDate.toEpochDay()
+                    } else Long.MAX_VALUE
+                    when (daysBetween) {
+                        1L -> currentStreak + 1 // 昨天记过，连续+1
+                        else -> 1 // 中断了，重置为1
+                    }
+                }
+            }
+
             prefs[Keys.CURRENT_STREAK] = newStreak
-            prefs[Keys.LONGEST_STREAK] = newLongest
+            prefs[Keys.LONGEST_STREAK] = maxOf(prefs[Keys.LONGEST_STREAK] ?: 0, newStreak)
+            prefs[Keys.LAST_RECORD_DATE] = todayStr
         }
     }
 
     /**
-     * 每天检查是否需要重置连续天数
-     * 可在 App 启动时调用
+     * App 启动时调用：如果最后记账日期距今超过1天，重置连续天数
      */
-    suspend fun checkAndResetIfNeeded(lastRecordDate: String?) {
-        if (lastRecordDate == null) return
-
+    suspend fun checkAndResetIfNeeded() {
         val today = LocalDate.now()
-        val lastDate = runCatching {
-            LocalDate.parse(lastRecordDate, DateTimeFormatter.ISO_LOCAL_DATE)
-        }.getOrNull() ?: return
-
-        val daysBetween = today.toEpochDay() - lastDate.toEpochDay()
-        if (daysBetween > 1) {
-            // 超过一天没记账，重置连续天数
-            dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
+            val lastDateStr = prefs[Keys.LAST_RECORD_DATE] ?: return@edit
+            val lastDate = runCatching {
+                LocalDate.parse(lastDateStr, DateTimeFormatter.ISO_LOCAL_DATE)
+            }.getOrNull() ?: return@edit
+            val daysBetween = today.toEpochDay() - lastDate.toEpochDay()
+            if (daysBetween > 1) {
                 prefs[Keys.CURRENT_STREAK] = 0
             }
         }

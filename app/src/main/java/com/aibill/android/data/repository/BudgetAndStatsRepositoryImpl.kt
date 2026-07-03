@@ -39,7 +39,13 @@ class BudgetRepositoryImpl @Inject constructor(
     }
 
     override suspend fun deleteBudget(id: Int): Result<Unit> {
-        return safeApiCall { budgetApi.deleteBudget(id) }
+        return try {
+            val response = budgetApi.deleteBudget(id)
+            if (response.code == 0) Result.Success(Unit)
+            else Result.Error(response.code, response.message)
+        } catch (e: Exception) {
+            Result.Error(-1, e.message ?: "删除失败")
+        }
     }
 }
 

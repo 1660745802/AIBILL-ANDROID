@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.domain.model.Account
+import com.aibill.android.presentation.theme.AppTextButton
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -131,18 +132,16 @@ fun AccountManageScreen(
             title = { Text("停用账户") },
             text = { Text("确定停用「${acct.name}」吗？停用后不会显示在记账选项中。") },
             confirmButton = {
-                TextButton(
+                AppTextButton(
+                    text = "停用",
                     onClick = {
                         viewModel.deleteAccount(acct.id)
                         deleteAccount = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) { Text("停用") }
+                    }
+                )
             },
             dismissButton = {
-                TextButton(onClick = { deleteAccount = null }) { Text("取消") }
+                AppTextButton(text = "取消", onClick = { deleteAccount = null })
             }
         )
     }
@@ -217,7 +216,8 @@ private fun AccountEditDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            AppTextButton(
+                text = "确定",
                 onClick = {
                     if (name.isNotBlank()) {
                         val cents = ((balance.toDoubleOrNull() ?: 0.0) * 100).toInt()
@@ -225,10 +225,10 @@ private fun AccountEditDialog(
                     }
                 },
                 enabled = name.isNotBlank()
-            ) { Text("确定") }
+            )
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            AppTextButton(text = "取消", onClick = onDismiss)
         }
     )
 }

@@ -26,6 +26,7 @@ import javax.inject.Inject
 class ManualRecordViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
+    private val accountRepository: com.aibill.android.domain.repository.AccountRepository,
 ) : ViewModel() {
 
     data class RecordUiState(
@@ -34,6 +35,7 @@ class ManualRecordViewModel @Inject constructor(
         val amountFen: Int = 0,
         val selectedCategoryId: Int? = null,
         val categories: List<Category> = emptyList(),
+        val accounts: List<com.aibill.android.domain.model.Account> = emptyList(),
         val accountId: Int? = null,
         val targetAccountId: Int? = null,
         val description: String = "",
@@ -55,6 +57,23 @@ class ManualRecordViewModel @Inject constructor(
 
     init {
         loadCategories(_uiState.value.type)
+        loadAccounts()
+    }
+
+    private fun loadAccounts() {
+        viewModelScope.launch {
+            accountRepository.observeAccounts().collect { accounts ->
+                _uiState.update { it.copy(accounts = accounts) }
+            }
+        }
+    }
+
+    fun onAccountSelected(id: Int) {
+        _uiState.update { it.copy(accountId = id) }
+    }
+
+    fun onTargetAccountSelected(id: Int) {
+        _uiState.update { it.copy(targetAccountId = id) }
     }
 
     fun onTypeChanged(type: String) {

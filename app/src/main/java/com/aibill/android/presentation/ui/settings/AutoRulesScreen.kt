@@ -17,6 +17,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.data.local.entity.CategoryRuleEntity
+import com.aibill.android.presentation.theme.AppTextButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -151,9 +152,7 @@ private fun LearnedRuleItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            TextButton(onClick = onDelete) {
-                Text("删除", color = MaterialTheme.colorScheme.error)
-            }
+            AppTextButton(text = "删除", onClick = onDelete)
         }
     }
 }

@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.data.remote.dto.response.TransactionDto
+import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.utils.toYuanDisplay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -102,22 +103,16 @@ fun TrashScreen(
             title = { Text("永久删除") },
             text = { Text("确定永久删除这笔记录吗？此操作不可恢复。") },
             confirmButton = {
-                TextButton(
+                AppTextButton(
+                    text = "删除",
                     onClick = {
                         viewModel.permanentDelete(id)
                         deleteConfirmId = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Text("删除")
-                }
+                    }
+                )
             },
             dismissButton = {
-                TextButton(onClick = { deleteConfirmId = null }) {
-                    Text("取消")
-                }
+                AppTextButton(text = "取消", onClick = { deleteConfirmId = null })
             }
         )
     }

@@ -20,6 +20,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.presentation.theme.AppOutlinedButton
+import com.aibill.android.presentation.theme.PrimaryButton
 
 @Composable
 fun ServerConfigScreen(
@@ -111,50 +113,24 @@ fun ServerConfigScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            OutlinedButton(
+            AppOutlinedButton(
+                text = "测试连接",
                 onClick = { viewModel.onTestConnection() },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(50.dp),
-                shape = RoundedCornerShape(14.dp),
-                enabled = !uiState.isTesting && uiState.serverUrl.isNotBlank()
-            ) {
-                if (uiState.isTesting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                }
-                Text("测试连接")
-            }
+                modifier = Modifier.weight(1f),
+                enabled = !uiState.isTesting && uiState.serverUrl.isNotBlank(),
+                tall = true,
+            )
 
-            Button(
+            PrimaryButton(
+                text = "继续",
                 onClick = {
                     viewModel.onSave()
                     onConfigured()
                 },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(50.dp),
-                shape = RoundedCornerShape(14.dp),
-                enabled = uiState.isConnected
-            ) {
-                AnimatedVisibility(
-                    visible = uiState.isConnected,
-                    enter = scaleIn() + fadeIn(),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                    }
-                }
-                Text("继续")
-            }
+                modifier = Modifier.weight(1f),
+                enabled = uiState.isConnected,
+                icon = if (uiState.isConnected) Icons.Default.Check else null,
+            )
         }
 
         Spacer(modifier = Modifier.height(48.dp))

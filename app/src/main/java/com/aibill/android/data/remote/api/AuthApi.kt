@@ -22,5 +22,5 @@ interface AuthApi {
     suspend fun getCurrentUser(): ApiResponse<MeResponse>
 
     @PUT("auth/password")
-    suspend fun changePassword(@Body request: Map<String, String>): ApiResponse<Unit>
+    suspend fun changePassword(@Body request: Map<String, String>): ApiResponse<Any>
 }
