@@ -82,6 +82,17 @@ class NotificationMonitorService : NotificationListenerService() {
             "com.spdbccc.app" to "浦发信用卡",
             "com.pingan.paces.ccardi" to "平安信用卡"
         )
+
+        /**
+         * 支付/账单特征关键词。用于预筛：命中才可能是账单通知。
+         * 策略：宁可放过（放过的不入库不调 AI，成本为 0），也不漏掉真实支付。
+         * 覆盖：金额符号/币种、收支动作、银行(尾号/卡号)、理财(收益/利息)、工资报销等。
+         */
+        val PAYMENT_SIGNAL = Regex(
+            "[¥￥$]|RMB|CNY|人民币|元|支付|已付|付款|实付|付出|刷卡|收款|收入|到账|入账|" +
+            "转入|转出|转账|汇款|消费|交易|扣款|扣费|代扣|缴费|充值|提现|退款|退货|红包|" +
+            "余额|账单|还款|欠款|尾号|卡号|信用卡|储蓄卡|银行卡|收益|利息|分期|贷款|工资|薪资|报销"
+        )
     }
 
     override fun onCreate() {
@@ -134,9 +145,7 @@ class NotificationMonitorService : NotificationListenerService() {
         // 5.1 预筛：正则未命中时，若通知无任何支付特征，直接丢弃
         // 避免微信/短信里的普通聊天消息以 raw 状态刷屏通知中心
         if (parseResult == null) {
-            val hasPaymentSignal = fullText.contains(Regex(
-                "[¥￥$]|元|支付|付款|收款|到账|消费|交易|转账|红包|退款|扣款|余额|账单|还款"
-            ))
+            val hasPaymentSignal = PAYMENT_SIGNAL.containsMatchIn(fullText)
             if (!hasPaymentSignal) return
         }
 
@@ -237,9 +246,7 @@ class NotificationMonitorService : NotificationListenerService() {
         // 预筛：必须同时包含"数字"和"支付特征"才值得调 AI
         // 避免把微信/短信里的普通聊天消息外发给后端，既省成本也保护隐私
         val hasDigit = text.any { it.isDigit() }
-        val hasPaymentSignal = text.contains(Regex(
-            "[¥￥$]|元|支付|付款|收款|到账|消费|交易|转账|红包|退款|扣款|余额|账单|还款"
-        ))
+        val hasPaymentSignal = PAYMENT_SIGNAL.containsMatchIn(text)
         if (!hasDigit || !hasPaymentSignal) return
 
         try {

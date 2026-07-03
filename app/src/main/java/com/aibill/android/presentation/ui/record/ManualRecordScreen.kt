@@ -149,7 +149,7 @@ fun ManualRecordScreen(
                     shadowElevation = 12.dp,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Column(modifier = Modifier.padding(top = 14.dp)) {
+                    Column(modifier = Modifier.padding(top = 8.dp)) {
                         // 金额行：左=选中分类，右=金额大字
                         InputAmountRow(
                             selectedLabel = when {
@@ -161,12 +161,10 @@ fun ManualRecordScreen(
                             amountFen = state.amountFen,
                             type = state.type,
                         )
-                        // 备注 + 日期
+                        // 备注
                         CompactNoteRow(
                             description = state.description,
-                            date = state.date,
                             onDescriptionChanged = viewModel::onDescriptionChanged,
-                            onDateChanged = viewModel::onDateChanged,
                         )
                         // 数字键盘
                         NumericKeyboard(
@@ -285,23 +283,20 @@ private fun TypeSelector(
 @Composable
 private fun CompactNoteRow(
     description: String,
-    date: String,
     onDescriptionChanged: (String) -> Unit,
-    onDateChanged: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 备注输入（占主要宽度）
+        // 备注输入（占满宽度）
         OutlinedTextField(
             value = description,
             onValueChange = onDescriptionChanged,
-            placeholder = { Text("备注...", style = MaterialTheme.typography.bodyMedium) },
+            placeholder = { Text("备注（选填）...", style = MaterialTheme.typography.bodyMedium) },
             modifier = Modifier.weight(1f),
             singleLine = true,
             shape = RoundedCornerShape(12.dp),
@@ -309,23 +304,6 @@ private fun CompactNoteRow(
                 unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
             ),
         )
-        // 日期显示（点击可改）
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            modifier = Modifier.height(56.dp),
-        ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.padding(horizontal = 14.dp).fillMaxSize(),
-            ) {
-                Text(
-                    text = date.takeLast(5), // MM-DD
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-        }
     }
 }
 

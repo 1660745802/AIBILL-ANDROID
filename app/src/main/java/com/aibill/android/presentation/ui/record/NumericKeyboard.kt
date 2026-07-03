@@ -144,8 +144,8 @@ internal fun RecordCategoryGrid(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 12.dp, start = 4.dp, end = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 8.dp, start = 4.dp, end = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(categories, key = { it.id }) { category ->
@@ -174,19 +174,19 @@ private fun RecordCategoryItem(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Surface(
-            modifier = Modifier.size(44.dp),
+            modifier = Modifier.size(42.dp),
             shape = CircleShape,
             color = bgColor,
         ) {
             Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                Text(text = category.icon, fontSize = 22.sp)
+                Text(text = category.icon, fontSize = 21.sp)
             }
         }
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(5.dp))
         Text(
             text = category.name,
             style = MaterialTheme.typography.labelSmall,
