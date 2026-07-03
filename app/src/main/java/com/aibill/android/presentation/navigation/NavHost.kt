@@ -1,6 +1,7 @@
 package com.aibill.android.presentation.navigation
 
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -75,7 +76,9 @@ fun AiBillNavHost(
         NavHost(
             navController = navController,
             startDestination = startDestination,
-            modifier = Modifier.padding(innerPadding),
+            modifier = Modifier
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding),
             // 统一轻量转场：快速淡入 + 轻微横移，避免默认 700ms 长动画卡顿
             enterTransition = {
                 fadeIn(tween(200)) + slideInHorizontally(tween(220)) { it / 14 }

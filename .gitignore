@@ -1,6 +1,7 @@
 ### Android ###
 *.iml
 .gradle/
+.kotlin/
 /build/
 /app/build/
 /app/schemas/
