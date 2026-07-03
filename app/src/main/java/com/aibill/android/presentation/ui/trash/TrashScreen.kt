@@ -108,7 +108,8 @@ fun TrashScreen(
                     onClick = {
                         viewModel.permanentDelete(id)
                         deleteConfirmId = null
-                    }
+                    },
+                    isDestructive = true,
                 )
             },
             dismissButton = {

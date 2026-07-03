@@ -155,7 +155,8 @@ fun CategoryManageScreen(
                     onClick = {
                         viewModel.deleteCategory(cat.id)
                         deleteCategory = null
-                    }
+                    },
+                    isDestructive = true,
                 )
             },
             dismissButton = {

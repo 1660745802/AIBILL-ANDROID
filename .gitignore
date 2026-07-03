@@ -38,6 +38,8 @@ temp_db.db
 temp_wal.db
 *.db-shm
 *.db-wal
+*.tmp
+COMMIT_MSG.tmp
 
 ### Gradle Wrapper JAR (optional - some teams include it) ###
 # gradle/wrapper/gradle-wrapper.jar

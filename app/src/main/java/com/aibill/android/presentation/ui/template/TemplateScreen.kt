@@ -48,11 +48,10 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.data.local.entity.TemplateEntity
 import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.theme.ExpenseColor
+import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.utils.toYuanDisplay
 import kotlinx.coroutines.flow.collectLatest
-
-private val ExpenseColor = Color(0xFFF44336)
-private val IncomeColor = Color(0xFF4CAF50)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

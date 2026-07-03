@@ -106,6 +106,7 @@ fun ProfileScreen(
             confirmButton = {
                 AppTextButton(
                     text = "退出",
+                    isDestructive = true,
                     onClick = {
                         showLogoutConfirm = false
                         viewModel.logout(onLogout)

@@ -40,10 +40,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.PrimaryButton
 import kotlinx.coroutines.flow.collectLatest
-
-// 使用 TransactionListItems.kt 中定义的 ExpenseColor / IncomeColor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

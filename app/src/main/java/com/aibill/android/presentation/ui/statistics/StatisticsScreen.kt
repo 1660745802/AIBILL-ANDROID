@@ -36,10 +36,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.presentation.theme.ExpenseColor
+import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.theme.SecondaryButton
-
-internal val ExpenseColor = Color(0xFFF44336)
-internal val IncomeColor = Color(0xFF4CAF50)
 
 @Composable
 fun StatisticsScreen(

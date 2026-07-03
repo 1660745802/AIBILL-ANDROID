@@ -34,6 +34,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aibill.android.presentation.theme.ExpenseColor
+import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.utils.toYuanDisplay
 
 private val ExpenseGradient = listOf(Color(0xFFF44336), Color(0xFFFF7043))

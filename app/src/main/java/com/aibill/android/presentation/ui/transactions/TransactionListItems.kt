@@ -36,10 +36,9 @@ import androidx.compose.ui.unit.sp
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.theme.ExpenseColor
+import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.utils.toYuanDisplay
-
-internal val ExpenseColor = Color(0xFFF44336)
-internal val IncomeColor = Color(0xFF4CAF50)
 
 @Composable
 internal fun DateHeader(
@@ -200,7 +199,8 @@ internal fun TransactionItem(
                     onClick = {
                         showDeleteDialog = false
                         transaction.id?.let { onDelete(it) }
-                    }
+                    },
+                    isDestructive = true,
                 )
             },
             dismissButton = {

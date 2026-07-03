@@ -102,15 +102,26 @@ fun AppOutlinedButton(
     }
 }
 
-/** 文字按钮：用于对话框、弱操作 */
+/** 文字按钮：用于对话框、弱操作。isDestructive=true 时用错误色标示破坏性操作 */
 @Composable
 fun AppTextButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    isDestructive: Boolean = false,
 ) {
-    TextButton(onClick = onClick, enabled = enabled, modifier = modifier, shape = ButtonShape) {
+    TextButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        shape = ButtonShape,
+        colors = if (isDestructive) {
+            ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+        } else {
+            ButtonDefaults.textButtonColors()
+        },
+    ) {
         Text(text, style = MaterialTheme.typography.labelLarge)
     }
 }

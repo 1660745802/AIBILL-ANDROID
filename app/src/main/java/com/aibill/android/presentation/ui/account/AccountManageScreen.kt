@@ -137,7 +137,8 @@ fun AccountManageScreen(
                     onClick = {
                         viewModel.deleteAccount(acct.id)
                         deleteAccount = null
-                    }
+                    },
+                    isDestructive = true,
                 )
             },
             dismissButton = {

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -60,12 +61,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aibill.android.presentation.theme.ExpenseColor
+import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.utils.toYuanDisplay
 import kotlinx.coroutines.delay
 
 private val TYPE_TABS = listOf("expense" to "支出", "income" to "收入", "transfer" to "转账")
-private val ExpenseColor = Color(0xFFF44336)
-private val IncomeColor = Color(0xFF4CAF50)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,21 +110,14 @@ fun ManualRecordScreen(
             )
         },
     ) { padding ->
+        val selectedCategory = state.categories.firstOrNull { it.id == state.selectedCategoryId }
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // 类型切换（固定顶部）
                 TypeSelector(selectedType = state.type, onTypeSelected = viewModel::onTypeChanged)
 
-                // 金额显示（固定，紧凑）
-                AmountDisplay(amountText = state.amountText, amountFen = state.amountFen)
-
-                HorizontalDivider(
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                )
-
-                // 分类网格 / 转账账户（填充所有剩余空间，内部可滚动）
-                Box(modifier = Modifier.weight(1f)) {
+                // 分类网格 / 转账账户（中部主区域，占据最大空间，可滚动）
+                Box(modifier = Modifier.weight(1f).heightIn(min = 120.dp)) {
                     if (state.type == "transfer") {
                         Column(
                             modifier = Modifier.fillMaxSize()
@@ -148,25 +142,86 @@ fun ManualRecordScreen(
                     }
                 }
 
-                // 备注 + 日期（紧凑一行，固定在键盘上方）
-                CompactNoteRow(
-                    description = state.description,
-                    date = state.date,
-                    onDescriptionChanged = viewModel::onDescriptionChanged,
-                    onDateChanged = viewModel::onDateChanged,
-                )
-
-                // 数字键盘（固定底部）
-                NumericKeyboard(
-                    onInput = viewModel::onAmountInput, onDelete = viewModel::onAmountDelete,
-                    onEquals = viewModel::onAmountEquals, onSave = viewModel::onSave,
-                    isSaving = state.isSaving,
-                )
+                // 底部输入面板：金额 + 备注 + 键盘聚合为一体（带圆角上边和阴影）
+                Surface(
+                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    shadowElevation = 12.dp,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(top = 14.dp)) {
+                        // 金额行：左=选中分类，右=金额大字
+                        InputAmountRow(
+                            selectedLabel = when {
+                                state.type == "transfer" -> "转账"
+                                selectedCategory != null -> "${selectedCategory.icon} ${selectedCategory.name}"
+                                else -> "请选择分类"
+                            },
+                            amountText = state.amountText,
+                            amountFen = state.amountFen,
+                            type = state.type,
+                        )
+                        // 备注 + 日期
+                        CompactNoteRow(
+                            description = state.description,
+                            date = state.date,
+                            onDescriptionChanged = viewModel::onDescriptionChanged,
+                            onDateChanged = viewModel::onDateChanged,
+                        )
+                        // 数字键盘
+                        NumericKeyboard(
+                            onInput = viewModel::onAmountInput, onDelete = viewModel::onAmountDelete,
+                            onEquals = viewModel::onAmountEquals, onSave = viewModel::onSave,
+                            isSaving = state.isSaving,
+                        )
+                    }
+                }
             }
             AnimatedVisibility(
                 visible = showSuccessIndicator, enter = scaleIn() + fadeIn(),
                 exit = scaleOut() + fadeOut(), modifier = Modifier.align(Alignment.Center),
             ) { SuccessOverlay() }
+        }
+    }
+}
+
+@Composable
+private fun InputAmountRow(
+    selectedLabel: String,
+    amountText: String,
+    amountFen: Int,
+    type: String,
+) {
+    val amountColor = when (type) {
+        "income" -> IncomeColor
+        "transfer" -> MaterialTheme.colorScheme.primary
+        else -> ExpenseColor
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = selectedLabel,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = if (amountText.isEmpty()) "¥0.00" else "¥$amountText",
+                fontSize = 34.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, letterSpacing = (-1).sp,
+                color = amountColor,
+            )
+            if (amountText.contains(Regex("[+\\-*/]"))) {
+                Text("= ${amountFen.toYuanDisplay()}", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -223,24 +278,6 @@ private fun TypeSelector(
                         color = textColor)
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun AmountDisplay(amountText: String, amountFen: Int, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            text = if (amountText.isEmpty()) "¥0.00" else "¥$amountText",
-            fontSize = 38.sp, fontWeight = FontWeight.Bold,
-            maxLines = 1, overflow = TextOverflow.Ellipsis, letterSpacing = (-1).sp,
-        )
-        if (amountText.contains(Regex("[+\\-*/]"))) {
-            Text("= ${amountFen.toYuanDisplay()}", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
