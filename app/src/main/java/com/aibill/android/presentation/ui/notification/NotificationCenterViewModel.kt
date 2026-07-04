@@ -118,7 +118,12 @@ class NotificationCenterViewModel @Inject constructor(
         notificationRecordDao.updateStatus(recordId, "confirmed", clientId)
 
         SyncScheduler.scheduleSyncIfNeeded(appContext)
-        WidgetDataUpdater.notifyTransactionAdded(appContext)
+        WidgetDataUpdater.notifyTransactionAdded(
+            context = appContext,
+            type = com.aibill.android.domain.model.TransactionType.fromValue(type),
+            amountCents = amountCents,
+            date = pendingTransaction.date,
+        )
     }
 
     fun ignoreItem(id: Long) {
@@ -162,11 +167,16 @@ class NotificationCenterViewModel @Inject constructor(
 
                 pendingTransactionDao.insert(pendingTransaction)
                 notificationRecordDao.updateStatus(item.id, "confirmed", clientId)
+                WidgetDataUpdater.notifyTransactionAdded(
+                    context = appContext,
+                    type = com.aibill.android.domain.model.TransactionType.fromValue(record.parsedType ?: "expense"),
+                    amountCents = amount,
+                    date = pendingTransaction.date,
+                )
                 confirmed++
             }
 
             SyncScheduler.scheduleSyncIfNeeded(appContext)
-            WidgetDataUpdater.notifyTransactionAdded(appContext)
 
             val msg = when {
                 confirmed == 0 && skipped > 0 -> "无可自动确认的记录，$skipped 条需手动填写金额"

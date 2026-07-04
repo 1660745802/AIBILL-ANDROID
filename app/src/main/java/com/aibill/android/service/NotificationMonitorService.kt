@@ -207,8 +207,13 @@ class NotificationMonitorService : NotificationListenerService() {
                     notificationRecordDao.updateStatus(
                         recordId, "confirmed", pending.clientId
                     )
-                    // 更新 Widget 数据
-                    WidgetDataUpdater.notifyTransactionAdded(applicationContext)
+                    // 更新 Widget 数据：原子累加本月收支
+                    WidgetDataUpdater.notifyTransactionAdded(
+                        context = applicationContext,
+                        type = com.aibill.android.domain.model.TransactionType.fromValue(parseResult.type),
+                        amountCents = parseResult.amount,
+                        date = pending.date,
+                    )
                 }
                 adjustedConfidence in 60..89 -> {
                     // 中置信度：弹出确认通知

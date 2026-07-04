@@ -100,8 +100,13 @@ class NotificationActionReceiver : BroadcastReceiver() {
         // 触发后台同步
         SyncScheduler.scheduleSyncIfNeeded(context)
 
-        // 通知 Widget 刷新
-        WidgetDataUpdater.notifyTransactionAdded(context)
+        // 通知 Widget 刷新：原子累加本月收支
+        WidgetDataUpdater.notifyTransactionAdded(
+            context = context,
+            type = com.aibill.android.domain.model.TransactionType.fromValue(record.parsedType ?: "expense"),
+            amountCents = record.parsedAmount ?: 0,
+            date = pendingTransaction.date,
+        )
     }
 
     private suspend fun handleIgnore(recordId: Long) {

@@ -6,9 +6,10 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.updateAll
+import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.presentation.widget.MonthlySummaryWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.time.LocalDate
 
 private val Context.widgetDataStore: DataStore<Preferences>
     by preferencesDataStore(name = "widget_data")
@@ -30,6 +32,8 @@ object WidgetDataUpdater {
         val MONTHLY_EXPENSE = intPreferencesKey("monthly_expense")
         val MONTHLY_INCOME = intPreferencesKey("monthly_income")
         val UPDATED_AT = longPreferencesKey("widget_updated_at")
+        /** 缓存对应的月份（YYYY-MM），跨月时需要整体重算 */
+        val MONTH_TAG = stringPreferencesKey("widget_month_tag")
     }
 
     /**
@@ -42,32 +46,67 @@ object WidgetDataUpdater {
         incomeCents: Int
     ) {
         try {
+            val monthTag = currentMonthTag()
             context.widgetDataStore.edit { prefs ->
                 prefs[Keys.MONTHLY_EXPENSE] = expenseCents
                 prefs[Keys.MONTHLY_INCOME] = incomeCents
+                prefs[Keys.MONTH_TAG] = monthTag
                 prefs[Keys.UPDATED_AT] = System.currentTimeMillis()
             }
             // 通知 Widget 刷新
             MonthlySummaryWidget().updateAll(context)
-            Timber.d("Widget 数据已更新: expense=$expenseCents, income=$incomeCents")
+            Timber.d("Widget 数据已更新: month=$monthTag expense=$expenseCents, income=$incomeCents")
         } catch (e: Exception) {
             Timber.e(e, "Widget 数据更新失败")
         }
     }
 
     /**
-     * 当有新交易入库时触发 Widget 刷新（不修改缓存金额，仅提示有变化）
-     * 下次打开 App 或 SyncWorker 完成后会更新精确数据
+     * 当有新交易入库时，原子更新月度缓存并刷新 Widget。
+     * 跨月时把缓存重置为本笔（避免把上月数据累加到本月）。
      */
-    fun notifyTransactionAdded(context: Context) {
+    fun notifyTransactionAdded(
+        context: Context,
+        type: TransactionType,
+        amountCents: Int,
+        date: String? = null,
+    ) {
+        // 仅累加本月数据；如果传入 date 跨月则跳过（由下次 updateMonthlySummary 刷新）
+        if (date != null && !date.startsWith(currentMonthTag())) return
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                val monthTag = currentMonthTag()
+                context.widgetDataStore.edit { prefs ->
+                    val cachedTag = prefs[Keys.MONTH_TAG]
+                    if (cachedTag != monthTag) {
+                        // 跨月：重置缓存
+                        prefs[Keys.MONTHLY_EXPENSE] = 0
+                        prefs[Keys.MONTHLY_INCOME] = 0
+                        prefs[Keys.MONTH_TAG] = monthTag
+                    }
+                    when (type) {
+                        TransactionType.EXPENSE -> {
+                            prefs[Keys.MONTHLY_EXPENSE] =
+                                (prefs[Keys.MONTHLY_EXPENSE] ?: 0) + amountCents
+                        }
+                        TransactionType.INCOME -> {
+                            prefs[Keys.MONTHLY_INCOME] =
+                                (prefs[Keys.MONTHLY_INCOME] ?: 0) + amountCents
+                        }
+                        TransactionType.TRANSFER -> {
+                            // 转账不计入月度收支
+                        }
+                    }
+                    prefs[Keys.UPDATED_AT] = System.currentTimeMillis()
+                }
                 MonthlySummaryWidget().updateAll(context)
             } catch (e: Exception) {
                 Timber.e(e, "Widget 刷新通知失败")
             }
         }
     }
+
+    private fun currentMonthTag(): String = LocalDate.now().toString().take(7)
 
     /**
      * 读取缓存的月度支出（分）
