@@ -50,8 +50,8 @@ class TransactionsViewModel @Inject constructor(
     private val pageSize = 20
     private val allTransactions = mutableListOf<Transaction>()
     private var searchJob: Job? = null
+    // PR M6：undoDelete 用的最近删除记录（保留 serverId 用于 restore）
     private var lastDeletedTransaction: Transaction? = null
-    private var lastDeletedIndex: Int = -1
 
     init {
         loadTransactions(refresh = true)
@@ -151,8 +151,8 @@ class TransactionsViewModel @Inject constructor(
 
             when (val result = transactionRepository.deleteTransaction(id)) {
                 is Result.Success -> {
+                    // PR M6：保留 deleted transaction 用于 undo（restore 调用 serverId）
                     lastDeletedTransaction = transaction
-                    lastDeletedIndex = index
                     allTransactions.removeAll { it.id == id }
                     val grouped = allTransactions.groupBy { it.date }
                         .toSortedMap(compareByDescending { it })
@@ -169,21 +169,24 @@ class TransactionsViewModel @Inject constructor(
     }
 
     fun undoDelete() {
+        // PR M6：undoDelete 之前用 createTransactions 复用 clientId，
+        // 服务端 idempotency 把它放回 duplicates 列表，不会恢复 serverId，
+        // 后续编辑/删除无法用 serverId → 走错行。
+        // 改用 Repository.restoreTransaction(id) 真正恢复服务端记录。
+        // 拿不到 id 的边界（旧 clientId-only 数据）降级为重建。
         val transaction = lastDeletedTransaction ?: return
         viewModelScope.launch {
-            when (val result = transactionRepository.createTransactions(listOf(transaction))) {
+            val result = if (transaction.id != null) {
+                transactionRepository.restoreTransaction(transaction.id)
+            } else {
+                // 本地新建的还没 sync 过，无 serverId，只能重建
+                transactionRepository.createTransactions(listOf(transaction))
+                    .map { Unit }
+            }
+            when (result) {
                 is Result.Success -> {
-                    // Re-insert at original position or reload
-                    if (lastDeletedIndex in 0..allTransactions.size) {
-                        allTransactions.add(lastDeletedIndex, transaction)
-                    } else {
-                        allTransactions.add(transaction)
-                    }
-                    val grouped = allTransactions.groupBy { it.date }
-                        .toSortedMap(compareByDescending { it })
-                    _uiState.update { it.copy(transactions = grouped) }
-                    lastDeletedTransaction = null
-                    lastDeletedIndex = -1
+                    _uiEvent.emit(UiEvent.ShowToast("已恢复"))
+                    loadTransactions(refresh = true)
                 }
                 is Result.Error -> {
                     _uiEvent.emit(UiEvent.ShowToast("撤销失败: ${result.message}"))
