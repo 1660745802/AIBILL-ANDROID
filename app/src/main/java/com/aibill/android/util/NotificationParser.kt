@@ -20,6 +20,12 @@ class NotificationParser @Inject constructor() {
         val amount: Int, // 单位：分
         val type: String, // expense / income
         val description: String? = null,
+        /**
+         * 抽取出的商家名（如「沙县小吃」「瑞幸咖啡」），用于分类学习的 keyword。
+         * 与 description 区别：description 是给 UI 展示的原始文本摘要，
+         * 每次金额/时间都不同；merchantName 是稳定的商家标识，可作为学习 key。
+         */
+        val merchantName: String? = null,
         val confidence: Int // 0-100
     )
 
@@ -70,6 +76,17 @@ class NotificationParser @Inject constructor() {
         private val BANK_INCOME_PATTERNS = listOf(
             Regex("""(?:收入|转入|到账|入账).*?(\d+\.?\d*)元"""),
         )
+
+        // 商家名抽取（用于分类学习 keyword，要求稳定、与金额/时间无关）
+        // 优先级高的优先匹配：「向 X 付款」「X 收款」「X 商家」「尾号 XXXX」等
+        private val MERCHANT_PATTERNS = listOf(
+            Regex("""向(.+?)付款"""),                // 向沙县小吃付款￥28.50
+            Regex("""向(.+?)收款"""),                // 向用户A收款
+            Regex("""来自(.+?)(?:的)?(?:付款|转账|红包)"""),
+            Regex("""在(.+?)消费"""),                // 在星巴克消费￥50
+            Regex("""【(.+?)】"""),                  // 【美团外卖】...
+            Regex("""\[(.+?)]"""),                  // [滴滴出行]
+        )
     }
 
     fun parse(packageName: String, text: String): ParseResult? {
@@ -89,12 +106,7 @@ class NotificationParser @Inject constructor() {
             if (match != null) {
                 val amountCents = yuanToCents(match.groupValues[1]) ?: continue
                 if (amountCents == 0) continue
-                return ParseResult(
-                    amount = amountCents,
-                    type = "income",
-                    description = extractDescription(text),
-                    confidence = 75
-                )
+                return buildResult(text, amountCents, "income", 75)
             }
         }
 
@@ -104,12 +116,7 @@ class NotificationParser @Inject constructor() {
             if (match != null) {
                 val amountCents = yuanToCents(match.groupValues[1]) ?: continue
                 if (amountCents == 0) continue
-                return ParseResult(
-                    amount = amountCents,
-                    type = "expense",
-                    description = extractDescription(text),
-                    confidence = 80
-                )
+                return buildResult(text, amountCents, "expense", 80)
             }
         }
 
@@ -123,12 +130,7 @@ class NotificationParser @Inject constructor() {
             if (match != null) {
                 val amountCents = yuanToCents(match.groupValues[1]) ?: continue
                 if (amountCents == 0) continue
-                return ParseResult(
-                    amount = amountCents,
-                    type = "income",
-                    description = extractDescription(text),
-                    confidence = 75
-                )
+                return buildResult(text, amountCents, "income", 75)
             }
         }
 
@@ -138,12 +140,7 @@ class NotificationParser @Inject constructor() {
             if (match != null) {
                 val amountCents = yuanToCents(match.groupValues[1]) ?: continue
                 if (amountCents == 0) continue
-                return ParseResult(
-                    amount = amountCents,
-                    type = "expense",
-                    description = extractDescription(text),
-                    confidence = 80
-                )
+                return buildResult(text, amountCents, "expense", 80)
             }
         }
 
@@ -157,12 +154,7 @@ class NotificationParser @Inject constructor() {
             if (match != null) {
                 val amountCents = yuanToCents(match.groupValues[1]) ?: continue
                 if (amountCents == 0) continue
-                return ParseResult(
-                    amount = amountCents,
-                    type = "income",
-                    description = extractDescription(text),
-                    confidence = 70
-                )
+                return buildResult(text, amountCents, "income", 70)
             }
         }
 
@@ -172,12 +164,7 @@ class NotificationParser @Inject constructor() {
             if (match != null) {
                 val amountCents = yuanToCents(match.groupValues[1]) ?: continue
                 if (amountCents == 0) continue
-                return ParseResult(
-                    amount = amountCents,
-                    type = "expense",
-                    description = extractDescription(text),
-                    confidence = 70
-                )
+                return buildResult(text, amountCents, "expense", 70)
             }
         }
 
@@ -192,4 +179,32 @@ class NotificationParser @Inject constructor() {
     private fun extractDescription(text: String): String? {
         return text.take(50).ifBlank { null }
     }
+
+    /**
+     * 抽取稳定的商家名（用于分类学习 keyword）。
+     * 命中正则取第 1 组；未命中返回 null（让调用方降级用 description）。
+     */
+    private fun extractMerchant(text: String): String? {
+        for (pattern in MERCHANT_PATTERNS) {
+            val match = pattern.find(text) ?: continue
+            val name = match.groupValues.getOrNull(1)?.trim()
+            if (!name.isNullOrBlank() && name.length in 2..20) {
+                return name
+            }
+        }
+        return null
+    }
+
+    private fun buildResult(
+        text: String,
+        amountCents: Int,
+        type: String,
+        confidence: Int,
+    ): ParseResult = ParseResult(
+        amount = amountCents,
+        type = type,
+        description = extractDescription(text),
+        merchantName = extractMerchant(text),
+        confidence = confidence,
+    )
 }

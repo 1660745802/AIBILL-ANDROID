@@ -161,7 +161,9 @@ class NotificationMonitorService : NotificationListenerService() {
 
         // 7. 智能免确认：提升置信度
         val adjustedConfidence = if (parseResult != null) {
-            val keyword = parseResult.description?.trim()?.lowercase()
+            // 优先使用商家名作 keyword（跨金额/时间稳定），未抽到时降级用 description
+            val keyword = (parseResult.merchantName ?: parseResult.description)
+                ?.trim()?.lowercase()
             val shouldAuto = autoConfirmSuggester.shouldAutoConfirm(
                 keyword = keyword,
                 amountCents = parseResult.amount
