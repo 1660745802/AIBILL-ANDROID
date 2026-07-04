@@ -31,6 +31,8 @@ class TransactionsViewModel @Inject constructor(
         val error: String? = null,
         val searchKeyword: String = "",
         val isRefreshing: Boolean = false,
+        /** PR #27：流水类型筛选 (all/expense/income)，按 PRD §5.2.2 多维度筛选 */
+        val filterType: String = "all",
     )
 
     sealed class UiEvent {
@@ -71,9 +73,12 @@ class TransactionsViewModel @Inject constructor(
             }
 
             val keyword = _uiState.value.searchKeyword.ifBlank { null }
+            // PR #27：透传 type 筛选给 Repository，后端按 type 过滤
+            val typeFilter = _uiState.value.filterType.takeIf { it != "all" }
             when (val result = transactionRepository.getTransactions(
                 page = currentPage,
                 pageSize = pageSize,
+                type = typeFilter,
                 keyword = keyword,
             )) {
                 is Result.Success -> {
@@ -120,6 +125,12 @@ class TransactionsViewModel @Inject constructor(
      * Silently refreshes data without showing loading indicator.
      */
     fun refreshOnResume() {
+        loadTransactions(refresh = true)
+    }
+
+    /** PR #27：切换类型筛选 */
+    fun onFilterTypeChanged(type: String) {
+        _uiState.update { it.copy(filterType = type) }
         loadTransactions(refresh = true)
     }
 

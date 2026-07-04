@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -95,13 +98,37 @@ fun TransactionsScreen(
         containerColor = MaterialTheme.colorScheme.background,
     ) { innerPadding ->
         Column(modifier = modifier.fillMaxSize().padding(innerPadding)) {
-            SearchInputBar(
-                keyword = uiState.searchKeyword,
-                onKeywordChanged = viewModel::onSearchChanged,
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 12.dp),
-            )
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // PR #27：搜索框 + 类型过滤 chip（PRD §5.2.2 多维度筛选）
+                SearchInputBar(
+                    keyword = uiState.searchKeyword,
+                    onKeywordChanged = viewModel::onSearchChanged,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                FilterChip(
+                    selected = uiState.filterType == "all",
+                    onClick = { viewModel.onFilterTypeChanged("all") },
+                    label = { Text("全部") },
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                FilterChip(
+                    selected = uiState.filterType == "expense",
+                    onClick = { viewModel.onFilterTypeChanged("expense") },
+                    label = { Text("支出") },
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                FilterChip(
+                    selected = uiState.filterType == "income",
+                    onClick = { viewModel.onFilterTypeChanged("income") },
+                    label = { Text("收入") },
+                )
+            }
 
             PullToRefreshBox(
                 isRefreshing = uiState.isRefreshing,
