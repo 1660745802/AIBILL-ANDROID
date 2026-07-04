@@ -60,7 +60,12 @@ class CategoryLearningEngine @Inject constructor(
     /**
      * 尝试本地匹配分类
      *
-     * @return 匹配到的分类 ID，无匹配返回 null
+     * PR M5：之前 `input.contains(rule.keyword)` 是裸子串匹配。
+     * 例子：用户给「招商银行信用卡还款」标了「信用卡」类别，
+     * 之后任意包含「信用卡」的输入（如「广发信用卡积分兑换」）都会误命中。
+     *
+     * 修复：包含匹配阶段改用近似词边界匹配（见 containsWordBoundary）；
+     * 同时按 keyword 长度降序优先匹配（更具体的关键词优先）。
      */
     suspend fun matchCategory(description: String): Int? {
         val input = description.trim().lowercase()
@@ -74,10 +79,12 @@ class CategoryLearningEngine @Inject constructor(
             return exactMatch.categoryId
         }
 
-        // 2. 包含匹配：遍历所有规则，找到 input 包含的关键词
-        val allRules = categoryRuleDao.getAll() // 已按 hitCount DESC 排序
+        // 2. 包含匹配：按 hitCount DESC + keyword 长度 DESC 优先
+        //    （更长的关键词更具体，避免「信用」错误命中「信用卡」规则）
+        val allRules = categoryRuleDao.getAll()
+            .sortedByDescending { it.keyword.length }
         val containsMatch = allRules.firstOrNull { rule ->
-            input.contains(rule.keyword)
+            input.containsWordBoundary(rule.keyword)
         }
         if (containsMatch != null) {
             categoryRuleDao.incrementHitCount(containsMatch.keyword)
@@ -88,4 +95,26 @@ class CategoryLearningEngine @Inject constructor(
         // 3. 无匹配
         return null
     }
+
+    /**
+     * PR M5：近似词边界匹配。
+     * 中文没有显式词边界，所以采用「keyword 在 input 中所有出现位置，
+     * 紧邻字符是边界字符（开头/结尾/非汉字）」。
+     * 注意：仅是近似匹配，目标是减少子串误匹配，不追求完美分词。
+     */
+    private fun String.containsWordBoundary(keyword: String): Boolean {
+        if (keyword.isBlank()) return false
+        var fromIndex = 0
+        while (true) {
+            val idx = indexOf(keyword, fromIndex)
+            if (idx < 0) return false
+            val leftOk = idx == 0 || !this[idx - 1].isChinese()
+            val rightOk = idx + keyword.length == length || !this[idx + keyword.length].isChinese()
+            if (leftOk && rightOk) return true
+            fromIndex = idx + 1
+        }
+    }
+
+    private fun Char.isChinese(): Boolean =
+        this.code in 0x4E00..0x9FFF || this.code in 0x3400..0x4DBF
 }
