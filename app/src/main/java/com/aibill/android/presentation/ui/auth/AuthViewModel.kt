@@ -68,6 +68,34 @@ class AuthViewModel @Inject constructor(
         }
     }
 
+    fun register(username: String, password: String, inviteCode: String, nickname: String?) {
+        if (username.isBlank() || password.isBlank() || inviteCode.isBlank()) {
+            _uiState.update { it.copy(error = "用户名、密码和邀请码不能为空") }
+            viewModelScope.launch {
+                _uiEvent.send(UiEvent.ShowError("用户名、密码和邀请码不能为空"))
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+
+            when (val result = authRepository.register(username, password, inviteCode, nickname)) {
+                is Result.Success -> {
+                    _uiState.update { it.copy(isLoading = false, isLoggedIn = true) }
+                    _uiEvent.send(UiEvent.NavigateToHome)
+                }
+                is Result.Error -> {
+                    _uiState.update { it.copy(isLoading = false, error = result.message) }
+                    _uiEvent.send(UiEvent.ShowError(result.message))
+                }
+                is Result.Loading -> {
+                    // no-op
+                }
+            }
+        }
+    }
+
     fun clearError() {
         _uiState.update { it.copy(error = null) }
     }

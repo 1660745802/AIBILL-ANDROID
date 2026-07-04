@@ -31,9 +31,11 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RegisterScreen(
+    viewModel: AuthViewModel = hiltViewModel(),
     onRegisterSuccess: () -> Unit = {},
     onNavigateBack: () -> Unit = {},
 ) {
+    val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
@@ -41,8 +43,19 @@ fun RegisterScreen(
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var inviteCode by rememberSaveable { mutableStateOf("") }
+    var nickname by rememberSaveable { mutableStateOf("") }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
-    var isLoading by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.uiEvent.collect { event ->
+            when (event) {
+                is AuthViewModel.UiEvent.NavigateToHome -> onRegisterSuccess()
+                is AuthViewModel.UiEvent.ShowError -> {
+                    snackbarHostState.showSnackbar(event.message)
+                }
+            }
+        }
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -92,7 +105,7 @@ fun RegisterScreen(
                 shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
-                enabled = !isLoading
+                enabled = !uiState.isLoading
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -115,7 +128,7 @@ fun RegisterScreen(
                 },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
                 keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
-                enabled = !isLoading
+                enabled = !uiState.isLoading
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -127,9 +140,23 @@ fun RegisterScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+                enabled = !uiState.isLoading
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = nickname,
+                onValueChange = { nickname = it },
+                label = { Text("昵称（选填）") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-                enabled = !isLoading
+                enabled = !uiState.isLoading
             )
 
             Spacer(modifier = Modifier.height(36.dp))
@@ -137,17 +164,16 @@ fun RegisterScreen(
             PrimaryButton(
                 text = "注册",
                 onClick = {
-                    if (username.isBlank() || password.isBlank() || inviteCode.isBlank()) {
-                        scope.launch { snackbarHostState.showSnackbar("请填写所有字段") }
-                        return@PrimaryButton
-                    }
-                    // 注册逻辑在这里直接调 ViewModel 或 Repository
-                    // 简化处理：通过 AuthViewModel 复用
-                    onRegisterSuccess()
+                    viewModel.register(
+                        username = username.trim(),
+                        password = password,
+                        inviteCode = inviteCode.trim(),
+                        nickname = nickname.trim().ifBlank { null },
+                    )
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !isLoading,
-                loading = isLoading,
+                enabled = !uiState.isLoading,
+                loading = uiState.isLoading,
             )
         }
     }
