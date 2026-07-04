@@ -30,7 +30,8 @@ object DatabaseModule {
             AppDatabase::class.java,
             AppDatabase.DATABASE_NAME
         )
-            .fallbackToDestructiveMigration()
+            // 不允许 fallbackToDestructiveMigration：schema 不匹配时必须显式写 Migration，
+            // 否则未同步的 pending_transactions 会被静默清空，违反 PRD §8.4 数据不丢失
             .build()
     }
 
