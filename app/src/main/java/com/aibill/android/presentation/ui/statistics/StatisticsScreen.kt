@@ -143,6 +143,14 @@ fun StatisticsScreen(
                         )
                     }
                     if (state.categoryStats.isNotEmpty()) {
+                        item(key = "donut") {
+                            CategoryDonutChart(
+                                categories = state.categoryStats,
+                                selectedTab = state.selectedTab,
+                            )
+                        }
+                    }
+                    if (state.categoryStats.isNotEmpty()) {
                         item(key = "rank_title") {
                             Text(
                                 text = "分类排行",
