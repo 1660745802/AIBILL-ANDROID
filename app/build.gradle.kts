@@ -46,6 +46,11 @@ android {
         jvmTarget = "17"
     }
 
+    // JUnit5 Platform 配置（PR 14：单元测试基础设施）
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -140,4 +145,13 @@ dependencies {
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.compose.ui.test)
     debugImplementation(libs.compose.ui.test.manifest)
+}
+
+
+// JUnit5 Platform 启用（PR 14：单元测试）
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
+    testLogging {
+        events("passed", "skipped", "failed")
+    }
 }
