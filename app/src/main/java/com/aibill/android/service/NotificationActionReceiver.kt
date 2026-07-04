@@ -88,7 +88,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
             date = dateFormat.format(now),
             time = timeFormat.format(now),
             source = "app_notification",
-            sourceDetail = record.packageName,
+            sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
             clientCreatedAt = now.toInstant().toString()
         )
 

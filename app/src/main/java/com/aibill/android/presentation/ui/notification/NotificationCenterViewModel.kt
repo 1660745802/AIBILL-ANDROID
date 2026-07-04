@@ -110,7 +110,7 @@ class NotificationCenterViewModel @Inject constructor(
             date = dateFormat.format(now),
             time = timeFormat.format(now),
             source = "app_notification",
-            sourceDetail = packageName,
+            sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(packageName),
             clientCreatedAt = now.toInstant().toString()
         )
 
@@ -161,7 +161,7 @@ class NotificationCenterViewModel @Inject constructor(
                     date = dateFormat.format(now),
                     time = timeFormat.format(now),
                     source = "app_notification",
-                    sourceDetail = record.packageName,
+                    sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
                     clientCreatedAt = now.toInstant().toString()
                 )
 
