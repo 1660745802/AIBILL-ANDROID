@@ -80,6 +80,19 @@ class AutoRulesViewModel @Inject constructor(
     fun onThresholdChanged(cents: Int) {
         viewModelScope.launch {
             userPreferences.setSmallAmountThreshold(cents)
+            // 关键修复：清掉所有 small_amount 旧规则（避免不同阈值的脏数据累积），
+            // 然后按当前 enabled 状态重建一条匹配新阈值的规则。
+            autoRuleDao.deleteByType("small_amount")
+            val enabled = _uiState.value.smallAmountEnabled
+            if (enabled) {
+                autoRuleDao.insert(
+                    AutoRuleEntity(
+                        ruleType = "small_amount",
+                        value = cents.toString(),
+                        isEnabled = true
+                    )
+                )
+            }
             _uiState.update { it.copy(smallAmountThreshold = cents) }
         }
     }

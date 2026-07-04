@@ -29,6 +29,9 @@ interface AutoRuleDao {
     @Query("DELETE FROM auto_rules WHERE id = :id")
     suspend fun deleteById(id: Long)
 
+    @Query("DELETE FROM auto_rules WHERE rule_type = :type")
+    suspend fun deleteByType(type: String)
+
     @Query("UPDATE auto_rules SET is_enabled = :enabled WHERE id = :id")
     suspend fun setEnabled(id: Long, enabled: Boolean)
 }
