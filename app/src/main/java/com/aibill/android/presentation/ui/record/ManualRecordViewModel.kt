@@ -55,6 +55,12 @@ class ManualRecordViewModel @Inject constructor(
     private val _uiEvent = Channel<UiEvent>(Channel.BUFFERED)
     val uiEvent = _uiEvent.receiveAsFlow()
 
+    /**
+     * 当前 type 对应的分类订阅 Job，PR #36：切类型时取消旧 Job，
+     * 避免 collect 协程叠加浪费 Room 订阅。
+     */
+    private var categoriesJob: kotlinx.coroutines.Job? = null
+
     init {
         loadCategories(_uiState.value.type)
         loadAccounts()
@@ -207,7 +213,9 @@ class ManualRecordViewModel @Inject constructor(
     }
 
     private fun loadCategories(type: String) {
-        viewModelScope.launch {
+        // PR #36：先取消旧订阅 Job，再启动新的（避免 collect 协程叠加）
+        categoriesJob?.cancel()
+        categoriesJob = viewModelScope.launch {
             categoryRepository.observeCategories(type).collect { list ->
                 _uiState.update { it.copy(categories = list) }
             }
