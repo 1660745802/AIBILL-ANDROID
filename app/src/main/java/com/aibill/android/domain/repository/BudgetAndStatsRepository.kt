@@ -39,6 +39,8 @@ interface BudgetRepository {
     suspend fun getBudgets(year: Int, month: Int): Result<List<Budget>>
     suspend fun createBudget(categoryId: Int, amount: Int, year: Int, month: Int): Result<Budget>
     suspend fun deleteBudget(id: Int): Result<Unit>
+    /** PR #61：补 update 方法，ViewModel 之前直接调 budgetApi.updateBudget 绕过 Repository */
+    suspend fun updateBudget(id: Int, amount: Int): Result<Budget>
 }
 
 interface StatsRepository {

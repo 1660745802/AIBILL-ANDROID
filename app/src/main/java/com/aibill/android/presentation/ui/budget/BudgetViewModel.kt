@@ -2,10 +2,12 @@ package com.aibill.android.presentation.ui.budget
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aibill.android.data.remote.api.BudgetApi
-import com.aibill.android.data.remote.api.CategoryApi
 import com.aibill.android.data.remote.dto.response.BudgetDto
 import com.aibill.android.data.remote.dto.response.CategoryDto
+import com.aibill.android.domain.model.Category
+import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.repository.BudgetRepository
+import com.aibill.android.domain.repository.CategoryRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,8 +23,9 @@ import javax.inject.Inject
 
 @HiltViewModel
 class BudgetViewModel @Inject constructor(
-    private val budgetApi: BudgetApi,
-    private val categoryApi: CategoryApi,
+    // PR #61：下沉到 Repository，删除 BudgetApi/CategoryApi 直接依赖
+    private val budgetRepository: BudgetRepository,
+    private val categoryRepository: CategoryRepository,
 ) : ViewModel() {
 
     data class UiState(
@@ -60,40 +63,40 @@ class BudgetViewModel @Inject constructor(
         loadBudgets()
     }
 
-    fun loadBudgets(
+    private fun loadBudgets(
         year: Int = _uiState.value.year,
         month: Int = _uiState.value.month,
     ) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null, year = year, month = month) }
-            try {
-                val response = budgetApi.getBudgets(year, month)
-                if (response.code == 0 && response.data != null) {
-                    _uiState.update { it.copy(isLoading = false, budgets = response.data.items) }
-                } else {
-                    _uiState.update { it.copy(isLoading = false, error = response.message) }
-                    _uiEvent.emit(UiEvent.ShowError(response.message))
+            when (val result = budgetRepository.getBudgets(year, month)) {
+                is Result.Success -> {
+                    // Repository 返回 Domain Budget，转 BudgetDto 维持 UI 兼容
+                    // （后续 PR 改造 BudgetComponents 改用 Budget Domain 后可移除）
+                    _uiState.update {
+                        it.copy(isLoading = false, budgets = result.data.map { b -> b.toDto() })
+                    }
                 }
-            } catch (e: Exception) {
-                Timber.e(e, "加载预算失败")
-                val msg = e.localizedMessage ?: "加载预算失败"
-                _uiState.update { it.copy(isLoading = false, error = msg) }
-                _uiEvent.emit(UiEvent.ShowError(msg))
+                is Result.Error -> {
+                    _uiState.update { it.copy(isLoading = false, error = result.message) }
+                    _uiEvent.emit(UiEvent.ShowError(result.message))
+                }
+                is Result.Loading -> Unit
             }
         }
     }
 
     private fun loadCategories() {
         viewModelScope.launch {
-            try {
-                val response = categoryApi.getCategories()
-                if (response.code == 0 && response.data != null) {
-                    val expenseCategories = response.data.items
-                        .filter { it.type == "expense" }
-                    _uiState.update { it.copy(categories = expenseCategories) }
+            when (val result = categoryRepository.getCategoriesOnce()) {
+                is Result.Success -> {
+                    _uiState.update {
+                        it.copy(categories = result.data.filter { c -> c.type == com.aibill.android.domain.model.TransactionType.EXPENSE }
+                            .map { c -> c.toDto() })
+                    }
                 }
-            } catch (e: Exception) {
-                Timber.e(e, "加载分类失败")
+                is Result.Error -> Timber.e("加载分类失败: ${result.message}")
+                is Result.Loading -> Unit
             }
         }
     }
@@ -101,42 +104,29 @@ class BudgetViewModel @Inject constructor(
     fun onAddBudget(categoryId: Int, amount: Int) {
         viewModelScope.launch {
             _uiState.update { it.copy(isAdding = true) }
-            try {
-                val request = mapOf(
-                    "category_id" to categoryId,
-                    "amount" to amount,
-                    "year" to _uiState.value.year,
-                    "month" to _uiState.value.month,
-                )
-                val response = budgetApi.createBudget(request)
-                if (response.code == 0) {
+            when (val result = budgetRepository.createBudget(
+                categoryId, amount, _uiState.value.year, _uiState.value.month,
+            )) {
+                is Result.Success -> {
                     _uiEvent.emit(UiEvent.ShowToast("预算添加成功"))
                     loadBudgets()
-                } else {
-                    _uiEvent.emit(UiEvent.ShowError(response.message))
                 }
-            } catch (e: Exception) {
-                Timber.e(e, "添加预算失败")
-                _uiEvent.emit(UiEvent.ShowError(e.localizedMessage ?: "添加预算失败"))
-            } finally {
-                _uiState.update { it.copy(isAdding = false) }
+                is Result.Error -> _uiEvent.emit(UiEvent.ShowError(result.message))
+                is Result.Loading -> Unit
             }
+            _uiState.update { it.copy(isAdding = false) }
         }
     }
 
     fun onDeleteBudget(id: Int) {
         viewModelScope.launch {
-            try {
-                val response = budgetApi.deleteBudget(id)
-                if (response.code == 0) {
+            when (val result = budgetRepository.deleteBudget(id)) {
+                is Result.Success -> {
                     _uiEvent.emit(UiEvent.ShowToast("删除成功"))
                     loadBudgets()
-                } else {
-                    _uiEvent.emit(UiEvent.ShowError(response.message))
                 }
-            } catch (e: Exception) {
-                Timber.e(e, "删除预算失败")
-                _uiEvent.emit(UiEvent.ShowError(e.localizedMessage ?: "删除失败"))
+                is Result.Error -> _uiEvent.emit(UiEvent.ShowError(result.message))
+                is Result.Loading -> Unit
             }
         }
     }
@@ -144,20 +134,33 @@ class BudgetViewModel @Inject constructor(
     fun onUpdateBudget(id: Int, newAmountCents: Int) {
         viewModelScope.launch {
             _uiState.update { it.copy(isAdding = true) }
-            try {
-                val response = budgetApi.updateBudget(id, mapOf("amount" to newAmountCents))
-                if (response.code == 0) {
+            when (val result = budgetRepository.updateBudget(id, newAmountCents)) {
+                is Result.Success -> {
                     _uiEvent.emit(UiEvent.ShowToast("预算已更新"))
                     loadBudgets()
-                } else {
-                    _uiEvent.emit(UiEvent.ShowError(response.message))
                 }
-            } catch (e: Exception) {
-                Timber.e(e, "更新预算失败")
-                _uiEvent.emit(UiEvent.ShowError(e.localizedMessage ?: "更新失败"))
-            } finally {
-                _uiState.update { it.copy(isAdding = false) }
+                is Result.Error -> _uiEvent.emit(UiEvent.ShowError(result.message))
+                is Result.Loading -> Unit
             }
+            _uiState.update { it.copy(isAdding = false) }
         }
     }
 }
+
+private fun com.aibill.android.domain.repository.Budget.toDto(): BudgetDto = BudgetDto(
+    id = id,
+    categoryId = categoryId,
+    categoryName = categoryName,
+    amount = amount,
+    spent = spent,
+    year = year,
+    month = month,
+)
+
+private fun Category.toDto(): CategoryDto = CategoryDto(
+    id = id,
+    name = name,
+    type = type.value,
+    icon = icon,
+    sortOrder = sortOrder,
+)

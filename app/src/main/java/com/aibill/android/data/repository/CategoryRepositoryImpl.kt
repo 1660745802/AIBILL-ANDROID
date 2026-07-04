@@ -64,4 +64,21 @@ class CategoryRepositoryImpl @Inject constructor(
             is Result.Loading -> result
         }
     }
+
+    /**
+     * PR #61：一次性拉取分类列表（不写库），供 ViewModel 之前直接调 API 的场景下沉
+     */
+    override suspend fun getCategoriesOnce(): Result<List<Category>> {
+        return safeApiCall { categoryApi.getCategories() }.map { response ->
+            response.items.map { dto ->
+                Category(
+                    id = dto.id,
+                    name = dto.name,
+                    type = TransactionType.fromValue(dto.type) ?: TransactionType.EXPENSE,
+                    icon = dto.icon,
+                    sortOrder = dto.sortOrder,
+                )
+            }
+        }
+    }
 }

@@ -47,6 +47,12 @@ class BudgetRepositoryImpl @Inject constructor(
             Result.Error(-1, e.message ?: "删除失败")
         }
     }
+
+    override suspend fun updateBudget(id: Int, amount: Int): Result<Budget> {
+        return safeApiCall { budgetApi.updateBudget(id, mapOf("amount" to amount)) }.map { dto ->
+            Budget(dto.id, dto.categoryId, dto.categoryName, dto.amount, dto.spent, dto.year, dto.month)
+        }
+    }
 }
 
 @Singleton
