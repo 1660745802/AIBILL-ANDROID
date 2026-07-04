@@ -1,8 +1,6 @@
 package com.aibill.android.data.remote.interceptor
 
 import com.aibill.android.data.local.datastore.UserPreferences
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.Response
@@ -12,7 +10,10 @@ import javax.inject.Singleton
 
 /**
  * 动态替换 Retrofit 请求的 Base URL
- * 从 DataStore 读取用户配置的服务器地址，替换占位 localhost
+ * 从 UserPreferences 缓存读取用户配置的服务器地址，替换占位 localhost
+ *
+ * 注：使用同步 getter（由 UserPreferences init 块中的热流维护 AtomicReference），
+ * 避免每次请求 runBlocking DataStore 阻塞 OkHttp 调度线程。
  */
 @Singleton
 class ServerUrlInterceptor @Inject constructor(
@@ -23,8 +24,8 @@ class ServerUrlInterceptor @Inject constructor(
         val originalRequest = chain.request()
         val originalUrl = originalRequest.url
 
-        // 从 DataStore 读取用户配置的服务器地址
-        val serverUrl = runBlocking { userPreferences.serverUrl.first() }
+        // 从缓存原子读 serverUrl（不再 runBlocking DataStore）
+        val serverUrl = userPreferences.getServerUrlBlocking()
 
         if (serverUrl.isNullOrBlank()) {
             // 未配置服务器，直接放行（会连不上，但不崩溃）

@@ -10,8 +10,16 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.stateIn
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,6 +34,19 @@ class UserPreferences @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private val dataStore = context.dataStore
+
+    // 用于在 OkHttp Interceptor 同步路径上读取 serverUrl，避免每个请求都 runBlocking DataStore
+    private val serverUrlCache = AtomicReference<String?>(null)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        // 热流订阅：每次 serverUrl 变化同步更新 AtomicReference
+        dataStore.data
+            .map { it[Keys.SERVER_URL] }
+            .distinctUntilChanged()
+            .onEach { serverUrlCache.set(it) }
+            .stateIn(scope, SharingStarted.Eagerly, null)
+    }
 
     // --- Keys ---
     private object Keys {
@@ -47,6 +68,12 @@ class UserPreferences @Inject constructor(
 
     // --- Server URL ---
     val serverUrl: Flow<String?> = dataStore.data.map { it[Keys.SERVER_URL] }
+
+    /**
+     * 同步读取当前 serverUrl，仅供 OkHttp Interceptor 等必须在主线程/OkHttp 线程
+     * 同步获取值的场景使用。值由 init 块中的热流维护。
+     */
+    fun getServerUrlBlocking(): String? = serverUrlCache.get()
 
     suspend fun setServerUrl(url: String) {
         dataStore.edit { it[Keys.SERVER_URL] = url }
