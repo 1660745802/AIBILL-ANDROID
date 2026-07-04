@@ -7,6 +7,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -85,6 +90,21 @@ fun AiBillNavHost(
         bottomBar = {
             if (showBottomBar) {
                 BottomNavBar(navController = navController)
+            }
+        },
+        floatingActionButton = {
+            // PRD §5.1：FAB 快速记账入口属于主框架，4 个 Tab 都可见
+            if (showBottomBar) {
+                FloatingActionButton(
+                    onClick = { navController.navigate(Route.ManualRecord) },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "快速记账",
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
             }
         }
     ) { innerPadding ->
