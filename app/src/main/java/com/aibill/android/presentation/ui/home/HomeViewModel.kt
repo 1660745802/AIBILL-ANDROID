@@ -294,7 +294,7 @@ class HomeViewModel @Inject constructor(
         )) {
             is Result.Success -> {
                 _uiState.update {
-                    it.copy(isLoading = false, todayTransactions = result.data)
+                    it.copy(isLoading = false, todayTransactions = result.data.items)
                 }
                 true
             }

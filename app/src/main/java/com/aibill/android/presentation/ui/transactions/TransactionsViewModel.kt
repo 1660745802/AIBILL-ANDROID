@@ -77,21 +77,25 @@ class TransactionsViewModel @Inject constructor(
                 keyword = keyword,
             )) {
                 is Result.Success -> {
-                    val data = result.data
-                    allTransactions.addAll(data)
+                    val pageResult = result.data
+                    allTransactions.addAll(pageResult.items)
                     val grouped = allTransactions.groupBy { it.date }
                         .toSortedMap(compareByDescending { it })
+                    // PR #47：使用服务端 total 准确判定 hasMore (PRD §6.5.2)
+                    // PR #46：失败回滚在 else 分支统一处理
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             isRefreshing = false,
                             transactions = grouped,
-                            hasMore = data.size >= pageSize,
+                            hasMore = (currentPage * pageSize) < pageResult.total,
                         )
                     }
                 }
                 is Result.Error -> {
                     Timber.e("加载流水失败: ${result.message}")
+                    // PR #46：loadMore 失败时回滚 currentPage，避免下次跳过缺失页
+                    if (currentPage > 1) currentPage--
                     _uiState.update {
                         it.copy(
                             isLoading = false,

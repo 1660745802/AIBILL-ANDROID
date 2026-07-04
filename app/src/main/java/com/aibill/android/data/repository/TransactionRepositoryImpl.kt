@@ -11,6 +11,7 @@ import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.domain.repository.TransactionPage
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.service.SyncScheduler
 import kotlinx.coroutines.flow.Flow
@@ -53,11 +54,16 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override suspend fun getTransactions(
         page: Int, pageSize: Int, startDate: String?,
-        endDate: String?, type: String?, categoryId: Int?, keyword: String?,
-    ): Result<List<Transaction>> {
+        endDate: String?, type: String?, categoryId: Int?, accountId: Int?, keyword: String?,
+    ): Result<TransactionPage> {
         return safeApiCall {
-            transactionApi.getTransactions(page, pageSize, startDate, endDate, type, categoryId, null, keyword)
-        }.map { paginated -> paginated.items.map { it.toDomain() } }
+            transactionApi.getTransactions(page, pageSize, startDate, endDate, type, categoryId, accountId, keyword)
+        }.map { paginated ->
+            TransactionPage(
+                items = paginated.items.map { it.toDomain() },
+                total = paginated.total,
+            )
+        }
     }
 
     override suspend fun deleteTransaction(id: Int): Result<Unit> {
