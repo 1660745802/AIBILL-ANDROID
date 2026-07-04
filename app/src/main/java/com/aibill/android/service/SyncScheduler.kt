@@ -29,7 +29,9 @@ object SyncScheduler {
         WorkManager.getInstance(context)
             .enqueueUniqueWork(
                 SyncWorker.WORK_NAME,
-                ExistingWorkPolicy.KEEP,
+                // APPEND_OR_REPLACE：上次 worker 任意状态都允许新 worker 排上队，
+                // 避免 KEEP 导致"上次成功 → 新 pending 数据永远等不到下次同步"
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
                 syncRequest
             )
     }
