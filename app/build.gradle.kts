@@ -46,11 +46,6 @@ android {
         jvmTarget = "17"
     }
 
-    // JUnit5 Platform 配置（PR 14：单元测试基础设施）
-    testOptions {
-        unitTests.isReturnDefaultValues = true
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
