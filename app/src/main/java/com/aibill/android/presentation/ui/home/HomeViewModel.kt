@@ -60,6 +60,11 @@ class HomeViewModel @Inject constructor(
     sealed class UiEvent {
         data class ShowToast(val message: String) : UiEvent()
         data class ShowError(val message: String) : UiEvent()
+        /**
+         * AI 解析失败（PRD §4.1 5001）时提示用户切换手动记账。
+         * prefillInput 是用户原本输入的文本，手动记账页可预填。
+         */
+        data class AiFallbackToManual(val prefillInput: String) : UiEvent()
     }
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -157,7 +162,13 @@ class HomeViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(isParsing = false, error = result.message)
                     }
-                    _uiEvent.emit(UiEvent.ShowError(result.message))
+                    // PRD §4.1：AI 解析失败（5001）应提示用户切换手动记账
+                    // PRD 错误码表：5001 = AI 解析失败，5002 = AI 服务不可用
+                    if (result.code == 5001 || result.code == 5002) {
+                        _uiEvent.emit(UiEvent.AiFallbackToManual(input))
+                    } else {
+                        _uiEvent.emit(UiEvent.ShowError(result.message))
+                    }
                 }
                 is Result.Loading -> Unit
             }
