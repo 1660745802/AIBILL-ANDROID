@@ -163,16 +163,22 @@ internal fun AiInputSection(
 
 @Composable
 internal fun QuickPhraseRow(onPhraseClick: (String) -> Unit) {
+    // PR #34：快捷短语带默认金额（PRD §5.2.1 一键短语 + 常见金额模板）
+    // 用户点击后直接拿到"咖啡 30"这样的可解析文本，AI 能一次返回结果
     val phrases = listOf(
-        "☕ 咖啡", "🍜 午餐", "🚇 地铁",
-        "🍳 早餐", "🍽️ 晚餐", "🛒 超市",
+        "咖啡 30" to "☕",
+        "午餐 25" to "🍜",
+        "地铁 3" to "🚇",
+        "早餐 10" to "🍳",
+        "晚餐 35" to "🍽️",
+        "超市 80" to "🛒",
     )
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(phrases) { phrase ->
+        items(phrases) { (text, icon) ->
             SuggestionChip(
-                onClick = { onPhraseClick(phrase.substringAfter(" ")) },
+                onClick = { onPhraseClick(text) },
                 label = {
-                    Text(phrase, style = MaterialTheme.typography.bodySmall)
+                    Text("$icon $text", style = MaterialTheme.typography.bodySmall)
                 },
                 shape = RoundedCornerShape(20.dp),
                 colors = SuggestionChipDefaults.suggestionChipColors(
