@@ -43,6 +43,8 @@ import kotlinx.coroutines.flow.collectLatest
 @Composable
 fun HomeScreen(
     modifier: Modifier = Modifier,
+    aiInputPrefill: String? = null,
+    onAiInputConsumed: () -> Unit = {},
     onNavigateToManualRecord: () -> Unit = {},
     onNavigateToNotification: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
@@ -71,6 +73,14 @@ fun HomeScreen(
                     }
                 }
             }
+        }
+    }
+
+    // 外部 Intent（Tasker / AI_PARSE）传入的预填文本 → 自动填入 AI 输入框
+    LaunchedEffect(aiInputPrefill) {
+        if (!aiInputPrefill.isNullOrBlank()) {
+            viewModel.onInputChanged(aiInputPrefill)
+            onAiInputConsumed()
         }
     }
 

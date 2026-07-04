@@ -43,7 +43,9 @@ fun AiBillNavHost(
     startDestination: Route,
     navController: NavHostController = rememberNavController(),
     navigateTo: String? = null,
+    aiInputPrefill: String? = null,
     onNavigationHandled: () -> Unit = {},
+    onAiInputConsumed: () -> Unit = {},
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
 
@@ -52,6 +54,12 @@ fun AiBillNavHost(
         when (navigateTo) {
             "notification_center" -> navController.navigate(Route.NotificationCenter)
             "manual_record" -> navController.navigate(Route.ManualRecord)
+            "home" -> {
+                // 外部 Intent（Tasker/AI_PARSE）跳首页
+                navController.navigate(Route.Home) {
+                    popUpTo(Route.Home) { inclusive = true }
+                }
+            }
             "login_force" -> {
                 // 401 全局处理：清栈跳登录
                 navController.navigate(Route.Login) {
@@ -133,6 +141,8 @@ fun AiBillNavHost(
             // --- 主 Tab 页面 ---
             composable<Route.Home> {
                 HomeScreen(
+                    aiInputPrefill = aiInputPrefill,
+                    onAiInputConsumed = onAiInputConsumed,
                     onNavigateToManualRecord = { navController.navigate(Route.ManualRecord) },
                     onNavigateToNotification = { navController.navigate(Route.NotificationCenter) }
                 )

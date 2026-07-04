@@ -44,11 +44,13 @@ class MainActivity : FragmentActivity() {
     private var isLocked by mutableStateOf(false)
     private var wasInBackground = false
     private var navigateTo by mutableStateOf<String?>(null)
+    private var aiInputPrefill by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         navigateTo = intent?.getStringExtra("navigate_to")
+        aiInputPrefill = intent?.getStringExtra("ai_input")
         observeAuthEvents()
         setContent {
             val themeMode by userPreferences.themeMode.collectAsState(initial = "system")
@@ -61,7 +63,9 @@ class MainActivity : FragmentActivity() {
                         AiBillNavHost(
                             startDestination = startupState.startRoute,
                             navigateTo = navigateTo,
+                            aiInputPrefill = aiInputPrefill,
                             onNavigationHandled = { navigateTo = null },
+                            onAiInputConsumed = { aiInputPrefill = null },
                         )
                     } else {
                         Box(
@@ -87,6 +91,7 @@ class MainActivity : FragmentActivity() {
         // App 已在运行时点击通知，更新导航目标
         setIntent(intent)
         navigateTo = intent.getStringExtra("navigate_to")
+        intent.getStringExtra("ai_input")?.let { aiInputPrefill = it }
     }
 
     override fun onStop() {
