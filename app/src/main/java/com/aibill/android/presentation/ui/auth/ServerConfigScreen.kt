@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -20,15 +21,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.AppOutlinedButton
 import com.aibill.android.presentation.theme.PrimaryButton
 
 @Composable
 fun ServerConfigScreen(
     onConfigured: () -> Unit,
-    viewModel: ServerConfigViewModel = hiltViewModel()
+    viewModel: ServerConfigViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var pendingClearConfirm by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -124,8 +127,14 @@ fun ServerConfigScreen(
             PrimaryButton(
                 text = "继续",
                 onClick = {
-                    viewModel.onSave()
-                    onConfigured()
+                    // PR #42：有未同步数据时弹二次确认
+                    if (viewModel.hasPendingData()) {
+                        // 用全局 state 由 Screen 层捕获显示
+                        pendingClearConfirm = true
+                    } else {
+                        viewModel.onSave(clearLocalCache = true)
+                        onConfigured()
+                    }
                 },
                 modifier = Modifier.weight(1f),
                 enabled = uiState.isConnected,
@@ -140,6 +149,30 @@ fun ServerConfigScreen(
             text = "💡 还没有服务器？查看部署文档快速搭建",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
+        )
+    }
+
+    // PR #42：切换服务器前若有待同步交易，弹 AlertDialog 让用户选择
+    if (pendingClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { pendingClearConfirm = false },
+            title = { Text("切换服务器") },
+            text = {
+                Text("当前有 ${uiState.pendingCount} 条未同步交易。\n切换到新服务器将清空本地缓存。\n确定继续吗？")
+            },
+            confirmButton = {
+                AppTextButton(
+                    text = "切换并清空",
+                    onClick = {
+                        pendingClearConfirm = false
+                        viewModel.onSave(clearLocalCache = true)
+                        onConfigured()
+                    },
+                )
+            },
+            dismissButton = {
+                AppTextButton(text = "取消", onClick = { pendingClearConfirm = false })
+            },
         )
     }
 }

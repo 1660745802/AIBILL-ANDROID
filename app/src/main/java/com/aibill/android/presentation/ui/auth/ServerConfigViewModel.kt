@@ -2,6 +2,9 @@ package com.aibill.android.presentation.ui.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aibill.android.data.local.dao.AccountDao
+import com.aibill.android.data.local.dao.CategoryDao
+import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.UserPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,22 +24,31 @@ data class ServerConfigUiState(
     val isTesting: Boolean = false,
     val isConnected: Boolean = false,
     val error: String? = null,
+    /** 待同步离线交易数量，UI 用于切换服务器前提示 */
+    val pendingCount: Int = 0,
 )
 
 @HiltViewModel
 class ServerConfigViewModel @Inject constructor(
     private val userPreferences: UserPreferences,
+    private val pendingTransactionDao: PendingTransactionDao,
+    private val categoryDao: CategoryDao,
+    private val accountDao: AccountDao,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerConfigUiState())
     val uiState: StateFlow<ServerConfigUiState> = _uiState.asStateFlow()
 
     init {
-        // 加载已保存的服务器地址
+        // 加载已保存的服务器地址 + 当前未同步数量
         viewModelScope.launch {
             val savedUrl = userPreferences.serverUrl.first()
-            if (!savedUrl.isNullOrBlank()) {
-                _uiState.update { it.copy(serverUrl = savedUrl) }
+            val count = pendingTransactionDao.getPendingCount()
+            _uiState.update {
+                it.copy(
+                    serverUrl = savedUrl.orEmpty(),
+                    pendingCount = count,
+                )
             }
         }
     }
@@ -72,12 +84,25 @@ class ServerConfigViewModel @Inject constructor(
         }
     }
 
-    fun onSave() {
+    /**
+     * PR #42：切换服务器前清空本地缓存，避免旧服务器数据污染新服务器视图。
+     * @param clearLocalCache true 清空 pending/categories/accounts；首次配置可传 false。
+     */
+    fun onSave(clearLocalCache: Boolean = true) {
         viewModelScope.launch {
             val url = normalizeUrl(_uiState.value.serverUrl)
+            if (clearLocalCache) {
+                pendingTransactionDao.deleteAll()
+                categoryDao.deleteAll()
+                accountDao.deleteAll()
+            }
             userPreferences.setServerUrl(url)
+            _uiState.update { it.copy(pendingCount = 0) }
         }
     }
+
+    /** 是否有未同步的离线交易，UI 据此弹提示对话框 */
+    fun hasPendingData(): Boolean = _uiState.value.pendingCount > 0
 
     /**
      * 标准化 URL：自动补全协议和 API 路径
