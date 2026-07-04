@@ -125,15 +125,15 @@ fun AccountManageScreen(
         )
     }
 
-    // 停用确认弹窗
+    // 删除账户确认弹窗（PR #45：文案与实际行为对齐 — 实际是硬删非软删）
     deleteAccount?.let { acct ->
         AlertDialog(
             onDismissRequest = { deleteAccount = null },
-            title = { Text("停用账户") },
-            text = { Text("确定停用「${acct.name}」吗？停用后不会显示在记账选项中。") },
+            title = { Text("删除账户") },
+            text = { Text("确定删除「${acct.name}」吗？该操作会从服务端删除，且不可撤销。") },
             confirmButton = {
                 AppTextButton(
-                    text = "停用",
+                    text = "删除",
                     onClick = {
                         viewModel.deleteAccount(acct.id)
                         deleteAccount = null

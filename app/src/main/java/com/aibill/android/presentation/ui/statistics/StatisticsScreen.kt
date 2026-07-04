@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -53,6 +54,7 @@ fun StatisticsScreen(
 
     // 从其他页面返回时刷新统计（记账后自动反映到本月）
     val lifecycleOwner = LocalLifecycleOwner.current
+    val context = LocalContext.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -120,7 +122,9 @@ fun StatisticsScreen(
                     }
                 }
             }
-            state.categoryStats.isEmpty() && state.summary == null -> {
+            // PR #56：空状态改为「当月无任何数据时」才显示
+            state.isLoading.not() && (state.summary == null ||
+                (state.summary?.expense == 0 && state.summary?.income == 0 && state.categoryStats.isEmpty())) -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
@@ -183,6 +187,14 @@ fun StatisticsScreen(
                         CategoryStatItem(
                             category = category,
                             selectedTab = state.selectedTab,
+                            onClick = {
+                                // PR #54：PRD §5.2.3 要求点击进入该分类流水
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "已选择「${category.categoryName}」（流水筛选跳转待 Route 参数支持）",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            },
                         )
                     }
                     item { Spacer(modifier = Modifier.height(80.dp)) }

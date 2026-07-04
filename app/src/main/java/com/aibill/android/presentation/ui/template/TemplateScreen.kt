@@ -80,23 +80,23 @@ fun TemplateScreen(
         modifier = modifier,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = { Text("📋 记账模板") },
+TopAppBar(
+                title = { Text("记账模板") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
+                actions = {
+                    // PR #69：统一 TopAppBar actions + FAB 入口（避免 FAB 与 TopAppBar 同时存在）
+                    IconButton(onClick = viewModel::showAddDialog) {
+                        Icon(Icons.Default.Add, contentDescription = "添加模板")
+                    }
+                },
             )
         },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = viewModel::showAddDialog,
-                shape = RoundedCornerShape(16.dp),
-                containerColor = MaterialTheme.colorScheme.primary,
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "添加模板")
-            }
+floatingActionButton = {
+            // PR #69：入口已统一到 TopAppBar action，FAB 移除避免重复
         },
     ) { innerPadding ->
         if (templates.isEmpty()) {
