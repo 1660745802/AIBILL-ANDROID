@@ -22,6 +22,14 @@ interface PendingTransactionDao {
     @Query("SELECT COUNT(*) FROM pending_transactions WHERE sync_status = 'pending'")
     suspend fun getPendingCount(): Int
 
+    /**
+     * 统计任意未同步成功的记录（pending + failed）。
+     * 用于 SyncWorker 在发现还有未处理项时继续 retry，
+     * 但又不会重复遍历已 synced 的项。
+     */
+    @Query("SELECT COUNT(*) FROM pending_transactions WHERE sync_status IN ('pending', 'failed')")
+    suspend fun getAnyUnsyncedCount(): Int
+
     @Query("SELECT COUNT(*) FROM pending_transactions WHERE sync_status = 'pending'")
     fun observePendingCount(): Flow<Int>
 

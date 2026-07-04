@@ -26,6 +26,8 @@ class SyncWorker @AssistedInject constructor(
         val pendingList = pendingTransactionDao.getAllPending()
         if (pendingList.isEmpty()) return Result.success()
 
+        var unauthorizedSeen = false
+
         for (entity in pendingList) {
             if (entity.retryCount >= MAX_RETRY_COUNT) {
                 markFailed(entity.clientId, "Max retry count exceeded")
@@ -35,14 +37,24 @@ class SyncWorker @AssistedInject constructor(
             val (result, serverId) = syncTransaction(entity)
             when (result) {
                 SyncResult.SUCCESS -> markSynced(entity.clientId, serverId)
-                SyncResult.UNAUTHORIZED -> return Result.failure()
+                SyncResult.UNAUTHORIZED -> {
+                    // Token 过期：标记当前记录失败，避免下次 worker 重复触发 401 循环；
+                    // AuthEventBus 已被 AuthInterceptor emit，由 MainActivity 触发跳登录
+                    markFailed(entity.clientId, "Token expired, need re-login")
+                    unauthorizedSeen = true
+                }
                 SyncResult.BUSINESS_ERROR -> markFailed(entity.clientId, "Business error")
                 SyncResult.NETWORK_ERROR -> incrementRetry(entity.clientId, "Network error")
             }
         }
 
-        val remainingCount = pendingTransactionDao.getPendingCount()
-        return if (remainingCount > 0) Result.retry() else Result.success()
+        // 检查剩余 pending（含 failed 状态）数，如果还有任何未同步的，则 retry
+        val remainingCount = pendingTransactionDao.getAnyUnsyncedCount()
+        return when {
+            unauthorizedSeen -> Result.failure()   // 等用户重新登录后再调度
+            remainingCount > 0 -> Result.retry()
+            else -> Result.success()
+        }
     }
 
     /**
