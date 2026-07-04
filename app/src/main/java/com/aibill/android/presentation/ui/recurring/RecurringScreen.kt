@@ -229,7 +229,16 @@ private fun AddRecurringRuleDialog(
 
                 OutlinedTextField(
                     value = amountText,
-                    onValueChange = { amountText = it },
+                    onValueChange = { input ->
+                        // PR #68：限制只允许数字 + 一个小数点，小数位 ≤ 2
+                        val filtered = input.filter { it.isDigit() || it == '.' }
+                        if (filtered.count { it == '.' } <= 1) {
+                            val parts = filtered.split(".")
+                            if (parts.size <= 1 || parts[1].length <= 2) {
+                                amountText = filtered
+                            }
+                        }
+                    },
                     label = { Text("金额（元）") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
@@ -239,8 +248,12 @@ private fun AddRecurringRuleDialog(
 
                 OutlinedTextField(
                     value = dayText,
-                    onValueChange = { dayText = it },
-                    label = { Text("每月几号") },
+                    onValueChange = { input ->
+                        // 只允许 1-28 的整数
+                        val filtered = input.filter { it.isDigit() }.take(2)
+                        dayText = filtered
+                    },
+                    label = { Text("每月几号 (1-28)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
