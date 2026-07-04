@@ -199,13 +199,13 @@ private fun ParseResultItem(item: AiParseResult, onConfirm: () -> Unit, onEdit: 
                 modifier = Modifier.size(44.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text(text = item.categoryIcon, fontSize = 22.sp)
+                    Text(text = item.categoryIcon ?: "📝", fontSize = 22.sp)
                 }
             }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = item.categoryName,
+                    text = item.categoryName ?: "未分类",
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -311,7 +311,7 @@ private fun AiEditDialog(
                 )
                 CategoryChipFlow(
                     availableCategories = availableCategories,
-                    selectedCategoryId = selectedCategoryId,
+                    selectedCategoryId = selectedCategoryId ?: 0,
                     onSelect = { selectedCategoryId = it },
                 )
             }
@@ -321,11 +321,12 @@ private fun AiEditDialog(
                 onClick = {
                     val cents = Math.round((amountText.toDoubleOrNull() ?: 0.0) * 100).toInt()
                     // 兜底：若用户没动分类但原 AI 分类 id 不在新分类列表，用列表第一个
-                    val finalCategoryId = availableCategories
+                    val finalCategoryId: Int = availableCategories
                         .firstOrNull { it.id == selectedCategoryId }
                         ?.id
                         ?: availableCategories.firstOrNull()?.id
                         ?: selectedCategoryId
+                        ?: 0
                     onConfirm(cents, type, finalCategoryId, description)
                 },
                 enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0

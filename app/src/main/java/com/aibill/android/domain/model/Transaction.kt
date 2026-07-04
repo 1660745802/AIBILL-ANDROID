@@ -48,13 +48,14 @@ data class Transaction(
 
 /**
  * AI 解析结果
+ * transfer 类型时 categoryId/Name/Icon 均为 null（PRD §6.5.4）
  */
 data class AiParseResult(
     val type: TransactionType,
     val amount: Int, // 分
-    val categoryId: Int,
-    val categoryName: String,
-    val categoryIcon: String,
+    val categoryId: Int? = null,
+    val categoryName: String? = null,
+    val categoryIcon: String? = null,
     val description: String? = null,
     val date: String,
     val accountId: Int? = null,

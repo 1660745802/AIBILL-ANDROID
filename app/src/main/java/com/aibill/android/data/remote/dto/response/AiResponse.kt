@@ -13,9 +13,10 @@ data class AiParseResponseDto(
 data class AiParsedItemDto(
     @Json(name = "type") val type: String,
     @Json(name = "amount") val amount: Int,
-    @Json(name = "category_id") val categoryId: Int,
-    @Json(name = "category_name") val categoryName: String,
-    @Json(name = "category_icon") val categoryIcon: String,
+    /** transfer 类型必为 null（PRD §6.5.4） */
+    @Json(name = "category_id") val categoryId: Int?,
+    @Json(name = "category_name") val categoryName: String?,
+    @Json(name = "category_icon") val categoryIcon: String?,
     @Json(name = "description") val description: String?,
     @Json(name = "date") val date: String,
     @Json(name = "account_id") val accountId: Int?,
