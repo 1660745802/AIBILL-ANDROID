@@ -45,6 +45,12 @@ class MainActivity : FragmentActivity() {
     private var wasInBackground = false
     private var navigateTo by mutableStateOf<String?>(null)
     private var aiInputPrefill by mutableStateOf<String?>(null)
+    /**
+     * PR #41：AppLock 启用状态是否已经在进程生命周期内确认过。
+     * 冷启动（savedInstanceState 不为 null）时直接进入锁定流程，
+     * 不依赖 wasInBackground 标志，避免进程被杀后重启绕过。
+     */
+    private var appLockCheckedThisProcess = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,6 +58,16 @@ class MainActivity : FragmentActivity() {
         navigateTo = intent?.getStringExtra("navigate_to")
         aiInputPrefill = intent?.getStringExtra("ai_input")
         observeAuthEvents()
+
+        // PR #41：进程启动时若启用 AppLock，立刻进入锁定态，
+        // 不依赖 wasInBackground（仅靠 onStart 设置）
+        lifecycleScope.launch {
+            val lockEnabled = userPreferences.appLockEnabled.first()
+            if (lockEnabled) {
+                isLocked = true
+            }
+            appLockCheckedThisProcess = true
+        }
         setContent {
             val themeMode by userPreferences.themeMode.collectAsState(initial = "system")
             AiBillTheme(themeMode = themeMode) {
@@ -101,7 +117,9 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
-        if (wasInBackground) {
+        // 如果本进程已经检查过 AppLock（onCreate 已经处理过 cold start 场景），
+        // 这里只需要处理从后台返回的情况
+        if (wasInBackground && appLockCheckedThisProcess) {
             wasInBackground = false
             lifecycleScope.launch {
                 val lockEnabled = userPreferences.appLockEnabled.first()
