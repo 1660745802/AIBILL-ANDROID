@@ -81,4 +81,39 @@ class CategoryRepositoryImpl @Inject constructor(
             }
         }
     }
+
+    /** PR #61：分类 CRUD 下沉 */
+    override suspend fun createCategory(name: String, type: String, icon: String, sortOrder: Int): Result<Unit> {
+        val response = safeApiCall {
+            categoryApi.createCategory(mapOf(
+                "name" to name, "type" to type, "icon" to icon, "sort_order" to sortOrder,
+            ))
+        }
+        return when (response) {
+            is Result.Success -> { syncCategories(); Result.Success(Unit) }
+            is Result.Error -> response
+            is Result.Loading -> response
+        }
+    }
+
+    override suspend fun updateCategory(id: Int, name: String, icon: String, sortOrder: Int): Result<Unit> {
+        val response = safeApiCall {
+            categoryApi.updateCategory(id, mapOf(
+                "name" to name, "icon" to icon, "sort_order" to sortOrder,
+            ))
+        }
+        return when (response) {
+            is Result.Success -> { syncCategories(); Result.Success(Unit) }
+            is Result.Error -> response
+            is Result.Loading -> response
+        }
+    }
+
+    override suspend fun deleteCategory(id: Int): Result<Unit> {
+        return when (val response = safeApiCall { categoryApi.deleteCategory(id) }) {
+            is Result.Success -> { syncCategories(); Result.Success(Unit) }
+            is Result.Error -> response
+            is Result.Loading -> response
+        }
+    }
 }

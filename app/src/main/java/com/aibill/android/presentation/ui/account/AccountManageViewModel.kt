@@ -2,8 +2,8 @@ package com.aibill.android.presentation.ui.account
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aibill.android.data.remote.api.CategoryApi
 import com.aibill.android.domain.model.Account
+import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.repository.AccountRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,13 +13,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import timber.log.Timber
 import javax.inject.Inject
 
 @HiltViewModel
 class AccountManageViewModel @Inject constructor(
+    // PR #61：删除 CategoryApi 直接依赖，全部走 AccountRepository
     private val accountRepository: AccountRepository,
-    private val categoryApi: CategoryApi,
 ) : ViewModel() {
 
     val accounts: StateFlow<List<Account>> =
@@ -37,63 +36,35 @@ class AccountManageViewModel @Inject constructor(
         sortOrder: Int
     ) {
         viewModelScope.launch {
-            try {
-                val request = mapOf<String, Any>(
-                    "name" to name,
-                    "type" to type,
-                    "icon" to icon,
-                    "initial_balance" to initialBalance,
-                    "sort_order" to sortOrder,
-                )
-                val response = categoryApi.createAccount(request)
-                if (response.code == 0) {
-                    _toastMessage.value = "创建成功"
-                    accountRepository.syncAccounts()
-                } else {
-                    _toastMessage.value = "创建失败: ${response.message}"
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "创建账户失败")
-                _toastMessage.value = "创建失败: ${e.message}"
+            when (val result = accountRepository.createAccount(
+                name = name, type = type, icon = icon,
+                initialBalance = initialBalance, sortOrder = sortOrder,
+            )) {
+                is Result.Success -> _toastMessage.value = "创建成功"
+                is Result.Error -> _toastMessage.value = "创建失败: ${result.message}"
+                is Result.Loading -> Unit
             }
         }
     }
 
     fun updateAccount(id: Int, name: String, icon: String, initialBalance: Int) {
         viewModelScope.launch {
-            try {
-                val request = mapOf<String, Any>(
-                    "name" to name,
-                    "icon" to icon,
-                    "initial_balance" to initialBalance,
-                )
-                val response = categoryApi.updateAccount(id, request)
-                if (response.code == 0) {
-                    _toastMessage.value = "更新成功"
-                    accountRepository.syncAccounts()
-                } else {
-                    _toastMessage.value = "更新失败: ${response.message}"
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "更新账户失败")
-                _toastMessage.value = "更新失败: ${e.message}"
+            when (val result = accountRepository.updateAccount(
+                id = id, name = name, icon = icon, initialBalance = initialBalance,
+            )) {
+                is Result.Success -> _toastMessage.value = "更新成功"
+                is Result.Error -> _toastMessage.value = "更新失败: ${result.message}"
+                is Result.Loading -> Unit
             }
         }
     }
 
     fun deleteAccount(id: Int) {
         viewModelScope.launch {
-            try {
-                val response = categoryApi.deleteAccount(id)
-                if (response.code == 0) {
-                    _toastMessage.value = "已停用"
-                    accountRepository.syncAccounts()
-                } else {
-                    _toastMessage.value = "停用失败: ${response.message}"
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "停用账户失败")
-                _toastMessage.value = "停用失败: ${e.message}"
+            when (val result = accountRepository.deleteAccount(id)) {
+                is Result.Success -> _toastMessage.value = "已删除"
+                is Result.Error -> _toastMessage.value = "删除失败: ${result.message}"
+                is Result.Loading -> Unit
             }
         }
     }

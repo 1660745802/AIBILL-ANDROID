@@ -58,4 +58,61 @@ class AccountRepositoryImpl @Inject constructor(
             is Result.Loading -> result
         }
     }
+
+    /** PR #61：账户 CRUD 全部下沉 */
+    override suspend fun createAccount(
+        name: String, type: String, icon: String,
+        initialBalance: Int, sortOrder: Int,
+    ): Result<Unit> {
+        val response = safeApiCall {
+            categoryApi.createAccount(mapOf(
+                "name" to name,
+                "type" to type,
+                "icon" to icon,
+                "initial_balance" to initialBalance,
+                "sort_order" to sortOrder,
+            ))
+        }
+        return when (response) {
+            is Result.Success -> {
+                syncAccounts()
+                Result.Success(Unit)
+            }
+            is Result.Error -> response
+            is Result.Loading -> response
+        }
+    }
+
+    override suspend fun updateAccount(
+        id: Int, name: String, icon: String, initialBalance: Int,
+    ): Result<Unit> {
+        val response = safeApiCall {
+            categoryApi.updateAccount(id, mapOf(
+                "name" to name,
+                "icon" to icon,
+                "initial_balance" to initialBalance,
+            ))
+        }
+        return when (response) {
+            is Result.Success -> {
+                syncAccounts()
+                Result.Success(Unit)
+            }
+            is Result.Error -> response
+            is Result.Loading -> response
+        }
+    }
+
+    override suspend fun deleteAccount(id: Int): Result<Unit> {
+        return safeApiCall { categoryApi.deleteAccount(id) }.let { response ->
+            when (response) {
+                is Result.Success -> {
+                    syncAccounts()
+                    Result.Success(Unit)
+                }
+                is Result.Error -> response
+                is Result.Loading -> response
+            }
+        }
+    }
 }
