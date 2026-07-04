@@ -2,7 +2,7 @@ package com.aibill.android.presentation.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aibill.android.data.remote.api.StatsApi
+import com.aibill.android.domain.repository.StatsRepository
 import com.aibill.android.domain.model.AiParseResult
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
@@ -40,7 +40,8 @@ class HomeViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
     private val accountRepository: AccountRepository,
-    private val statsApi: StatsApi,
+    // PR M8：statsApi → StatsRepository
+    private val statsRepository: StatsRepository,
     private val notificationRecordDao: com.aibill.android.data.local.dao.NotificationRecordDao,
     private val categoryLearningEngine: CategoryLearningEngine,
 ) : ViewModel() {
@@ -315,23 +316,20 @@ class HomeViewModel @Inject constructor(
      */
     private suspend fun loadMonthlyExpense() {
         val now = LocalDate.now()
-        try {
-            val response = statsApi.getSummary(now.year, now.monthValue)
-            if (response.code == 0 && response.data != null) {
-                _uiState.update { it.copy(monthlyExpense = response.data.expense) }
-                // 更新 Widget 缓存数据
+        when (val result = statsRepository.getSummary(now.year, now.monthValue)) {
+            is Result.Success -> {
+                _uiState.update { it.copy(monthlyExpense = result.data.expense) }
                 WidgetDataUpdater.updateMonthlySummary(
                     context = application,
-                    expenseCents = response.data.expense,
-                    incomeCents = response.data.income
+                    expenseCents = result.data.expense,
+                    incomeCents = result.data.income,
                 )
-            } else {
-                Timber.e("加载月度支出失败: ${response.message}")
-                _uiEvent.emit(UiEvent.ShowError("加载月度数据失败: ${response.message}"))
             }
-        } catch (e: Exception) {
-            Timber.e(e, "加载月度支出异常")
-            _uiEvent.emit(UiEvent.ShowError("加载月度数据异常: ${e.localizedMessage ?: "未知"}"))
+            is Result.Error -> {
+                Timber.e("加载月度支出失败: ${result.message}")
+                _uiEvent.emit(UiEvent.ShowError("加载月度数据失败: ${result.message}"))
+            }
+            is Result.Loading -> Unit
         }
     }
 
