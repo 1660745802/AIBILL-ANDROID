@@ -310,6 +310,8 @@ class HomeViewModel @Inject constructor(
     /**
      * 直接调用 StatsApi.getSummary 获取月度支出，避免拉取全部流水
      * 同时更新 Widget 数据
+     * PR #64：失败时 emit UiEvent.ShowError 让 UI 显示 Snackbar+重试，
+     * 之前只 Timber.e 日志用户完全感知不到
      */
     private suspend fun loadMonthlyExpense() {
         val now = LocalDate.now()
@@ -325,9 +327,11 @@ class HomeViewModel @Inject constructor(
                 )
             } else {
                 Timber.e("加载月度支出失败: ${response.message}")
+                _uiEvent.emit(UiEvent.ShowError("加载月度数据失败: ${response.message}"))
             }
         } catch (e: Exception) {
             Timber.e(e, "加载月度支出异常")
+            _uiEvent.emit(UiEvent.ShowError("加载月度数据异常: ${e.localizedMessage ?: "未知"}"))
         }
     }
 
