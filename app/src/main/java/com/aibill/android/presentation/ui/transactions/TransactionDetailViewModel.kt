@@ -4,13 +4,13 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
-import com.aibill.android.data.remote.api.TransactionApi
-import com.aibill.android.data.remote.dto.response.TransactionDto
-import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.model.Transaction
+import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
+import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.presentation.navigation.Route
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -29,7 +29,8 @@ import javax.inject.Inject
 @HiltViewModel
 class TransactionDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    private val transactionApi: TransactionApi,
+    // PR #61：下沉到 TransactionRepository，删除 TransactionApi 直接依赖
+    private val transactionRepository: TransactionRepository,
     private val categoryLearningEngine: CategoryLearningEngine,
     private val categoryRepository: CategoryRepository,
     private val accountRepository: AccountRepository,
@@ -146,7 +147,7 @@ class TransactionDetailViewModel @Inject constructor(
                 val tagsList = state.tags.split(",").map { it.trim() }.filter { it.isNotBlank() }
                 if (tagsList.isNotEmpty()) put("tags", tagsList)
             }
-            when (val result = safeApiCall { transactionApi.updateTransaction(transactionId, requestBody) }) {
+            when (val result = transactionRepository.updateTransaction(transactionId, requestBody)) {
                 is Result.Success -> {
                     // 若用户改了分类，学习新规则（PRD §4.11 / §8.5）
                     val newCategoryId = state.categoryId
@@ -173,7 +174,7 @@ class TransactionDetailViewModel @Inject constructor(
     fun onDelete() {
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true) }
-            when (val result = safeApiCall { transactionApi.deleteTransaction(transactionId) }) {
+            when (val result = transactionRepository.deleteTransaction(transactionId)) {
                 is Result.Success -> {
                     _uiState.update { it.copy(isSaving = false) }
                     _uiEvent.send(UiEvent.ShowToast("已删除 🗑️"))
@@ -190,23 +191,23 @@ class TransactionDetailViewModel @Inject constructor(
 
     private fun loadTransaction() {
         viewModelScope.launch {
-            when (val result = safeApiCall { transactionApi.getTransaction(transactionId) }) {
+            when (val result = transactionRepository.getTransaction(transactionId)) {
                 is Result.Success -> {
-                    val dto = result.data
-                    originalCategoryId = dto.categoryId
+                    val t = result.data
+                    originalCategoryId = t.categoryId
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            type = dto.type,
-                            amount = (dto.amount / 100.0).toString(),
-                            categoryName = dto.categoryName.orEmpty(),
-                            categoryId = dto.categoryId,
-                            accountName = dto.accountName.orEmpty(),
-                            accountId = dto.accountId,
-                            description = dto.description.orEmpty(),
-                            date = dto.date,
-                            time = dto.time.orEmpty(),
-                            tags = dto.tagsList().joinToString(", "),
+                            type = t.type.value,
+                            amount = (t.amount / 100.0).toString(),
+                            categoryName = t.categoryName.orEmpty(),
+                            categoryId = t.categoryId,
+                            accountName = t.accountName.orEmpty(),
+                            accountId = t.accountId,
+                            description = t.description.orEmpty(),
+                            date = t.date,
+                            time = t.time.orEmpty(),
+                            tags = t.tags.orEmpty().joinToString(", "),
                         )
                     }
                 }

@@ -80,6 +80,20 @@ class TransactionRepositoryImpl @Inject constructor(
         }
     }
 
+    /**
+     * PR #61：单条交易查询
+     */
+    override suspend fun getTransaction(id: Int): Result<Transaction> {
+        return safeApiCall { transactionApi.getTransaction(id) }.map { dto -> dto.toDomain() }
+    }
+
+    /**
+     * PR #61：编辑交易（详情页保存）
+     */
+    override suspend fun updateTransaction(id: Int, body: Map<String, Any>): Result<Transaction> {
+        return safeApiCall { transactionApi.updateTransaction(id, body) }.map { dto -> dto.toDomain() }
+    }
+
     override fun observePendingCount(): Flow<Int> =
         pendingTransactionDao.observePendingCount()
 

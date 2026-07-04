@@ -27,6 +27,12 @@ interface TransactionRepository {
 
     suspend fun deleteTransaction(id: Int): Result<Unit>
 
+    /** PR #61：详情页按 id 单条拉取，绕过 TransactionApi.getTransaction */
+    suspend fun getTransaction(id: Int): Result<Transaction>
+
+    /** PR #61：详情页保存修改，绕过 TransactionApi.updateTransaction */
+    suspend fun updateTransaction(id: Int, body: Map<String, Any>): Result<Transaction>
+
     fun observePendingCount(): Flow<Int>
 
     suspend fun syncPending(): Result<Unit>
