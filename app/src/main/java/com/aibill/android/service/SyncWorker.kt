@@ -77,7 +77,7 @@ class SyncWorker @AssistedInject constructor(
      * 同步单条 pending 交易，返回 (结果, 服务端 id)。
      * 服务端 id 来自 create 接口的 created[] 列表（按 client_id 匹配）。
      */
-    private suspend fun syncTransaction(entity: PendingTransactionEntity): Pair<SyncResult, Int?> {
+    internal suspend fun syncTransaction(entity: PendingTransactionEntity): Pair<SyncResult, Int?> {
         return try {
             val request = CreateTransactionRequest(
                 items = listOf(entity.toItemRequest())
@@ -158,7 +158,7 @@ class SyncWorker @AssistedInject constructor(
         )
     }
 
-    private enum class SyncResult {
+    internal enum class SyncResult {
         SUCCESS,
         UNAUTHORIZED,
         /** PR H2：服务端 code==0 但返回数据里没有匹配的 clientId */
