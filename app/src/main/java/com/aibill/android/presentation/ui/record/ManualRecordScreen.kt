@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -111,7 +112,12 @@ fun ManualRecordScreen(
         },
     ) { padding ->
         val selectedCategory = state.categories.firstOrNull { it.id == state.selectedCategoryId }
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Box(modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
+            // PR #33：避免软键盘弹起时遮挡备注/分类等输入区
+            .imePadding()
+        ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // 类型切换（固定顶部）
                 TypeSelector(selectedType = state.type, onTypeSelected = viewModel::onTypeChanged)
