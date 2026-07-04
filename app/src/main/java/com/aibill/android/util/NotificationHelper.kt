@@ -24,7 +24,8 @@ object NotificationHelper {
 
     private const val CHANNEL_ID = "aibill_auto_record"
     private const val CHANNEL_NAME = "自动记账"
-    private const val AUTO_DISMISS_DELAY_MS = 30_000L // 30秒后自动消失
+    // PR #40：PRD §4.3 规定 10 秒后自动收起，避免 heads-up 长时间霸屏
+    private const val AUTO_DISMISS_DELAY_MS = 10_000L
 
     /**
      * 创建通知渠道（Android O+）
@@ -93,6 +94,8 @@ object NotificationHelper {
         val notificationId = recordId.toInt()
         val amountDisplay = formatAmount(amount, privacyMode)
         val descDisplay = if (privacyMode) "***" else description
+        // PR #38：隐私模式下 source 也隐藏，避免锁屏泄露消费场景
+        val sourceDisplay = if (privacyMode) "***" else source
 
         // 确认 Action
         val confirmIntent = Intent(context, NotificationActionReceiver::class.java).apply {
@@ -133,7 +136,7 @@ object NotificationHelper {
         )
 
         val contentText = buildString {
-            append(source)
+            append(sourceDisplay)
             append(" · ")
             append(amountDisplay)
             if (!descDisplay.isNullOrBlank()) {
@@ -144,8 +147,13 @@ object NotificationHelper {
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
+            // PR #38：隐私模式标题完全泛化，不区分支出/收入、不暴露来源
             .setContentTitle(
-                if (type == "income") "💰 检测到一笔收入" else "💰 检测到一笔支出"
+                when {
+                    privacyMode -> "检测到一笔新交易"
+                    type == "income" -> "💰 检测到一笔收入"
+                    else -> "💰 检测到一笔支出"
+                }
             )
             .setContentText(contentText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
@@ -166,7 +174,7 @@ object NotificationHelper {
             as NotificationManager
         manager.notify(notificationId, notification)
 
-        // 自动取消超时：30秒（给用户足够时间操作）
+        // PR #40：10 秒自动收起（PRD §4.3）
         Handler(Looper.getMainLooper()).postDelayed({
             manager.cancel(notificationId)
         }, AUTO_DISMISS_DELAY_MS)
