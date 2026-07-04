@@ -32,9 +32,9 @@ class SyncWorker @AssistedInject constructor(
                 continue
             }
 
-            val result = syncTransaction(entity)
+            val (result, serverId) = syncTransaction(entity)
             when (result) {
-                SyncResult.SUCCESS -> markSynced(entity.clientId)
+                SyncResult.SUCCESS -> markSynced(entity.clientId, serverId)
                 SyncResult.UNAUTHORIZED -> return Result.failure()
                 SyncResult.BUSINESS_ERROR -> markFailed(entity.clientId, "Business error")
                 SyncResult.NETWORK_ERROR -> incrementRetry(entity.clientId, "Network error")
@@ -45,29 +45,49 @@ class SyncWorker @AssistedInject constructor(
         return if (remainingCount > 0) Result.retry() else Result.success()
     }
 
-    private suspend fun syncTransaction(entity: PendingTransactionEntity): SyncResult {
+    /**
+     * 同步单条 pending 交易，返回 (结果, 服务端 id)。
+     * 服务端 id 来自 create 接口的 created[] 列表（按 client_id 匹配）。
+     */
+    private suspend fun syncTransaction(entity: PendingTransactionEntity): Pair<SyncResult, Int?> {
         return try {
             val request = CreateTransactionRequest(
                 items = listOf(entity.toItemRequest())
             )
-            transactionApi.createTransactions(request)
-            SyncResult.SUCCESS
+            val apiResponse = transactionApi.createTransactions(request)
+            val data = apiResponse.data
+            // 在 created 或 duplicates 中按 client_id 查找对应记录
+            val matched = data?.created?.firstOrNull { it.clientId == entity.clientId }
+                ?: data?.duplicates?.firstOrNull { it.clientId == entity.clientId }
+            SyncResult.SUCCESS to matched?.id
         } catch (e: HttpException) {
             when (e.code()) {
-                HTTP_UNAUTHORIZED -> SyncResult.UNAUTHORIZED
-                else -> SyncResult.BUSINESS_ERROR
+                HTTP_UNAUTHORIZED -> SyncResult.UNAUTHORIZED to null
+                else -> SyncResult.BUSINESS_ERROR to null
             }
         } catch (_: IOException) {
-            SyncResult.NETWORK_ERROR
+            SyncResult.NETWORK_ERROR to null
         }
     }
 
-    private suspend fun markSynced(clientId: String) {
-        pendingTransactionDao.updateSyncStatus(
-            clientId = clientId,
-            status = STATUS_SYNCED,
-            updatedAt = System.currentTimeMillis()
-        )
+    /**
+     * 标记同步成功并写入服务端返回的 transaction id，便于后续编辑/删除追溯
+     */
+    private suspend fun markSynced(clientId: String, serverId: Int?) {
+        if (serverId != null) {
+            pendingTransactionDao.markSynced(
+                clientId = clientId,
+                serverId = serverId,
+                status = STATUS_SYNCED,
+                updatedAt = System.currentTimeMillis()
+            )
+        } else {
+            pendingTransactionDao.updateSyncStatus(
+                clientId = clientId,
+                status = STATUS_SYNCED,
+                updatedAt = System.currentTimeMillis()
+            )
+        }
     }
 
     private suspend fun markFailed(clientId: String, error: String) {
