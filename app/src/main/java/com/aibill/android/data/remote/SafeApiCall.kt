@@ -10,23 +10,34 @@ import java.io.IOException
  * 安全 API 调用封装
  * 统一处理网络异常和业务错误码，返回 Result 类型
  *
- * PR #60：当 data 为 null 且泛型 T 不是 Unit 时，原代码 `Unit as T` 是
- * unchecked cast，运行期取 data 字段时可能 ClassCastException。
- * 改为：当 T 实际是 Unit 时允许 data 为 null；否则 data==null 视为业务错误。
+ * PR #60 + M7：原代码 `Unit as T` 是 unchecked cast，运行期取 data 字段时可能
+ * ClassCastException（虽然所有现有 callsite 都用 Result<Unit>/Result<Any>，
+ * 但 foot-gun 性质）。
+ *
+ * M7 修复：直接重写为 reified 内联函数，通过 T::class 在编译期决定 null-data 行为：
+ * - T == Unit → 允许 null data（DELETE 类接口）
+ * - T == Any  → 允许 null data（同上）
+ * - 其他类型 → data==null 视为业务错误（code=-3 "API 返回数据为空"）
+ *
+ * 用法：`safeApiCall<TransactionDto> { api.getTransaction(id) }`
  */
-suspend fun <T> safeApiCall(apiCall: suspend () -> ApiResponse<T>): Result<T> {
+suspend inline fun <reified T> safeApiCall(
+    crossinline apiCall: suspend () -> ApiResponse<T>,
+): Result<T> {
     return try {
         val response = apiCall()
         when (response.code) {
             0 -> {
-                // PR #60：data 为 null 时若是 DELETE 类型（ApiResponse<Any>/Unit），
-                // 原代码 `Unit as T` 是 unchecked cast，但所有现有 callsite
-                // 都用 Result<Unit>/Result<Any>，实际不会 ClassCastException。
-                // 保留该 cast 以兼容现有调用；若后续出现非 Unit/Any 的
-                // ApiResponse<X>，需要按类型分发。
-                @Suppress("UNCHECKED_CAST")
-                val data = response.data ?: (Unit as T)
-                Result.Success(data)
+                val data = response.data
+                when {
+                    data != null -> Result.Success(data)
+                    // DELETE 类接口（ApiResponse<Any>/ApiResponse<Unit>）允许 data=null
+                    T::class == Unit::class || T::class == Any::class ->
+                        @Suppress("UNCHECKED_CAST")
+                        Result.Success(Unit as T)
+                    // 其他类型 data==null 视为业务错误
+                    else -> Result.Error(-3, "API 返回数据为空")
+                }
             }
             else -> {
                 Timber.w("API 业务错误: code=${response.code}, message=${response.message}")
