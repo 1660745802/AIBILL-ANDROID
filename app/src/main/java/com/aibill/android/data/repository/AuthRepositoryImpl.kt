@@ -1,9 +1,12 @@
 package com.aibill.android.data.repository
 
+import android.content.Context
+import androidx.work.WorkManager
 import com.aibill.android.data.local.dao.AccountDao
 import com.aibill.android.data.local.dao.CategoryDao
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
+import com.aibill.android.data.local.datastore.SyncLock
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.remote.api.AuthApi
 import com.aibill.android.data.remote.dto.request.LoginRequest
@@ -13,6 +16,9 @@ import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.User
 import com.aibill.android.domain.repository.AuthRepository
+import com.aibill.android.service.SyncWorker
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.delay
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,9 +31,26 @@ class AuthRepositoryImpl @Inject constructor(
     private val categoryDao: CategoryDao,
     private val accountDao: AccountDao,
     private val notificationRecordDao: NotificationRecordDao,
+    private val syncLock: SyncLock,
+    @ApplicationContext private val context: Context,
 ) : AuthRepository {
 
+    /**
+     * PR C1：登录/注册前先取消在飞的 SyncWorker 并等待锁释放，
+     * 避免循环进行到一半时清缓存/换 token 导致 user A 的交易
+     * 用 user B 的 token 写到 user B 的服务端。
+     */
+    private suspend fun awaitSyncIdle() {
+        WorkManager.getInstance(context).cancelUniqueWork(SyncWorker.WORK_NAME)
+        val deadline = System.currentTimeMillis() + MAX_WAIT_MS
+        while (syncLock.isActive() && System.currentTimeMillis() < deadline) {
+            delay(WAIT_INTERVAL_MS)
+        }
+    }
+
     override suspend fun login(username: String, password: String): Result<User> {
+        // PR C1：登录前等 SyncWorker 跑完（或超时强杀）
+        awaitSyncIdle()
         val result = safeApiCall { authApi.login(LoginRequest(username, password)) }
         return when (result) {
             is Result.Success -> {
@@ -50,6 +73,8 @@ class AuthRepositoryImpl @Inject constructor(
         inviteCode: String,
         nickname: String?
     ): Result<User> {
+        // PR C1：注册前同样等 SyncWorker
+        awaitSyncIdle()
         val result = safeApiCall {
             authApi.register(RegisterRequest(username, password, inviteCode, nickname))
         }
@@ -99,4 +124,10 @@ class AuthRepositoryImpl @Inject constructor(
         nickname = nickname,
         role = role,
     )
+
+    companion object {
+        /** PR C1：awaitSyncIdle 等待 sync_lock 释放的最长时限 */
+        private const val MAX_WAIT_MS = 3_000L
+        private const val WAIT_INTERVAL_MS = 50L
+    }
 }

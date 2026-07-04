@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.aibill.android.data.local.dao.PendingTransactionDao
+import com.aibill.android.data.local.datastore.SyncLock
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
@@ -19,41 +20,49 @@ class SyncWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val pendingTransactionDao: PendingTransactionDao,
-    private val transactionApi: TransactionApi
+    private val transactionApi: TransactionApi,
+    private val syncLock: SyncLock,
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        val pendingList = pendingTransactionDao.getAllPending()
-        if (pendingList.isEmpty()) return Result.success()
+        // PR C1：置 sync lock，AuthRepositoryImpl 换号前会 wait 直到 release
+        syncLock.acquire()
+        try {
+            val pendingList = pendingTransactionDao.getAllPending()
+            if (pendingList.isEmpty()) return Result.success()
 
-        var unauthorizedSeen = false
+            var unauthorizedSeen = false
 
-        for (entity in pendingList) {
-            if (entity.retryCount >= MAX_RETRY_COUNT) {
-                markFailed(entity.clientId, "Max retry count exceeded")
-                continue
-            }
-
-            val (result, serverId) = syncTransaction(entity)
-            when (result) {
-                SyncResult.SUCCESS -> markSynced(entity.clientId, serverId)
-                SyncResult.UNAUTHORIZED -> {
-                    // Token 过期：标记当前记录失败，避免下次 worker 重复触发 401 循环；
-                    // AuthEventBus 已被 AuthInterceptor emit，由 MainActivity 触发跳登录
-                    markFailed(entity.clientId, "Token expired, need re-login")
-                    unauthorizedSeen = true
+            for (entity in pendingList) {
+                if (entity.retryCount >= MAX_RETRY_COUNT) {
+                    markFailed(entity.clientId, "Max retry count exceeded")
+                    continue
                 }
-                SyncResult.BUSINESS_ERROR -> markFailed(entity.clientId, "Business error")
-                SyncResult.NETWORK_ERROR -> incrementRetry(entity.clientId, "Network error")
-            }
-        }
 
-        // 检查剩余 pending（含 failed 状态）数，如果还有任何未同步的，则 retry
-        val remainingCount = pendingTransactionDao.getAnyUnsyncedCount()
-        return when {
-            unauthorizedSeen -> Result.failure()   // 等用户重新登录后再调度
-            remainingCount > 0 -> Result.retry()
-            else -> Result.success()
+                val (result, serverId) = syncTransaction(entity)
+                when (result) {
+                    SyncResult.SUCCESS -> markSynced(entity.clientId, serverId)
+                    SyncResult.UNAUTHORIZED -> {
+                        // Token 过期：标记当前记录失败，避免下次 worker 重复触发 401 循环；
+                        // AuthEventBus 已被 AuthInterceptor emit，由 MainActivity 触发跳登录
+                        markFailed(entity.clientId, "Token expired, need re-login")
+                        unauthorizedSeen = true
+                    }
+                    SyncResult.BUSINESS_ERROR -> markFailed(entity.clientId, "Business error")
+                    SyncResult.NETWORK_ERROR -> incrementRetry(entity.clientId, "Network error")
+                }
+            }
+
+            // 检查剩余 pending（含 failed 状态）数，如果还有任何未同步的，则 retry
+            val remainingCount = pendingTransactionDao.getAnyUnsyncedCount()
+            return when {
+                unauthorizedSeen -> Result.failure()   // 等用户重新登录后再调度
+                remainingCount > 0 -> Result.retry()
+                else -> Result.success()
+            }
+        } finally {
+            // PR C1：无论成功/异常/重试，必须释放锁，否则后续 login 会死等
+            syncLock.release()
         }
     }
 
