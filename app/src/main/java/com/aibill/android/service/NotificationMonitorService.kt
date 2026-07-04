@@ -234,7 +234,7 @@ class NotificationMonitorService : NotificationListenerService() {
             }
         } else if (parseResult == null) {
             // 正则匹配失败，调 AI 兜底解析
-            tryAiParse(fullText, recordId)
+            tryAiParse(fullText, recordId, packageName)
         }
     }
 
@@ -249,8 +249,14 @@ class NotificationMonitorService : NotificationListenerService() {
     /**
      * 正则匹配失败时调用 AI 兜底解析
      * 将通知文本发给后端 AI，如果解析出结果则弹窗确认
+     *
+     * PR C2：packageName 必须由调用方显式传入。
+     * 之前 tryAiParse 是成员函数、内部写裸 packageName 时 Kotlin 解析成
+     * Context.packageName（即 App 自己的包名"com.aibill.android"），
+     * 导致多条解析的 extras 显示"com.aibill.android"而不是真实来源
+     * （微信支付/支付宝等）。
      */
-    private suspend fun tryAiParse(text: String, recordId: Long) {
+    private suspend fun tryAiParse(text: String, recordId: Long, packageName: String) {
         // 预筛：必须同时包含"数字"和"支付特征"才值得调 AI
         // 避免把微信/短信里的普通聊天消息外发给后端，既省成本也保护隐私
         val hasDigit = text.any { it.isDigit() }
