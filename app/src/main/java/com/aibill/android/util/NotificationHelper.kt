@@ -174,9 +174,29 @@ object NotificationHelper {
             as NotificationManager
         manager.notify(notificationId, notification)
 
-        // PR #40：10 秒自动收起（PRD §4.3）
-        Handler(Looper.getMainLooper()).postDelayed({
-            manager.cancel(notificationId)
-        }, AUTO_DISMISS_DELAY_MS)
+        // PR #40 + M3：10 秒自动收起（PRD §4.3）。
+        // 之前多个 Notification 同时间 post 时只有一个 Handler 引用被持有，
+        // GC 可能在 cancel 触发前回收 Runnable。
+        // 改为把 Runnable 存到静态 Map 强引用，确保 10s 后真的 cancel。
+        scheduleAutoCancel(manager, notificationId, AUTO_DISMISS_DELAY_MS)
+    }
+
+    private val pendingCancels = java.util.concurrent.ConcurrentHashMap<Int, Runnable>()
+    private val cancelHandler = Handler(Looper.getMainLooper())
+
+    private fun scheduleAutoCancel(
+        manager: NotificationManager,
+        notificationId: Int,
+        delayMs: Long,
+    ) {
+        val runnable = Runnable {
+            try {
+                manager.cancel(notificationId)
+            } finally {
+                pendingCancels.remove(notificationId)
+            }
+        }
+        pendingCancels[notificationId] = runnable
+        cancelHandler.postDelayed(runnable, delayMs)
     }
 }
