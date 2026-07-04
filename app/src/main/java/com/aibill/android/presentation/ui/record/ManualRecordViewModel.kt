@@ -18,6 +18,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -87,20 +88,31 @@ class ManualRecordViewModel @Inject constructor(
     private fun applyTemplatePrefill(id: Long) {
         viewModelScope.launch {
             val template = templateRepository.findById(id) ?: return@launch
+            // PR H1：先写不依赖分类列表的字段（type/amount/description/accountId）
+            // 不立即设 selectedCategoryId，等 onTypeChanged 触发的分类列表加载完
+            // 后再设，否则 onTypeChanged 会把它清掉。
             _uiState.update {
                 it.copy(
                     type = template.type.value,
                     amountFen = template.amount,
                     amountText = "%.2f".format(template.amount / 100.0),
-                    selectedCategoryId = template.categoryId,
                     accountId = template.accountId,
                     description = template.description.orEmpty(),
                 )
             }
             // 切换 type 让分类/账户列表按模板的类型加载
             onTypeChanged(template.type.value)
-            // 模板选了分类但当前 type 列表没这个 id（如模板分类被删），
-            // 已被 onTypeChanged 重置为 null，无需额外处理
+            // 在分类列表加载完后查模板的 categoryId 是否仍在；若分类被删则保持 null
+            val templateCategoryId = template.categoryId
+            if (templateCategoryId != null) {
+                val currentCategories = categoryRepository
+                    .observeCategories(template.type.value)
+                    .first()
+                val matched = currentCategories.firstOrNull { it.id == templateCategoryId }
+                if (matched != null) {
+                    _uiState.update { it.copy(selectedCategoryId = matched.id) }
+                }
+            }
             // 选择模板指定的账户
             template.accountId?.let { onAccountSelected(it) }
         }
