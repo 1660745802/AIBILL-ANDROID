@@ -30,6 +30,14 @@ object DatabaseModule {
             AppDatabase::class.java,
             AppDatabase.DATABASE_NAME
         )
+            // v5 → v6：PR #43 给 PendingTransactionEntity 加 3 列冗余 name/icon
+            .addMigrations(
+                androidx.room.migration.Migration(5, 6) { db ->
+                    db.execSQL("ALTER TABLE pending_transactions ADD COLUMN category_name TEXT")
+                    db.execSQL("ALTER TABLE pending_transactions ADD COLUMN category_icon TEXT")
+                    db.execSQL("ALTER TABLE pending_transactions ADD COLUMN account_name TEXT")
+                }
+            )
             // 不允许 fallbackToDestructiveMigration：schema 不匹配时必须显式写 Migration，
             // 否则未同步的 pending_transactions 会被静默清空，违反 PRD §8.4 数据不丢失
             .build()

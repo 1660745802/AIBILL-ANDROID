@@ -30,7 +30,7 @@ import com.aibill.android.data.local.entity.TemplateEntity
         AutoRuleEntity::class,
         RecurringRuleEntity::class,
     ],
-    version = 5,
+    version = 6, // v5 → v6: PendingTransactionEntity 新增 category_name/category_icon/account_name
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
