@@ -2,9 +2,11 @@ package com.aibill.android.presentation.ui.statistics
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aibill.android.data.remote.api.StatsApi
-import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.repository.CategoryStat
+import com.aibill.android.domain.repository.StatsRepository
+import com.aibill.android.domain.repository.StatsSummary
+import com.aibill.android.domain.repository.TrendPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,29 +19,9 @@ import javax.inject.Inject
 
 @HiltViewModel
 class StatisticsViewModel @Inject constructor(
-    private val statsApi: StatsApi
+    // PR M8：删除 StatsApi 直接依赖，改用 StatsRepository
+    private val statsRepository: StatsRepository,
 ) : ViewModel() {
-
-    data class StatsSummary(
-        val expense: Int = 0,
-        val income: Int = 0,
-        val balance: Int = 0,
-        val expenseChange: Int = 0,
-        val incomeChange: Int = 0
-    )
-
-    data class CategoryStat(
-        val categoryId: Int,
-        val categoryName: String,
-        val categoryIcon: String,
-        val amount: Int,
-        val percent: Double
-    )
-
-    data class TrendPoint(
-        val date: String,
-        val amount: Int
-    )
 
     data class StatsUiState(
         val isLoading: Boolean = false,
@@ -49,7 +31,7 @@ class StatisticsViewModel @Inject constructor(
         val summary: StatsSummary? = null,
         val categoryStats: List<CategoryStat> = emptyList(),
         val trendData: List<TrendPoint> = emptyList(),
-        val error: String? = null
+        val error: String? = null,
     )
 
     private val _uiState = MutableStateFlow(StatsUiState())
@@ -76,7 +58,7 @@ class StatisticsViewModel @Inject constructor(
     }
 
     fun onJumpToCurrentMonth() {
-        val now = java.time.LocalDate.now()
+        val now = LocalDate.now()
         _uiState.update { it.copy(year = now.year, month = now.monthValue) }
         loadData()
     }
@@ -94,27 +76,13 @@ class StatisticsViewModel @Inject constructor(
     private fun loadData() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
-
             val state = _uiState.value
             val year = state.year
             val month = state.month
 
             // 加载摘要
-            when (val result = safeApiCall { statsApi.getSummary(year, month) }) {
-                is Result.Success -> {
-                    val dto = result.data
-                    _uiState.update {
-                        it.copy(
-                            summary = StatsSummary(
-                                expense = dto.expense,
-                                income = dto.income,
-                                balance = dto.balance,
-                                expenseChange = dto.expenseChange ?: 0,
-                                incomeChange = dto.incomeChange ?: 0,
-                            )
-                        )
-                    }
-                }
+            when (val result = statsRepository.getSummary(year, month)) {
+                is Result.Success -> _uiState.update { it.copy(summary = result.data) }
                 is Result.Error -> {
                     Timber.w("加载摘要失败: ${result.message}")
                     _uiState.update { it.copy(error = result.message) }
@@ -135,36 +103,18 @@ class StatisticsViewModel @Inject constructor(
             val type = state.selectedTab
 
             // 加载分类统计
-            when (val result = safeApiCall { statsApi.getByCategory(year, month, type) }) {
-                is Result.Success -> {
-                    _uiState.update { s ->
-                        s.copy(
-                            categoryStats = result.data.items.map { dto ->
-                                CategoryStat(
-                                    categoryId = dto.categoryId,
-                                    categoryName = dto.categoryName,
-                                    categoryIcon = dto.categoryIcon,
-                                    amount = dto.amount,
-                                    percent = dto.percent
-                                )
-                            }
-                        )
-                    }
+            when (val result = statsRepository.getByCategory(year, month, type)) {
+                is Result.Success -> _uiState.update {
+                    it.copy(categoryStats = result.data)
                 }
                 is Result.Error -> Timber.w("加载分类统计失败: ${result.message}")
                 is Result.Loading -> Unit
             }
 
             // 加载趋势
-            when (val result = safeApiCall { statsApi.getTrend(year, month, "daily", type) }) {
-                is Result.Success -> {
-                    _uiState.update { s ->
-                        s.copy(
-                            trendData = result.data.items.map { dto ->
-                                TrendPoint(date = dto.date ?: dto.month ?: "", amount = dto.amount)
-                            }
-                        )
-                    }
+            when (val result = statsRepository.getTrend(year, month, "daily", type)) {
+                is Result.Success -> _uiState.update {
+                    it.copy(trendData = result.data)
                 }
                 is Result.Error -> Timber.w("加载趋势失败: ${result.message}")
                 is Result.Loading -> Unit

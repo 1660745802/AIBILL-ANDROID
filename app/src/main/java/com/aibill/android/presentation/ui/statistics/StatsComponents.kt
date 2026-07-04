@@ -41,6 +41,9 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aibill.android.domain.repository.CategoryStat
+import com.aibill.android.domain.repository.StatsSummary
+import com.aibill.android.domain.repository.TrendPoint
 import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.utils.toYuanDisplay
@@ -56,7 +59,7 @@ private val IncomeGradient = listOf(Color(0xFF009688), Color(0xFF4DB6AC))
 
 @Composable
 internal fun SummaryCard(
-    summary: StatisticsViewModel.StatsSummary?,
+    summary: StatsSummary?,
     selectedTab: String,
     modifier: Modifier = Modifier,
 ) {
@@ -130,7 +133,7 @@ internal fun SummaryCard(
 
 @Composable
 internal fun TrendChartPlaceholder(
-    trendData: List<StatisticsViewModel.TrendPoint>,
+    trendData: List<TrendPoint>,
     selectedTab: String,
     modifier: Modifier = Modifier,
 ) {
@@ -225,7 +228,7 @@ internal fun TrendChartPlaceholder(
  */
 @Composable
 internal fun CategoryDonutChart(
-    categories: List<StatisticsViewModel.CategoryStat>,
+    categories: List<CategoryStat>,
     selectedTab: String,
     modifier: Modifier = Modifier,
 ) {
@@ -342,7 +345,7 @@ internal fun CategoryDonutChart(
 
 @Composable
 internal fun CategoryStatItem(
-    category: StatisticsViewModel.CategoryStat,
+    category: CategoryStat,
     selectedTab: String,
     onClick: () -> Unit = {},
     modifier: Modifier = Modifier,

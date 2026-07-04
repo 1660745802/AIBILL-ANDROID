@@ -20,6 +20,7 @@ data class StatsSummary(
     val income: Int, // 分
     val balance: Int, // 分
     val expenseChange: Int?, // 环比变化百分比，可能为 null
+    val incomeChange: Int? = null, // PR #55 补 income 环比
 )
 
 data class CategoryStat(
