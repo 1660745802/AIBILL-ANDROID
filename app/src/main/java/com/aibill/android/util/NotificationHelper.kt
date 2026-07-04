@@ -146,7 +146,7 @@ object NotificationHelper {
         }
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_notification)
             // PR #38：隐私模式标题完全泛化，不区分支出/收入、不暴露来源
             .setContentTitle(
                 when {
