@@ -33,6 +33,11 @@ interface TransactionRepository {
     /** PR #61：详情页保存修改，绕过 TransactionApi.updateTransaction */
     suspend fun updateTransaction(id: Int, body: Map<String, Any>): Result<Transaction>
 
+    /** PR #61：回收站 (TrashViewModel 之前直接调 TransactionApi) */
+    suspend fun getTrash(): Result<List<Transaction>>
+    suspend fun restoreTransaction(id: Int): Result<Unit>
+    suspend fun permanentDeleteTransaction(id: Int): Result<Unit>
+
     fun observePendingCount(): Flow<Int>
 
     suspend fun syncPending(): Result<Unit>

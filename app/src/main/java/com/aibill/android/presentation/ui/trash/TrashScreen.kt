@@ -84,10 +84,10 @@ fun TrashScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(uiState.items, key = { it.id }) { item ->
+                    items(uiState.items, key = { it.id ?: 0 }) { item ->
                         TrashItem(
                             transaction = item,
-                            onRestore = { viewModel.restoreTransaction(item.id) },
+                            onRestore = { item.id?.let { viewModel.restoreTransaction(it) } },
                             onPermanentDelete = { deleteConfirmId = item.id },
                         )
                     }
@@ -121,7 +121,8 @@ fun TrashScreen(
 
 @Composable
 private fun TrashItem(
-    transaction: TransactionDto,
+    // PR #61：TrashViewModel 改用 Domain Transaction
+    transaction: com.aibill.android.domain.model.Transaction,
     onRestore: () -> Unit,
     onPermanentDelete: () -> Unit,
     modifier: Modifier = Modifier,
@@ -164,12 +165,12 @@ private fun TrashItem(
             }
 
             // 金额
-            val prefix = if (transaction.type == "expense") "-" else "+"
+            val prefix = if (transaction.type == com.aibill.android.domain.model.TransactionType.EXPENSE) "-" else "+"
             Text(
                 text = "$prefix${transaction.amount.toYuanDisplay()}",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = if (transaction.type == "expense") {
+                color = if (transaction.type == com.aibill.android.domain.model.TransactionType.EXPENSE) {
                     MaterialTheme.colorScheme.error
                 } else {
                     MaterialTheme.colorScheme.primary

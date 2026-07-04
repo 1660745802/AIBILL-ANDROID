@@ -94,6 +94,29 @@ class TransactionRepositoryImpl @Inject constructor(
         return safeApiCall { transactionApi.updateTransaction(id, body) }.map { dto -> dto.toDomain() }
     }
 
+    /** PR #61：回收站 */
+    override suspend fun getTrash(): Result<List<Transaction>> {
+        return safeApiCall { transactionApi.getTrash() }.map { paginated ->
+            paginated.items.map { it.toDomain() }
+        }
+    }
+
+    override suspend fun restoreTransaction(id: Int): Result<Unit> {
+        return when (val response = safeApiCall { transactionApi.restoreTransaction(id) }) {
+            is Result.Success -> Result.Success(Unit)
+            is Result.Error -> response
+            is Result.Loading -> response
+        }
+    }
+
+    override suspend fun permanentDeleteTransaction(id: Int): Result<Unit> {
+        return when (val response = safeApiCall { transactionApi.permanentDeleteTransaction(id) }) {
+            is Result.Success -> Result.Success(Unit)
+            is Result.Error -> response
+            is Result.Loading -> response
+        }
+    }
+
     override fun observePendingCount(): Flow<Int> =
         pendingTransactionDao.observePendingCount()
 
