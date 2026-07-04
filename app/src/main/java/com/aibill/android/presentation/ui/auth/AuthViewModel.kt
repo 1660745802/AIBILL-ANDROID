@@ -37,7 +37,14 @@ class AuthViewModel @Inject constructor(
     val uiEvent = _uiEvent.receiveAsFlow()
 
     init {
-        _uiState.update { it.copy(isLoggedIn = authRepository.isLoggedIn()) }
+        // PR #59：之前在 init{} 同步调 authRepository.isLoggedIn() →
+        // tokenManager.hasToken() → EncryptedSharedPreferences 同步磁盘读
+        // 首次启动还需生成 master key，主线程 ANR 风险。
+        // 改为 viewModelScope.launch 异步读取
+        viewModelScope.launch {
+            val hasToken = authRepository.isLoggedIn()
+            _uiState.update { it.copy(isLoggedIn = hasToken) }
+        }
     }
 
     fun login(username: String, password: String) {
