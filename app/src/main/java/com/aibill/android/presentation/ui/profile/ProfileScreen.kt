@@ -56,12 +56,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.presentation.theme.AppTextButton
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted.Companion.Eagerly
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -69,7 +74,17 @@ import javax.inject.Inject
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
     private val authRepository: com.aibill.android.domain.repository.AuthRepository,
+    userPreferences: UserPreferences,
 ) : ViewModel() {
+    // PR #51：头像读 nickname/username 实际值（之前写死"用户"）
+    val displayName: StateFlow<String> = userPreferences.nickname
+        .combine(userPreferences.username) { nickname, username ->
+            nickname?.takeIf { it.isNotBlank() }
+                ?: username?.takeIf { it.isNotBlank() }
+                ?: "用户"
+        }
+        .stateIn(viewModelScope, Eagerly, "用户")
+
     fun logout(onComplete: () -> Unit) {
         viewModelScope.launch {
             authRepository.logout()
@@ -124,7 +139,7 @@ fun ProfileScreen(
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item { UserHeaderCard() }
+        item { UserHeaderCard(displayName = viewModel.displayName.collectAsState().value) }
         item { SectionLabel("功能") }
         item {
             MenuCard {
@@ -179,7 +194,7 @@ fun ProfileScreen(
         item {
             MenuCard {
                 ProfileMenuItem(
-                    icon = Icons.Default.Notifications, title = "自动记账权限",
+                    icon = Icons.Default.Notifications, title = "通知设置",
                     subtitle = "通知监听、弹窗、后台保活",
                     onClick = onNavigateToNotification,
                 )
@@ -207,7 +222,7 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun UserHeaderCard() {
+private fun UserHeaderCard(displayName: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -237,7 +252,7 @@ private fun UserHeaderCard() {
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
-            Text("用户", style = MaterialTheme.typography.titleLarge,
+            Text(displayName, style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold, color = Color.White)
             Text("AIBILL · 智能记账", style = MaterialTheme.typography.bodySmall,
                 color = Color.White.copy(alpha = 0.7f))

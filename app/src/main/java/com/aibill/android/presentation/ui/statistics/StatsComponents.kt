@@ -48,8 +48,10 @@ import kotlin.math.max
 import kotlin.math.sin
 import kotlin.math.PI
 
-private val ExpenseGradient = listOf(Color(0xFFF44336), Color(0xFFFF7043))
-private val IncomeGradient = listOf(Color(0xFF4CAF50), Color(0xFF81C784))
+// PR #50：SummaryCard 与 HomeInputSection.MonthlyExpenseHeader 统一渐变
+// 原 ExpenseGradient/IncomeGradient 各自不同，PRD §5.3 强调设计语言一致
+private val ExpenseGradient = listOf(Color(0xFF009688), Color(0xFF4DB6AC))
+private val IncomeGradient = listOf(Color(0xFF009688), Color(0xFF4DB6AC))
 
 @Composable
 internal fun SummaryCard(
