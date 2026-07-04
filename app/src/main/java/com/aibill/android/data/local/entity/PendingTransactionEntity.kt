@@ -23,8 +23,18 @@ data class PendingTransactionEntity(
     @ColumnInfo(name = "category_id")
     val categoryId: Int? = null,
 
+    // PR #43：冗余存 name/icon，未同步期间列表展示不需要 join 分类表
+    @ColumnInfo(name = "category_name")
+    val categoryName: String? = null,
+
+    @ColumnInfo(name = "category_icon")
+    val categoryIcon: String? = null,
+
     @ColumnInfo(name = "account_id")
     val accountId: Int? = null,
+
+    @ColumnInfo(name = "account_name")
+    val accountName: String? = null,
 
     @ColumnInfo(name = "target_account_id")
     val targetAccountId: Int? = null,

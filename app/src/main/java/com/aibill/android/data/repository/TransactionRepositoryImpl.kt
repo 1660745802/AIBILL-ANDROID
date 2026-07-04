@@ -39,7 +39,11 @@ class TransactionRepositoryImpl @Inject constructor(
             type = transaction.type.value,
             amount = transaction.amount,
             categoryId = transaction.categoryId,
+            // PR #43：冗余存 name/icon，未同步期间列表展示不需 join 分类表
+            categoryName = transaction.categoryName,
+            categoryIcon = transaction.categoryIcon,
             accountId = transaction.accountId,
+            accountName = transaction.accountName,
             targetAccountId = transaction.targetAccountId,
             description = transaction.description,
             date = transaction.date,
