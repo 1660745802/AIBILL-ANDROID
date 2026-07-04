@@ -71,8 +71,13 @@ object WidgetDataUpdater {
         amountCents: Int,
         date: String? = null,
     ) {
+        // PR M2：先快照跨月判断所需的月份标签，
+        // 避免日期在「早 return 校验」与「实际 IO 写入」之间跨月导致竞态。
+        val transactionMonthTag = date?.take(7)
         // 仅累加本月数据；如果传入 date 跨月则跳过（由下次 updateMonthlySummary 刷新）
-        if (date != null && !date.startsWith(currentMonthTag())) return
+        if (date != null && transactionMonthTag != currentMonthTag()) return
+        // TRANSFER 不计入月度收支，提前 return 避免无谓的 IO + DataStore 写入。
+        if (type == TransactionType.TRANSFER) return
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val monthTag = currentMonthTag()
@@ -93,9 +98,7 @@ object WidgetDataUpdater {
                             prefs[Keys.MONTHLY_INCOME] =
                                 (prefs[Keys.MONTHLY_INCOME] ?: 0) + amountCents
                         }
-                        TransactionType.TRANSFER -> {
-                            // 转账不计入月度收支
-                        }
+                        TransactionType.TRANSFER -> Unit // 已提前 return，这里兜底
                     }
                     prefs[Keys.UPDATED_AT] = System.currentTimeMillis()
                 }
