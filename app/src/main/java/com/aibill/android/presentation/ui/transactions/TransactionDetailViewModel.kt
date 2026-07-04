@@ -7,7 +7,10 @@ import androidx.navigation.toRoute
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.dto.response.TransactionDto
 import com.aibill.android.data.remote.safeApiCall
+import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.repository.AccountRepository
+import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.presentation.navigation.Route
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -15,6 +18,9 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -25,6 +31,8 @@ class TransactionDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val transactionApi: TransactionApi,
     private val categoryLearningEngine: CategoryLearningEngine,
+    private val categoryRepository: CategoryRepository,
+    private val accountRepository: AccountRepository,
 ) : ViewModel() {
 
     private val transactionId: Int = savedStateHandle.toRoute<Route.TransactionDetail>().id
@@ -45,6 +53,8 @@ class TransactionDetailViewModel @Inject constructor(
         val date: String = "",
         val time: String = "",
         val tags: String = "",
+        val categories: List<Category> = emptyList(),
+        val accounts: List<com.aibill.android.domain.model.Account> = emptyList(),
         val error: String? = null,
     )
 
@@ -61,6 +71,39 @@ class TransactionDetailViewModel @Inject constructor(
 
     init {
         loadTransaction()
+        observeAccounts()
+        viewModelScope.launch {
+            // 当前 type 对应的分类列表，type 切换时重订阅
+            _uiState.map { it.type }.distinctUntilChanged().collectLatest { type ->
+                categoryRepository.observeCategories(type).collect { list ->
+                    _uiState.update { it.copy(categories = list) }
+                }
+            }
+        }
+    }
+
+    private fun observeAccounts() {
+        viewModelScope.launch {
+            accountRepository.observeAccounts().collect { list ->
+                _uiState.update { it.copy(accounts = list) }
+            }
+        }
+    }
+
+    fun onCategorySelected(id: Int) {
+        val cat = _uiState.value.categories.firstOrNull { it.id == id }
+        _uiState.update { it.copy(
+            categoryId = id,
+            categoryName = cat?.name ?: it.categoryName,
+        ) }
+    }
+
+    fun onAccountSelected(id: Int?) {
+        val acc = _uiState.value.accounts.firstOrNull { it.id == id }
+        _uiState.update { it.copy(
+            accountId = id,
+            accountName = acc?.name ?: "",
+        ) }
     }
 
     fun onTypeChanged(type: String) {

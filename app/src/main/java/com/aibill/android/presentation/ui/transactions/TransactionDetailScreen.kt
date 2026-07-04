@@ -8,15 +8,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -28,12 +35,18 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -53,6 +66,7 @@ fun TransactionDetailScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.uiEvent.collectLatest { event ->
@@ -130,18 +144,18 @@ fun TransactionDetailScreen(
                 }
                 // 分类
                 DetailCard(label = "📂 分类") {
-                    Text(
-                        text = uiState.categoryName.ifBlank { "未设置" },
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
+                    CategoryPickerRow(
+                        availableCategories = uiState.categories,
+                        selectedCategoryId = uiState.categoryId,
+                        onSelect = viewModel::onCategorySelected,
                     )
                 }
                 // 账户
                 DetailCard(label = "🏦 账户") {
-                    Text(
-                        text = uiState.accountName.ifBlank { "未设置" },
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
+                    AccountPickerRow(
+                        availableAccounts = uiState.accounts,
+                        selectedAccountId = uiState.accountId,
+                        onSelect = viewModel::onAccountSelected,
                     )
                 }
                 // 描述
@@ -154,11 +168,27 @@ fun TransactionDetailScreen(
                 }
                 // 日期
                 DetailCard(label = "📅 日期") {
-                    DetailTextField(
-                        value = uiState.date,
-                        onValueChange = viewModel::onDateChanged,
-                        placeholder = "YYYY-MM-DD",
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = uiState.date.ifBlank { "未设置" },
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { showDatePicker = true }) {
+                            Icon(
+                                Icons.Default.CalendarMonth,
+                                contentDescription = "选日期",
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("选择")
+                        }
+                    }
                 }
                 // 时间
                 DetailCard(label = "🕐 时间") {
@@ -189,6 +219,35 @@ fun TransactionDetailScreen(
                 )
                 Spacer(modifier = Modifier.height(24.dp))
             }
+        }
+    }
+
+    // 日期选择器弹窗
+    if (showDatePicker) {
+        val dateState = rememberDatePickerState(
+            initialSelectedDateMillis = uiState.date.takeIf { it.isNotBlank() }
+                ?.let { runCatching { java.time.LocalDate.parse(it).toEpochDay() * 86_400_000L }.getOrNull() }
+                ?: System.currentTimeMillis(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    dateState.selectedDateMillis?.let { millis ->
+                        val date = java.time.Instant.ofEpochMilli(millis)
+                            .atZone(java.time.ZoneId.systemDefault())
+                            .toLocalDate()
+                            .toString()
+                        viewModel.onDateChanged(date)
+                    }
+                    showDatePicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+            },
+        ) {
+            DatePicker(state = dateState)
         }
     }
 }
@@ -255,6 +314,65 @@ private fun TypeChipRow(
                 selected = selected == value,
                 onClick = { onSelected(value) },
                 label = { Text(label) },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CategoryPickerRow(
+    availableCategories: List<com.aibill.android.domain.model.Category>,
+    selectedCategoryId: Int?,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (availableCategories.isEmpty()) {
+        Text(
+            text = "暂无分类",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        availableCategories.forEach { cat ->
+            FilterChip(
+                selected = selectedCategoryId == cat.id,
+                onClick = { onSelect(cat.id) },
+                label = { Text("${cat.icon} ${cat.name}") },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AccountPickerRow(
+    availableAccounts: List<com.aibill.android.domain.model.Account>,
+    selectedAccountId: Int?,
+    onSelect: (Int?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        FilterChip(
+            selected = selectedAccountId == null,
+            onClick = { onSelect(null) },
+            label = { Text("无") },
+        )
+        availableAccounts.forEach { acc ->
+            FilterChip(
+                selected = selectedAccountId == acc.id,
+                onClick = { onSelect(acc.id) },
+                label = { Text("${acc.icon} ${acc.name}") },
             )
         }
     }
