@@ -124,7 +124,7 @@ class BudgetViewModel @Inject constructor(
         }
     }
 
-    fun deleteBudget(id: Int) {
+    fun onDeleteBudget(id: Int) {
         viewModelScope.launch {
             try {
                 val response = budgetApi.deleteBudget(id)
@@ -137,6 +137,26 @@ class BudgetViewModel @Inject constructor(
             } catch (e: Exception) {
                 Timber.e(e, "删除预算失败")
                 _uiEvent.emit(UiEvent.ShowError(e.localizedMessage ?: "删除失败"))
+            }
+        }
+    }
+
+    fun onUpdateBudget(id: Int, newAmountCents: Int) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isAdding = true) }
+            try {
+                val response = budgetApi.updateBudget(id, mapOf("amount" to newAmountCents))
+                if (response.code == 0) {
+                    _uiEvent.emit(UiEvent.ShowToast("预算已更新"))
+                    loadBudgets()
+                } else {
+                    _uiEvent.emit(UiEvent.ShowError(response.message))
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "更新预算失败")
+                _uiEvent.emit(UiEvent.ShowError(e.localizedMessage ?: "更新失败"))
+            } finally {
+                _uiState.update { it.copy(isAdding = false) }
             }
         }
     }

@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -16,6 +19,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
@@ -178,6 +183,8 @@ internal fun TotalBudgetCard(
 @Composable
 internal fun BudgetItemCard(
     budget: BudgetDto,
+    onEdit: () -> Unit = {},
+    onDelete: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val isOverBudget = budget.spent > budget.amount
@@ -198,16 +205,28 @@ internal fun BudgetItemCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = budget.categoryName ?: "总预算",
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = "${formatAmount(budget.spent)} / ${formatAmount(budget.amount)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (isOverBudget) Color.Red else Color.Unspecified,
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = budget.categoryName ?: "总预算",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = "${formatAmount(budget.spent)} / ${formatAmount(budget.amount)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isOverBudget) Color.Red else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, contentDescription = "编辑")
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "删除",
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(8.dp))
             LinearProgressIndicator(
