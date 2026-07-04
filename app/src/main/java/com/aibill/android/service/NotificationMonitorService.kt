@@ -66,23 +66,9 @@ class NotificationMonitorService : NotificationListenerService() {
             "com.pingan.paces.ccardi"            // 平安信用卡
         )
 
-        private val SOURCE_NAMES = mapOf(
-            "com.tencent.mm" to "微信支付",
-            "com.eg.android.AlipayGphone" to "支付宝",
-            "com.android.mms" to "短信",
-            "com.google.android.apps.messaging" to "短信",
-            "com.samsung.android.messaging" to "短信",
-            "com.miui.mms" to "短信",
-            "com.icbc" to "工商银行",
-            "com.chinamworld.bocmbci" to "中国银行",
-            "com.ccb.start" to "建设银行",
-            "com.abchina.abc" to "农业银行",
-            "cmb.pb" to "招商银行",
-            "com.chinamworld.main" to "交通银行",
-            "com.cmbchina.ccd.pluto.cmbActivity" to "招行信用卡",
-            "com.spdbccc.app" to "浦发信用卡",
-            "com.pingan.paces.ccardi" to "平安信用卡"
-        )
+// PR L1：删除私有 SOURCE_NAMES，改用 NotificationSourceMapping.friendlyName(packageName)
+        // 避免双 source of truth（两个 map 内容相同但维护两处）。
+        // 添加新包名只需改 NotificationSourceMapping 一处。
 
         /**
          * 支付/账单特征关键词。用于预筛：命中才可能是账单通知。
@@ -199,7 +185,7 @@ class NotificationMonitorService : NotificationListenerService() {
                         description = parseResult.description,
                         date = LocalDate.now().toString(),
                         source = "app_notification",
-                        sourceDetail = SOURCE_NAMES[packageName] ?: packageName,
+                        sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(packageName),
                         syncStatus = "pending",
                         clientCreatedAt = Instant.now().toString()
                     )
@@ -218,7 +204,7 @@ class NotificationMonitorService : NotificationListenerService() {
                 }
                 adjustedConfidence in 60..89 -> {
                     // 中置信度：弹出确认通知
-                    val source = SOURCE_NAMES[packageName] ?: packageName
+                    val source = com.aibill.android.util.NotificationSourceMapping.friendlyName(packageName)
                     val privacyMode = userPreferences.notificationPrivacy.first()
                     NotificationHelper.showConfirmNotification(
                         context = this,
