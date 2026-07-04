@@ -59,6 +59,7 @@ fun StatisticsScreen(
             month = state.month,
             onPrevious = { viewModel.onMonthChanged(-1) },
             onNext = { viewModel.onMonthChanged(1) },
+            onJumpToCurrent = { viewModel.onJumpToCurrentMonth() },
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -173,8 +174,11 @@ private fun MonthSelector(
     month: Int,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
+    onJumpToCurrent: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val isCurrent = year == java.time.LocalDate.now().year &&
+        month == java.time.LocalDate.now().monthValue
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Center,
@@ -193,9 +197,10 @@ private fun MonthSelector(
                 modifier = Modifier.size(20.dp),
             )
         }
+        // 中间月份：非当前月时点击跳回本月（PRD §5.3 + CONTRIBUTING §11.6 禁用空 onClick）
         SecondaryButton(
-            text = "${year}年${month}月",
-            onClick = {},
+            text = if (isCurrent) "本月" else "${year}年${month}月",
+            onClick = onJumpToCurrent,
             modifier = Modifier.padding(horizontal = 12.dp),
         )
         IconButton(

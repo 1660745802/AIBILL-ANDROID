@@ -74,6 +74,12 @@ class StatisticsViewModel @Inject constructor(
         loadData()
     }
 
+    fun onJumpToCurrentMonth() {
+        val now = java.time.LocalDate.now()
+        _uiState.update { it.copy(year = now.year, month = now.monthValue) }
+        loadData()
+    }
+
     fun onTabChanged(tab: String) {
         _uiState.update { it.copy(selectedTab = tab) }
         loadCategoryAndTrend()
