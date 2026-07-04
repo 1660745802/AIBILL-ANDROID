@@ -58,7 +58,15 @@ class AuthRepositoryImpl @Inject constructor(
                 // PR #44：登录成功/换号后清空旧账号的所有本地缓存
                 // 避免新账号看到旧账号的 pending 交易/分类/账户
                 clearLocalCache()
-                tokenManager.saveToken(data.token)
+                // PR M1：原子写入 token + userId + username + nickname，
+                // 避免「token 已写入但 userInfo 还在 DataStore」的不一致窗口
+                tokenManager.saveSession(
+                    token = data.token,
+                    userId = data.user.id,
+                    username = data.user.username,
+                    nickname = data.user.nickname,
+                )
+                // DataStore 仍同步一份供 Flow 订阅
                 userPreferences.setUserInfo(data.user.id, data.user.username, data.user.nickname)
                 Result.Success(data.user.toDomain())
             }
@@ -82,7 +90,12 @@ class AuthRepositoryImpl @Inject constructor(
             is Result.Success -> {
                 val data = result.data
                 clearLocalCache()
-                tokenManager.saveToken(data.token)
+                tokenManager.saveSession(
+                    token = data.token,
+                    userId = data.user.id,
+                    username = data.user.username,
+                    nickname = data.user.nickname,
+                )
                 userPreferences.setUserInfo(data.user.id, data.user.username, data.user.nickname)
                 Result.Success(data.user.toDomain())
             }
@@ -112,7 +125,8 @@ class AuthRepositoryImpl @Inject constructor(
     }
 
     override suspend fun logout() {
-        tokenManager.clearToken()
+        // PR M1：一次性清空 token + session，避免漏删
+        tokenManager.clearSession()
         userPreferences.clear()
     }
 
