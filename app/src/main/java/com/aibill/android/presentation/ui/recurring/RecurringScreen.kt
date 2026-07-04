@@ -15,6 +15,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -53,6 +55,7 @@ fun RecurringScreen(
 ) {
     val rules by viewModel.rules.collectAsState()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
+    var deletingRule by rememberSaveable { mutableStateOf<RecurringRuleEntity?>(null) }
 
     Scaffold(
         modifier = modifier,
@@ -103,7 +106,8 @@ fun RecurringScreen(
                 items(rules, key = { it.id }) { rule ->
                     RecurringRuleItem(
                         rule = rule,
-                        onToggle = { viewModel.toggleEnabled(rule) }
+                        onToggle = { viewModel.toggleEnabled(rule) },
+                        onDelete = { deletingRule = rule },
                     )
                 }
             }
@@ -127,12 +131,33 @@ fun RecurringScreen(
             }
         )
     }
+
+    deletingRule?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deletingRule = null },
+            title = { Text("删除周期规则") },
+            text = { Text("确定删除「${target.name}」？该操作不可撤销。") },
+            confirmButton = {
+                AppTextButton(
+                    text = "删除",
+                    onClick = {
+                        viewModel.deleteRule(target)
+                        deletingRule = null
+                    },
+                )
+            },
+            dismissButton = {
+                AppTextButton(text = "取消", onClick = { deletingRule = null })
+            },
+        )
+    }
 }
 
 @Composable
 private fun RecurringRuleItem(
     rule: RecurringRuleEntity,
     onToggle: () -> Unit,
+    onDelete: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val amountYuan = "%.2f".format(rule.amount / 100.0)
@@ -153,6 +178,13 @@ private fun RecurringRuleItem(
                 )
             }
             Switch(checked = rule.isEnabled, onCheckedChange = { onToggle() })
+            IconButton(onClick = onDelete) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "删除",
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
         }
     }
 }
