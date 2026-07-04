@@ -93,18 +93,20 @@ internal fun EmptyTodayCard() {
 @Composable
 internal fun AiResultsCard(
     results: List<AiParseResult>,
+    categoriesByType: Map<String, List<com.aibill.android.domain.model.Category>>,
     onConfirmItem: (AiParseResult) -> Unit,
     onConfirmAll: () -> Unit,
     onDismiss: () -> Unit,
-    onConfirmEdited: (AiParseResult, Int, TransactionType, String) -> Unit = { _, _, _, _ -> },
+    onConfirmEdited: (AiParseResult, Int, TransactionType, Int, String) -> Unit = { _, _, _, _, _ -> },
 ) {
     var editTarget by remember { mutableStateOf<AiParseResult?>(null) }
     editTarget?.let { target ->
         AiEditDialog(
             item = target,
+            categoriesByType = categoriesByType,
             onDismiss = { editTarget = null },
-            onConfirm = { amount, type, desc ->
-                onConfirmEdited(target, amount, type, desc)
+            onConfirm = { amount, type, categoryId, desc ->
+                onConfirmEdited(target, amount, type, categoryId, desc)
                 editTarget = null
             }
         )
@@ -246,12 +248,18 @@ private fun ParseResultItem(item: AiParseResult, onConfirm: () -> Unit, onEdit: 
 @Composable
 private fun AiEditDialog(
     item: AiParseResult,
+    categoriesByType: Map<String, List<com.aibill.android.domain.model.Category>>,
     onDismiss: () -> Unit,
-    onConfirm: (amount: Int, type: TransactionType, description: String) -> Unit,
+    onConfirm: (amount: Int, type: TransactionType, categoryId: Int, description: String) -> Unit,
 ) {
     var type by remember { mutableStateOf(item.type) }
     var amountText by remember { mutableStateOf("%.2f".format(item.amount / 100.0)) }
     var description by remember { mutableStateOf(item.description ?: "") }
+    // 当前选中的分类 id，初值为 AI 给的；切换 type 时重置
+    var selectedCategoryId by remember { mutableStateOf(item.categoryId) }
+
+    val typeKey = if (type == TransactionType.EXPENSE) "expense" else "income"
+    val availableCategories = categoriesByType[typeKey].orEmpty()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -261,12 +269,19 @@ private fun AiEditDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = type == TransactionType.EXPENSE,
-                        onClick = { type = TransactionType.EXPENSE },
+                        onClick = {
+                            type = TransactionType.EXPENSE
+                            // 重置为该类型下第一个分类
+                            selectedCategoryId = availableCategories.firstOrNull()?.id ?: selectedCategoryId
+                        },
                         label = { Text("支出") }
                     )
                     FilterChip(
                         selected = type == TransactionType.INCOME,
-                        onClick = { type = TransactionType.INCOME },
+                        onClick = {
+                            type = TransactionType.INCOME
+                            selectedCategoryId = availableCategories.firstOrNull()?.id ?: selectedCategoryId
+                        },
                         label = { Text("收入") }
                     )
                 }
@@ -290,9 +305,14 @@ private fun AiEditDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    text = "分类：${item.categoryIcon} ${item.categoryName}",
-                    style = MaterialTheme.typography.bodySmall,
+                    text = "分类",
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                CategoryChipFlow(
+                    availableCategories = availableCategories,
+                    selectedCategoryId = selectedCategoryId,
+                    onSelect = { selectedCategoryId = it },
                 )
             }
         },
@@ -300,7 +320,13 @@ private fun AiEditDialog(
             TextButton(
                 onClick = {
                     val cents = Math.round((amountText.toDoubleOrNull() ?: 0.0) * 100).toInt()
-                    onConfirm(cents, type, description)
+                    // 兜底：若用户没动分类但原 AI 分类 id 不在新分类列表，用列表第一个
+                    val finalCategoryId = availableCategories
+                        .firstOrNull { it.id == selectedCategoryId }
+                        ?.id
+                        ?: availableCategories.firstOrNull()?.id
+                        ?: selectedCategoryId
+                    onConfirm(cents, type, finalCategoryId, description)
                 },
                 enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0
             ) { Text("确认记账") }
@@ -309,6 +335,35 @@ private fun AiEditDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
+}
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun CategoryChipFlow(
+    availableCategories: List<com.aibill.android.domain.model.Category>,
+    selectedCategoryId: Int,
+    onSelect: (Int) -> Unit,
+) {
+    if (availableCategories.isEmpty()) {
+        Text(
+            text = "暂无可选分类",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        availableCategories.forEach { cat ->
+            FilterChip(
+                selected = selectedCategoryId == cat.id,
+                onClick = { onSelect(cat.id) },
+                label = { Text("${cat.icon} ${cat.name}") },
+            )
+        }
+    }
 }
 
 @Composable

@@ -150,6 +150,7 @@ fun HomeScreen(
                         item(key = "ai_results") {
                             AiResultsCard(
                                 results = uiState.aiParseResults.orEmpty(),
+                                categoriesByType = uiState.categoriesByType,
                                 onConfirmItem = viewModel::onConfirmItem,
                                 onConfirmAll = viewModel::onConfirmAll,
                                 onDismiss = viewModel::onDismissResults,

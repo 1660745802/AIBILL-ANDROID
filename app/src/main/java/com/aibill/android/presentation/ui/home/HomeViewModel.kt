@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.remote.api.StatsApi
 import com.aibill.android.domain.model.AiParseResult
+import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionSource
@@ -12,6 +13,7 @@ import com.aibill.android.domain.repository.AiRepository
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository
+import com.aibill.android.domain.usecase.CategoryLearningEngine
 import android.app.Application
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -38,6 +40,7 @@ class HomeViewModel @Inject constructor(
     private val accountRepository: AccountRepository,
     private val statsApi: StatsApi,
     private val notificationRecordDao: com.aibill.android.data.local.dao.NotificationRecordDao,
+    private val categoryLearningEngine: CategoryLearningEngine,
 ) : ViewModel() {
 
     data class HomeUiState(
@@ -49,6 +52,8 @@ class HomeViewModel @Inject constructor(
         val aiParseResults: List<AiParseResult>? = null,
         val todayTransactions: List<Transaction> = emptyList(),
         val pendingNotificationCount: Int = 0,
+        /** AI 编辑弹窗/手动记账等需要的可选分类列表（按 type 过滤） */
+        val categoriesByType: Map<String, List<Category>> = emptyMap(),
         val error: String? = null,
     )
 
@@ -69,6 +74,26 @@ class HomeViewModel @Inject constructor(
     init {
         refresh()
         observePendingNotifications()
+        observeCategories()
+    }
+
+    private fun observeCategories() {
+        // 支出分类
+        viewModelScope.launch {
+            categoryRepository.observeCategories("expense").collect { list ->
+                _uiState.update {
+                    it.copy(categoriesByType = it.categoriesByType + ("expense" to list))
+                }
+            }
+        }
+        // 收入分类
+        viewModelScope.launch {
+            categoryRepository.observeCategories("income").collect { list ->
+                _uiState.update {
+                    it.copy(categoriesByType = it.categoriesByType + ("income" to list))
+                }
+            }
+        }
     }
 
     private fun observePendingNotifications() {
@@ -164,12 +189,13 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
-     * 用户在确认前编辑了金额/类型/备注后再保存
+     * 用户在确认前编辑了金额/类型/分类/备注后再保存
      */
     fun onConfirmEditedItem(
         original: AiParseResult,
         amount: Int,
         type: TransactionType,
+        categoryId: Int,
         description: String,
     ) {
         viewModelScope.launch {
@@ -177,11 +203,26 @@ class HomeViewModel @Inject constructor(
                 _uiEvent.emit(UiEvent.ShowError("金额必须大于0"))
                 return@launch
             }
+            // 根据新分类 id 找到对应的 name/icon（保持列表展示一致）
+            val categoryList = _uiState.value.categoriesByType[
+                if (type == TransactionType.EXPENSE) "expense" else "income"
+            ].orEmpty()
+            val newCategory = categoryList.firstOrNull { it.id == categoryId }
             val edited = original.copy(
                 amount = amount,
                 type = type,
+                categoryId = categoryId,
+                categoryName = newCategory?.name ?: original.categoryName,
+                categoryIcon = newCategory?.icon ?: original.categoryIcon,
                 description = description.ifBlank { null },
             )
+            // 若用户修改了分类，学习新规则
+            if (newCategory != null && categoryId != original.categoryId) {
+                val desc = edited.description
+                if (!desc.isNullOrBlank()) {
+                    categoryLearningEngine.learnFromCorrection(desc, categoryId)
+                }
+            }
             when (val result =
                 transactionRepository.createTransactions(listOf(edited.toTransaction()))) {
                 is Result.Success -> {
