@@ -60,6 +60,7 @@ fun NotificationCenterScreen(
 ) {
     val pendingItems by viewModel.pendingNotifications.collectAsStateWithLifecycle()
     val pendingCount by viewModel.pendingCount.collectAsStateWithLifecycle()
+    val isConfirming by viewModel.isConfirming.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var ignoreConfirmId by remember { mutableStateOf<Long?>(null) }
     var editItem by remember { mutableStateOf<NotificationRecordEntity?>(null) }
@@ -136,8 +137,10 @@ fun NotificationCenterScreen(
         bottomBar = {
             if (pendingItems.isNotEmpty()) {
                 PrimaryButton(
-                    text = "全部确认",
+                    text = if (isConfirming) "确认中..." else "全部确认",
                     onClick = { viewModel.confirmAll() },
+                    enabled = !isConfirming,
+                    loading = isConfirming,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp)

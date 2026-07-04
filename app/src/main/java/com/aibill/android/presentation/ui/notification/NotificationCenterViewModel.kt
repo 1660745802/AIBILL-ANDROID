@@ -14,8 +14,10 @@ import com.aibill.android.service.WidgetDataUpdater
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -55,6 +57,10 @@ class NotificationCenterViewModel @Inject constructor(
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = 0
             )
+
+    // PR #67：批量确认进行中标记
+    private val _isConfirming = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isConfirming: StateFlow<Boolean> = _isConfirming.asStateFlow()
 
     fun confirmItem(id: Long) {
         viewModelScope.launch {
@@ -136,55 +142,61 @@ class NotificationCenterViewModel @Inject constructor(
 
     fun confirmAll() {
         viewModelScope.launch {
-            val items = pendingNotifications.value
-            var confirmed = 0
-            var skipped = 0
-            items.forEach { item ->
-                val record = notificationRecordDao.findById(item.id) ?: return@forEach
+            // PR #67：批量确认时显示 loading 状态，避免重复点击
+            _isConfirming.value = true
+            try {
+                val items = pendingNotifications.value
+                var confirmed = 0
+                var skipped = 0
+                items.forEach { item ->
+                    val record = notificationRecordDao.findById(item.id) ?: return@forEach
 
-                // 跳过未识别出有效金额的记录，避免生成 0 元账单
-                val amount = record.parsedAmount ?: 0
-                if (amount <= 0) {
-                    skipped++
-                    return@forEach
+                    // 跳过未识别出有效金额的记录，避免生成 0 元账单
+                    val amount = record.parsedAmount ?: 0
+                    if (amount <= 0) {
+                        skipped++
+                        return@forEach
+                    }
+
+                    val clientId = UUID.randomUUID().toString()
+                    val now = Date()
+                    val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                    val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+                    val pendingTransaction = PendingTransactionEntity(
+                        clientId = clientId,
+                        type = record.parsedType ?: "expense",
+                        amount = amount,
+                        description = record.parsedDescription,
+                        date = dateFormat.format(now),
+                        time = timeFormat.format(now),
+                        source = "app_notification",
+                        sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
+                        clientCreatedAt = now.toInstant().toString()
+                    )
+
+                    pendingTransactionDao.insert(pendingTransaction)
+                    notificationRecordDao.updateStatus(item.id, "confirmed", clientId)
+                    WidgetDataUpdater.notifyTransactionAdded(
+                        context = appContext,
+                        type = com.aibill.android.domain.model.TransactionType.fromValue(record.parsedType ?: "expense") ?: TransactionType.EXPENSE,
+                        amountCents = amount,
+                        date = pendingTransaction.date,
+                    )
+                    confirmed++
                 }
 
-                val clientId = UUID.randomUUID().toString()
-                val now = Date()
-                val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+                SyncScheduler.scheduleSyncIfNeeded(appContext)
 
-                val pendingTransaction = PendingTransactionEntity(
-                    clientId = clientId,
-                    type = record.parsedType ?: "expense",
-                    amount = amount,
-                    description = record.parsedDescription,
-                    date = dateFormat.format(now),
-                    time = timeFormat.format(now),
-                    source = "app_notification",
-                    sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
-                    clientCreatedAt = now.toInstant().toString()
-                )
-
-                pendingTransactionDao.insert(pendingTransaction)
-                notificationRecordDao.updateStatus(item.id, "confirmed", clientId)
-                WidgetDataUpdater.notifyTransactionAdded(
-                    context = appContext,
-                    type = com.aibill.android.domain.model.TransactionType.fromValue(record.parsedType ?: "expense") ?: TransactionType.EXPENSE,
-                    amountCents = amount,
-                    date = pendingTransaction.date,
-                )
-                confirmed++
+                val msg = when {
+                    confirmed == 0 && skipped > 0 -> "无可自动确认的记录，$skipped 条需手动填写金额"
+                    skipped > 0 -> "已确认 $confirmed 条，$skipped 条需手动填写金额"
+                    else -> "已确认 $confirmed 条通知"
+                }
+                _uiEvent.send(UiEvent.ShowToast(msg))
+            } finally {
+                _isConfirming.value = false
             }
-
-            SyncScheduler.scheduleSyncIfNeeded(appContext)
-
-            val msg = when {
-                confirmed == 0 && skipped > 0 -> "无可自动确认的记录，$skipped 条需手动填写金额"
-                skipped > 0 -> "已确认 $confirmed 条，$skipped 条需手动填写金额"
-                else -> "已确认 $confirmed 条通知"
-            }
-            _uiEvent.send(UiEvent.ShowToast(msg))
         }
     }
 }
