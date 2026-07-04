@@ -116,7 +116,12 @@ class ManualRecordViewModel @Inject constructor(
 
     fun onAmountEquals() {
         val current = _uiState.value.amountText
-        val parsed = AmountUtils.parseExpression(current) ?: return
+        val parsed = AmountUtils.parseExpression(current)
+        if (parsed == null) {
+            // PR #30：解析失败给提示（PR §11.5 反馈底线）
+            viewModelScope.launch { _uiEvent.send(UiEvent.ShowToast("表达式无效")) }
+            return
+        }
         val yuanStr = AmountUtils.fenToYuan(parsed)
         _uiState.update { it.copy(amountText = yuanStr, amountFen = parsed) }
     }
@@ -173,11 +178,15 @@ class ManualRecordViewModel @Inject constructor(
                     resetForm()
                 }
                 is Result.Error -> {
-                    // 离线保存兜底
-                    transactionRepository.createTransactionOffline(transaction)
-                    _uiEvent.send(UiEvent.ShowToast("已离线保存"))
-                    _uiEvent.send(UiEvent.SaveSuccess)
-                    resetForm()
+                    // PR #29：仅网络错误（ERROR_NETWORK）才落离线，业务错误（422/5001 等）弹 Snackbar 让用户修正
+                    if (result.code == Result.ERROR_NETWORK) {
+                        transactionRepository.createTransactionOffline(transaction)
+                        _uiEvent.send(UiEvent.ShowToast("已离线保存"))
+                        _uiEvent.send(UiEvent.SaveSuccess)
+                        resetForm()
+                    } else {
+                        _uiEvent.send(UiEvent.ShowToast("保存失败: ${result.message}"))
+                    }
                 }
                 is Result.Loading -> Unit
             }

@@ -43,11 +43,12 @@ fun NumericKeyboard(
     isSaving: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    // PRD §A.6：金额输入支持 +−×÷，补 ÷（PR #31）
     val keys = listOf(
         listOf("7", "8", "9", "+"),
         listOf("4", "5", "6", "-"),
         listOf("1", "2", "3", "×"),
-        listOf(".", "0", "⌫", "="),
+        listOf(".", "0", "⌫", "÷"),
     )
     Column(
         modifier = modifier
@@ -61,16 +62,18 @@ fun NumericKeyboard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 row.forEach { key ->
-                    val isOperator = key in listOf("+", "-", "×", "=")
+                    val isOperator = key in listOf("+", "-", "×", "÷")
                     KeyboardButton(
                         label = key,
                         isOperator = isOperator,
+                        // PR #32：保存中 16 个键全部禁用
+                        enabled = !isSaving,
                         modifier = Modifier.weight(1f),
                         onClick = {
                             when (key) {
                                 "⌫" -> onDelete()
-                                "=" -> onEquals()
                                 "×" -> onInput("*")
+                                "÷" -> onInput("/")
                                 else -> onInput(key)
                             }
                         },
@@ -79,6 +82,22 @@ fun NumericKeyboard(
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
+        // "=" 单独一行（之前在键盘里，现在改到底部一行更清晰）
+        Button(
+            onClick = onEquals,
+            enabled = !isSaving,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(40.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            ),
+        ) {
+            Text("= 计算结果", style = MaterialTheme.typography.titleSmall)
+        }
+        Spacer(modifier = Modifier.height(4.dp))
         Button(
             onClick = onSave,
             enabled = !isSaving,
@@ -103,10 +122,13 @@ fun NumericKeyboard(
 private fun KeyboardButton(
     label: String,
     isOperator: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val bgColor = if (isOperator) {
+    val bgColor = if (!enabled) {
+        MaterialTheme.colorScheme.surfaceContainerLow
+    } else if (isOperator) {
         MaterialTheme.colorScheme.surfaceContainerHighest
     } else {
         MaterialTheme.colorScheme.surfaceContainerHigh
@@ -116,14 +138,16 @@ private fun KeyboardButton(
             .height(46.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(bgColor)
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
             fontSize = 22.sp,
             fontWeight = if (isOperator) FontWeight.Bold else FontWeight.Medium,
-            color = if (isOperator) {
+            color = if (!enabled) {
+                MaterialTheme.colorScheme.outline
+            } else if (isOperator) {
                 MaterialTheme.colorScheme.primary
             } else {
                 MaterialTheme.colorScheme.onSurface

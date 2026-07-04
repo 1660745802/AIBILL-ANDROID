@@ -19,4 +19,11 @@ sealed class Result<out T> {
         is Error -> this
         is Loading -> Loading
     }
+
+    companion object {
+        /** 网络异常（IOException 等本地错误）的统一 code */
+        const val ERROR_NETWORK = -1
+        /** 未知错误 */
+        const val ERROR_UNKNOWN = -2
+    }
 }
