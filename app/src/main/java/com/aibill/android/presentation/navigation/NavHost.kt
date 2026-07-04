@@ -58,7 +58,7 @@ fun AiBillNavHost(
     androidx.compose.runtime.LaunchedEffect(navigateTo) {
         when (navigateTo) {
             "notification_center" -> navController.navigate(Route.NotificationCenter)
-            "manual_record" -> navController.navigate(Route.ManualRecord)
+            "manual_record" -> navController.navigate(Route.ManualRecord())
             "home" -> {
                 // 外部 Intent（Tasker/AI_PARSE）跳首页
                 navController.navigate(Route.Home) {
@@ -96,7 +96,7 @@ fun AiBillNavHost(
             // PRD §5.1：FAB 快速记账入口属于主框架，4 个 Tab 都可见
             if (showBottomBar) {
                 FloatingActionButton(
-                    onClick = { navController.navigate(Route.ManualRecord) },
+                    onClick = { navController.navigate(Route.ManualRecord()) },
                     containerColor = MaterialTheme.colorScheme.primary,
                 ) {
                     Icon(
@@ -163,7 +163,7 @@ fun AiBillNavHost(
                 HomeScreen(
                     aiInputPrefill = aiInputPrefill,
                     onAiInputConsumed = onAiInputConsumed,
-                    onNavigateToManualRecord = { navController.navigate(Route.ManualRecord) },
+                    onNavigateToManualRecord = { navController.navigate(Route.ManualRecord()) },
                     onNavigateToNotification = { navController.navigate(Route.NotificationCenter) }
                 )
             }
@@ -220,8 +220,9 @@ fun AiBillNavHost(
             composable<Route.Template> {
                 TemplateScreen(
                     onNavigateBack = { navController.popBackStack() },
-                    onNavigateToRecord = { _ ->
-                        navController.navigate(Route.ManualRecord)
+                    // P1#28：传递 templateId 给 ManualRecord，触发预填
+                    onNavigateToRecord = { template ->
+                        navController.navigate(Route.ManualRecord(templateId = template.id))
                     }
                 )
             }

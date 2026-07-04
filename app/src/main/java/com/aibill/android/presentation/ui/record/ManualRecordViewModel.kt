@@ -1,7 +1,9 @@
 package com.aibill.android.presentation.ui.record
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.toRoute
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
@@ -9,6 +11,7 @@ import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository
+import com.aibill.android.presentation.navigation.Route
 import com.aibill.android.util.AmountUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
@@ -27,6 +30,8 @@ class ManualRecordViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
     private val accountRepository: com.aibill.android.domain.repository.AccountRepository,
+    private val templateRepository: com.aibill.android.domain.repository.TemplateRepository,
+    savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     data class RecordUiState(
@@ -55,6 +60,10 @@ class ManualRecordViewModel @Inject constructor(
     private val _uiEvent = Channel<UiEvent>(Channel.BUFFERED)
     val uiEvent = _uiEvent.receiveAsFlow()
 
+    /** PR #28：从路由参数读取的 templateId，非空则预填表单 */
+    private val templateId: Long? =
+        savedStateHandle.toRoute<com.aibill.android.presentation.navigation.Route.ManualRecord>().templateId
+
     /**
      * 当前 type 对应的分类订阅 Job，PR #36：切类型时取消旧 Job，
      * 避免 collect 协程叠加浪费 Room 订阅。
@@ -64,6 +73,37 @@ class ManualRecordViewModel @Inject constructor(
     init {
         loadCategories(_uiState.value.type)
         loadAccounts()
+        // PR #28：如果从 TemplateScreen 跳过来，预填表单
+        if (templateId != null) {
+            applyTemplatePrefill(templateId)
+        }
+    }
+
+    /**
+     * PR #28：按 templateId 加载模板并预填表单字段。
+     * 加载完成后会触发 onTypeChanged 重订阅分类列表，
+     * 之后用户在已选分类上确认即可保存。
+     */
+    private fun applyTemplatePrefill(id: Long) {
+        viewModelScope.launch {
+            val template = templateRepository.findById(id) ?: return@launch
+            _uiState.update {
+                it.copy(
+                    type = template.type.value,
+                    amountFen = template.amount,
+                    amountText = "%.2f".format(template.amount / 100.0),
+                    selectedCategoryId = template.categoryId,
+                    accountId = template.accountId,
+                    description = template.description.orEmpty(),
+                )
+            }
+            // 切换 type 让分类/账户列表按模板的类型加载
+            onTypeChanged(template.type.value)
+            // 模板选了分类但当前 type 列表没这个 id（如模板分类被删），
+            // 已被 onTypeChanged 重置为 null，无需额外处理
+            // 选择模板指定的账户
+            template.accountId?.let { onAccountSelected(it) }
+        }
     }
 
     private fun loadAccounts() {
