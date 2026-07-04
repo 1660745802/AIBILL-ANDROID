@@ -48,6 +48,13 @@ class SyncWorker @AssistedInject constructor(
                         markFailed(entity.clientId, "Token expired, need re-login")
                         unauthorizedSeen = true
                     }
+                    // PR H2：服务端 code==0 但 created[]/duplicates[] 都没有匹配
+                    // 的 clientId（服务端漏字段/转换异常），不标 SUCCESS 否则
+                    // 后续无 serverId 无法编辑/删除（僵尸记录）。
+                    SyncResult.SERVER_ANOMALY -> markFailed(
+                        clientId = entity.clientId,
+                        error = "Server response missing clientId match (created/duplicates both empty)",
+                    )
                     SyncResult.BUSINESS_ERROR -> markFailed(entity.clientId, "Business error")
                     SyncResult.NETWORK_ERROR -> incrementRetry(entity.clientId, "Network error")
                 }
@@ -80,7 +87,14 @@ class SyncWorker @AssistedInject constructor(
             // 在 created 或 duplicates 中按 client_id 查找对应记录
             val matched = data?.created?.firstOrNull { it.clientId == entity.clientId }
                 ?: data?.duplicates?.firstOrNull { it.clientId == entity.clientId }
-            SyncResult.SUCCESS to matched?.id
+            // PR H2：服务端返回 code==0 但两条列表都找不到匹配的 clientId，
+            // 视为服务端异常（漏字段/转换错误），返回 SERVER_ANOMALY 让 Worker
+            // 走 markFailed 路径，避免本地标 synced 但没 serverId 的僵尸记录
+            when {
+                data == null -> SyncResult.SERVER_ANOMALY to null
+                matched == null -> SyncResult.SERVER_ANOMALY to null
+                else -> SyncResult.SUCCESS to matched.id
+            }
         } catch (e: HttpException) {
             when (e.code()) {
                 HTTP_UNAUTHORIZED -> SyncResult.UNAUTHORIZED to null
@@ -145,7 +159,12 @@ class SyncWorker @AssistedInject constructor(
     }
 
     private enum class SyncResult {
-        SUCCESS, UNAUTHORIZED, BUSINESS_ERROR, NETWORK_ERROR
+        SUCCESS,
+        UNAUTHORIZED,
+        /** PR H2：服务端 code==0 但返回数据里没有匹配的 clientId */
+        SERVER_ANOMALY,
+        BUSINESS_ERROR,
+        NETWORK_ERROR,
     }
 
     companion object {
