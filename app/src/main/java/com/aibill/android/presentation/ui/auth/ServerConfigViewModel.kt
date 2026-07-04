@@ -92,12 +92,14 @@ class ServerConfigViewModel @Inject constructor(
         viewModelScope.launch {
             val url = normalizeUrl(_uiState.value.serverUrl)
             if (clearLocalCache) {
+                // PR M4：仅当真正清空缓存时才重置 pendingCount=0，
+                // 之前无条件置 0 会与 DB 实际行数不一致
                 pendingTransactionDao.deleteAll()
                 categoryDao.deleteAll()
                 accountDao.deleteAll()
+                _uiState.update { it.copy(pendingCount = 0) }
             }
             userPreferences.setServerUrl(url)
-            _uiState.update { it.copy(pendingCount = 0) }
         }
     }
 
