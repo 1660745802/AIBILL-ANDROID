@@ -30,7 +30,8 @@ class TokenManager @Inject constructor(
     fun getToken(): String? = prefs.getString(KEY_TOKEN, null)
 
     fun saveToken(token: String) {
-        prefs.edit().putString(KEY_TOKEN, token).apply()
+        // PR #58：登录成功后立即持久化，避免进程被杀丢失
+        prefs.edit().putString(KEY_TOKEN, token).commit()
     }
 
     fun clearToken() {
