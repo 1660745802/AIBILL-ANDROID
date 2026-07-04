@@ -16,6 +16,8 @@ import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import android.app.Application
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -116,18 +118,22 @@ class HomeViewModel @Inject constructor(
     fun refresh() {
         viewModelScope.launch {
             _uiState.update { it.copy(isRefreshing = true) }
-            // 并发同步基础数据
-            launch { categoryRepository.syncCategories() }
-            launch { accountRepository.syncAccounts() }
-            // 分开加载：错误互不影响
-            launch { loadMonthlyExpense() }
-            launch {
-                val success = loadTodayTransactions()
-                if (!success) {
-                    _uiEvent.emit(UiEvent.ShowError("加载今日流水失败，请检查网络"))
+            // PR #35：awaitAll 等所有子协程完成后再置 isRefreshing=false，
+            // 避免下拉指示器瞬间消失（之前外层 launch{} 后续语句不被 await 子 launch）
+            try {
+                val deferred1 = async { categoryRepository.syncCategories() }
+                val deferred2 = async { accountRepository.syncAccounts() }
+                val deferred3 = async { loadMonthlyExpense() }
+                val deferred4 = async {
+                    val success = loadTodayTransactions()
+                    if (!success) {
+                        _uiEvent.emit(UiEvent.ShowError("加载今日流水失败，请检查网络"))
+                    }
                 }
+                awaitAll(deferred1, deferred2, deferred3, deferred4)
+            } finally {
+                _uiState.update { it.copy(isRefreshing = false) }
             }
-            _uiState.update { it.copy(isRefreshing = false) }
         }
     }
 
