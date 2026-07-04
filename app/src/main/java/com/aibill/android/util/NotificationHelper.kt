@@ -189,6 +189,9 @@ object NotificationHelper {
         notificationId: Int,
         delayMs: Long,
     ) {
+        // 如果该 notificationId 已有旧 Runnable（同 id 通知被覆盖），先移除旧的
+        pendingCancels.remove(notificationId)?.let { cancelHandler.removeCallbacks(it) }
+
         val runnable = Runnable {
             try {
                 manager.cancel(notificationId)
@@ -198,5 +201,13 @@ object NotificationHelper {
         }
         pendingCancels[notificationId] = runnable
         cancelHandler.postDelayed(runnable, delayMs)
+    }
+
+    /**
+     * 取消指定 notificationId 的自动收起 Runnable。
+     * 当用户手动确认/忽略通知时调用，避免 Runnable 残留。
+     */
+    fun cancelPendingAutoCancel(notificationId: Int) {
+        pendingCancels.remove(notificationId)?.let { cancelHandler.removeCallbacks(it) }
     }
 }

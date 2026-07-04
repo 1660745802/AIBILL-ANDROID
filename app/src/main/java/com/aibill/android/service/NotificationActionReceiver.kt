@@ -8,6 +8,7 @@ import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.util.NotificationHelper
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +72,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
         if (notificationId == -1) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancel(notificationId)
+        // 取消 10s 自动收起 Runnable，避免无效残留
+        NotificationHelper.cancelPendingAutoCancel(notificationId)
     }
 
     private suspend fun handleConfirm(context: Context, recordId: Long) {
