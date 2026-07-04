@@ -36,7 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -61,8 +61,8 @@ fun TemplateScreen(
     modifier: Modifier = Modifier,
     viewModel: TemplateViewModel = hiltViewModel(),
 ) {
-    val templates by viewModel.templates.collectAsState()
-    val dialogState by viewModel.dialogState.collectAsState()
+    val templates by viewModel.templates.collectAsStateWithLifecycle()
+    val dialogState by viewModel.dialogState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {

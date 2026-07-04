@@ -30,7 +30,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,7 +53,7 @@ fun RecurringScreen(
     viewModel: RecurringViewModel = hiltViewModel(),
     modifier: Modifier = Modifier
 ) {
-    val rules by viewModel.rules.collectAsState()
+    val rules by viewModel.rules.collectAsStateWithLifecycle()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var deletingRule by rememberSaveable { mutableStateOf<RecurringRuleEntity?>(null) }
 

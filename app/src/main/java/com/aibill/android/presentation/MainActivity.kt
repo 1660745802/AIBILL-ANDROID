@@ -9,7 +9,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -69,12 +69,12 @@ class MainActivity : FragmentActivity() {
             appLockCheckedThisProcess = true
         }
         setContent {
-            val themeMode by userPreferences.themeMode.collectAsState(initial = "system")
+            val themeMode by userPreferences.themeMode.collectAsStateWithLifecycle(initialValue = "system")
             AiBillTheme(themeMode = themeMode) {
                 if (isLocked) {
                     AppLockScreen(onUnlocked = { isLocked = false })
                 } else {
-                    val startupState by mainViewModel.startupState.collectAsState()
+                    val startupState by mainViewModel.startupState.collectAsStateWithLifecycle()
                     if (startupState.isReady) {
                         AiBillNavHost(
                             startDestination = startupState.startRoute,

@@ -32,7 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,8 +58,8 @@ fun NotificationCenterScreen(
     onBack: () -> Unit = {},
     viewModel: NotificationCenterViewModel = hiltViewModel()
 ) {
-    val pendingItems by viewModel.pendingNotifications.collectAsState()
-    val pendingCount by viewModel.pendingCount.collectAsState()
+    val pendingItems by viewModel.pendingNotifications.collectAsStateWithLifecycle()
+    val pendingCount by viewModel.pendingCount.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var ignoreConfirmId by remember { mutableStateOf<Long?>(null) }
     var editItem by remember { mutableStateOf<NotificationRecordEntity?>(null) }
