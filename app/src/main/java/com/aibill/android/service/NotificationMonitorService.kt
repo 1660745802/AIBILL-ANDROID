@@ -262,8 +262,8 @@ class NotificationMonitorService : NotificationListenerService() {
             val items = response.data.items
             if (items.isEmpty()) return
 
+            // 第一条：写入原始记录（保持原通知记录可见金额/类型）
             val first = items.first()
-            // AI 解析成功，把金额/类型/描述存回记录（否则通知中心看不到金额）
             notificationRecordDao.updateParsedResult(
                 id = recordId,
                 amount = first.amount,
@@ -271,17 +271,44 @@ class NotificationMonitorService : NotificationListenerService() {
                 description = first.description ?: first.categoryName,
             )
 
-            // 弹窗让用户确认
+            // 弹窗确认第一条
             val privacyMode = userPreferences.notificationPrivacy.first()
             NotificationHelper.showConfirmNotification(
                 context = this@NotificationMonitorService,
                 recordId = recordId,
                 amount = first.amount,
                 description = first.description ?: first.categoryName,
-                source = "AI 识别",
+                source = if (items.size > 1) "AI 识别 (${items.size} 笔)" else "AI 识别",
                 privacyMode = privacyMode,
                 type = first.type,
             )
+
+            // 后续条目（多条账单场景）：各自建一条待确认通知
+            // 关联到同一条原始通知记录 ID 以便追溯
+            for (i in 1 until items.size) {
+                val item = items[i]
+                val extraRecordId = notificationRecordDao.insert(
+                    NotificationRecordEntity(
+                        packageName = packageName,
+                        title = null,
+                        content = "[关联] $text",
+                        parsedAmount = item.amount,
+                        parsedType = item.type,
+                        parsedDescription = item.description ?: item.categoryName,
+                        status = "parsed",
+                        receivedAt = System.currentTimeMillis()
+                    )
+                )
+                NotificationHelper.showConfirmNotification(
+                    context = this@NotificationMonitorService,
+                    recordId = extraRecordId,
+                    amount = item.amount,
+                    description = item.description ?: item.categoryName,
+                    source = "AI 识别 (${i + 1}/${items.size})",
+                    privacyMode = privacyMode,
+                    type = item.type,
+                )
+            }
         } catch (e: Exception) {
             // AI 调用失败，静默忽略（通知已存为 raw 待审）
             timber.log.Timber.w(e, "AI 兜底解析失败")
