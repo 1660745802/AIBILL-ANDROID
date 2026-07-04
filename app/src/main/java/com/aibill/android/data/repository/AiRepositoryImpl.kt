@@ -17,31 +17,43 @@ class AiRepositoryImpl @Inject constructor(
 ) : AiRepository {
 
     override suspend fun parseInput(input: String): Result<List<AiParseResult>> {
-        // 1. 先尝试本地规则匹配（减少 AI 调用）
-        // 如果是简单输入且本地规则能完全解析，可直接返回
-        // 本地规则目前只辅助分类匹配，完整解析仍需 AI
-
-        // 2. 调用 AI 解析 API
+        // 1. 调用 AI 解析 API（金额/日期/描述/账户等仍由 AI 处理）
         val result = safeApiCall {
             aiApi.parse(mapOf("input" to input))
         }
 
-        return result.map { response ->
-            response.items.map { dto ->
-                AiParseResult(
-                    type = TransactionType.fromValue(dto.type),
-                    amount = dto.amount,
-                    categoryId = dto.categoryId,
-                    categoryName = dto.categoryName,
-                    categoryIcon = dto.categoryIcon,
-                    description = dto.description,
-                    date = dto.date,
-                    accountId = dto.accountId,
-                    accountName = dto.accountName,
-                    targetAccountId = dto.targetAccountId,
-                    targetAccountName = dto.targetAccountName,
-                )
+        return when (result) {
+            is Result.Success -> {
+                val response = result.data
+                val items = response.items.map { dto ->
+                    val aiCategoryId = dto.categoryId
+                    val description = dto.description
+
+                    // 2. 命中本地学习规则 → 用本地分类覆盖 AI 分类
+                    // （PRD §8.5 分层解析：本地规则优先，减少 AI 调用 + 更准确）
+                    val localCategoryId = if (!description.isNullOrBlank()) {
+                        categoryLearningEngine.matchCategory(description)
+                    } else null
+                    val finalCategoryId = localCategoryId ?: aiCategoryId
+
+                    AiParseResult(
+                        type = TransactionType.fromValue(dto.type),
+                        amount = dto.amount,
+                        categoryId = finalCategoryId,
+                        categoryName = dto.categoryName,
+                        categoryIcon = dto.categoryIcon,
+                        description = description,
+                        date = dto.date,
+                        accountId = dto.accountId,
+                        accountName = dto.accountName,
+                        targetAccountId = dto.targetAccountId,
+                        targetAccountName = dto.targetAccountName,
+                    )
+                }
+                Result.Success(items)
             }
+            is Result.Error -> result
+            is Result.Loading -> result
         }
     }
 }

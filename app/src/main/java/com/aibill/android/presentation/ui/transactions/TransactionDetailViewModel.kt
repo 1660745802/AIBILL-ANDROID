@@ -8,6 +8,7 @@ import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.dto.response.TransactionDto
 import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.presentation.navigation.Route
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
@@ -23,9 +24,13 @@ import javax.inject.Inject
 class TransactionDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val transactionApi: TransactionApi,
+    private val categoryLearningEngine: CategoryLearningEngine,
 ) : ViewModel() {
 
     private val transactionId: Int = savedStateHandle.toRoute<Route.TransactionDetail>().id
+
+    /** 加载时的原始分类 ID，用于对比判断用户是否修改了分类 */
+    private var originalCategoryId: Int? = null
 
     data class UiState(
         val isLoading: Boolean = true,
@@ -100,6 +105,15 @@ class TransactionDetailViewModel @Inject constructor(
             }
             when (val result = safeApiCall { transactionApi.updateTransaction(transactionId, requestBody) }) {
                 is Result.Success -> {
+                    // 若用户改了分类，学习新规则（PRD §4.11 / §8.5）
+                    val newCategoryId = state.categoryId
+                    val description = state.description
+                    if (newCategoryId != null &&
+                        newCategoryId != originalCategoryId &&
+                        description.isNotBlank()
+                    ) {
+                        categoryLearningEngine.learnFromCorrection(description, newCategoryId)
+                    }
                     _uiState.update { it.copy(isSaving = false) }
                     _uiEvent.send(UiEvent.ShowToast("保存成功 ✅"))
                     _uiEvent.send(UiEvent.NavigateBack)
@@ -136,6 +150,7 @@ class TransactionDetailViewModel @Inject constructor(
             when (val result = safeApiCall { transactionApi.getTransaction(transactionId) }) {
                 is Result.Success -> {
                     val dto = result.data
+                    originalCategoryId = dto.categoryId
                     _uiState.update {
                         it.copy(
                             isLoading = false,
