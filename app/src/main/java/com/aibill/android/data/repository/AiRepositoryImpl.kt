@@ -37,7 +37,7 @@ class AiRepositoryImpl @Inject constructor(
                     val finalCategoryId = localCategoryId ?: aiCategoryId
 
                     AiParseResult(
-                        type = TransactionType.fromValue(dto.type),
+                        type = TransactionType.fromValue(dto.type) ?: TransactionType.EXPENSE,
                         amount = dto.amount,
                         categoryId = finalCategoryId,
                         categoryName = dto.categoryName,

@@ -31,7 +31,7 @@ class CategoryRepositoryImpl @Inject constructor(
                 Category(
                     id = entity.id,
                     name = entity.name,
-                    type = TransactionType.fromValue(entity.type),
+                    type = TransactionType.fromValue(entity.type) ?: TransactionType.EXPENSE,
                     icon = entity.icon,
                     sortOrder = entity.sortOrder,
                 )

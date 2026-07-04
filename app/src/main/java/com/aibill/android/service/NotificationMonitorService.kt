@@ -9,6 +9,7 @@ import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.domain.usecase.AutoConfirmSuggester
+import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.util.NotificationCorrelator
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationParser
@@ -210,7 +211,7 @@ class NotificationMonitorService : NotificationListenerService() {
                     // 更新 Widget 数据：原子累加本月收支
                     WidgetDataUpdater.notifyTransactionAdded(
                         context = applicationContext,
-                        type = com.aibill.android.domain.model.TransactionType.fromValue(parseResult.type),
+                        type = com.aibill.android.domain.model.TransactionType.fromValue(parseResult.type) ?: TransactionType.EXPENSE,
                         amountCents = parseResult.amount,
                         date = pending.date,
                     )

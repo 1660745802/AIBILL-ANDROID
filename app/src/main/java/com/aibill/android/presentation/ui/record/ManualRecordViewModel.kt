@@ -164,7 +164,7 @@ class ManualRecordViewModel @Inject constructor(
             val selectedCategory = state.categories.find { it.id == state.selectedCategoryId }
             val transaction = Transaction(
                 clientId = UUID.randomUUID().toString(),
-                type = TransactionType.fromValue(state.type),
+                type = TransactionType.fromValue(state.type) ?: TransactionType.EXPENSE,
                 amount = state.amountFen,
                 categoryId = state.selectedCategoryId,
                 categoryName = selectedCategory?.name,

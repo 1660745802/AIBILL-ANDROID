@@ -24,7 +24,8 @@ class StatisticsViewModel @Inject constructor(
         val expense: Int = 0,
         val income: Int = 0,
         val balance: Int = 0,
-        val expenseChange: Int = 0
+        val expenseChange: Int = 0,
+        val incomeChange: Int = 0
     )
 
     data class CategoryStat(
@@ -82,7 +83,8 @@ class StatisticsViewModel @Inject constructor(
 
     fun onTabChanged(tab: String) {
         _uiState.update { it.copy(selectedTab = tab) }
-        loadCategoryAndTrend()
+        // PR #55：Tab 切换需刷新 summary 才能切换 expense/income 环比
+        loadData()
     }
 
     fun refresh() {
@@ -107,7 +109,8 @@ class StatisticsViewModel @Inject constructor(
                                 expense = dto.expense,
                                 income = dto.income,
                                 balance = dto.balance,
-                                expenseChange = dto.expenseChange ?: 0
+                                expenseChange = dto.expenseChange ?: 0,
+                                incomeChange = dto.incomeChange ?: 0,
                             )
                         )
                     }

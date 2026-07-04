@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
+import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.domain.repository.TransactionRepository
@@ -120,7 +121,7 @@ class NotificationCenterViewModel @Inject constructor(
         SyncScheduler.scheduleSyncIfNeeded(appContext)
         WidgetDataUpdater.notifyTransactionAdded(
             context = appContext,
-            type = com.aibill.android.domain.model.TransactionType.fromValue(type),
+            type = com.aibill.android.domain.model.TransactionType.fromValue(type) ?: TransactionType.EXPENSE,
             amountCents = amountCents,
             date = pendingTransaction.date,
         )
@@ -169,7 +170,7 @@ class NotificationCenterViewModel @Inject constructor(
                 notificationRecordDao.updateStatus(item.id, "confirmed", clientId)
                 WidgetDataUpdater.notifyTransactionAdded(
                     context = appContext,
-                    type = com.aibill.android.domain.model.TransactionType.fromValue(record.parsedType ?: "expense"),
+                    type = com.aibill.android.domain.model.TransactionType.fromValue(record.parsedType ?: "expense") ?: TransactionType.EXPENSE,
                     amountCents = amount,
                     date = pendingTransaction.date,
                 )

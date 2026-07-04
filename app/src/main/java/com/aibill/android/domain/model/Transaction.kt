@@ -9,8 +9,13 @@ enum class TransactionType(val value: String) {
     TRANSFER("transfer");
 
     companion object {
-        fun fromValue(value: String): TransactionType =
-            entries.first { it.value == value }
+        /**
+         * PR #62：之前用 entries.first{...} 找不到时抛 NoSuchElementException
+         * 被 safeApiCall 兜成"未知错误"。改为返回 null，调用处显式处理
+         * 大小写差异 / 后端返回新枚举值的情况。
+         */
+        fun fromValue(value: String): TransactionType? =
+            entries.firstOrNull { it.value == value }
     }
 }
 

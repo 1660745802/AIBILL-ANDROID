@@ -99,7 +99,7 @@ class TransactionRepositoryImpl @Inject constructor(
     private fun TransactionDto.toDomain() = Transaction(
         id = id,
         clientId = clientId.orEmpty(),
-        type = TransactionType.fromValue(type),
+        type = TransactionType.fromValue(type) ?: TransactionType.EXPENSE,
         amount = amount,
         categoryId = categoryId,
         categoryName = categoryName,

@@ -65,7 +65,11 @@ internal fun SummaryCard(
     }
     val label = if (selectedTab == "expense") "总支出" else "总收入"
     val gradient = if (selectedTab == "expense") ExpenseGradient else IncomeGradient
-    val change = summary?.expenseChange ?: 0
+    // PR #55：按 selectedTab 切换 expense/income 环比
+    val change = when (selectedTab) {
+        "expense" -> summary?.expenseChange ?: 0
+        else -> summary?.incomeChange ?: 0
+    }
 
     Card(
         modifier = modifier.fillMaxWidth(),

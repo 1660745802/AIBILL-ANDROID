@@ -7,6 +7,7 @@ import android.content.Intent
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.PendingTransactionEntity
+import com.aibill.android.domain.model.TransactionType
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -103,7 +104,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         // 通知 Widget 刷新：原子累加本月收支
         WidgetDataUpdater.notifyTransactionAdded(
             context = context,
-            type = com.aibill.android.domain.model.TransactionType.fromValue(record.parsedType ?: "expense"),
+            type = com.aibill.android.domain.model.TransactionType.fromValue(record.parsedType ?: "expense") ?: TransactionType.EXPENSE,
             amountCents = record.parsedAmount ?: 0,
             date = pendingTransaction.date,
         )
