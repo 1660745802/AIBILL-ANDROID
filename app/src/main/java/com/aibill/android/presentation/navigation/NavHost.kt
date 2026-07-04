@@ -52,6 +52,13 @@ fun AiBillNavHost(
         when (navigateTo) {
             "notification_center" -> navController.navigate(Route.NotificationCenter)
             "manual_record" -> navController.navigate(Route.ManualRecord)
+            "login_force" -> {
+                // 401 全局处理：清栈跳登录
+                navController.navigate(Route.Login) {
+                    popUpTo(0) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
             else -> {}
         }
         if (navigateTo != null) {
