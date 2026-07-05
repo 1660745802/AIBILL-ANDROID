@@ -29,6 +29,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
     @Inject lateinit var notificationRecordDao: NotificationRecordDao
     @Inject lateinit var pendingTransactionDao: PendingTransactionDao
+    @Inject lateinit var categoryLearningEngine: com.aibill.android.domain.usecase.CategoryLearningEngine
 
     private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -84,11 +85,18 @@ class NotificationActionReceiver : BroadcastReceiver() {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
+        // 自动填分类：用描述作为关键词尝试匹配学习过的分类
+        val description = record.parsedDescription
+        val predictedCategoryId = if (!description.isNullOrBlank()) {
+            categoryLearningEngine.matchCategory(description)
+        } else null
+
         val pendingTransaction = PendingTransactionEntity(
             clientId = clientId,
             type = record.parsedType ?: "expense",
             amount = record.parsedAmount ?: 0,
-            description = record.parsedDescription,
+            categoryId = predictedCategoryId,
+            description = description,
             date = dateFormat.format(now),
             time = timeFormat.format(now),
             source = "app_notification",

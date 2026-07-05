@@ -39,6 +39,7 @@ class NotificationMonitorService : NotificationListenerService() {
     @Inject lateinit var userPreferences: UserPreferences
     @Inject lateinit var notificationCorrelator: NotificationCorrelator
     @Inject lateinit var autoConfirmSuggester: AutoConfirmSuggester
+    @Inject lateinit var categoryLearningEngine: com.aibill.android.domain.usecase.CategoryLearningEngine
     @Inject lateinit var aiApi: com.aibill.android.data.remote.api.AiApi
     @Inject lateinit var aiResultValidator: com.aibill.android.util.AiResultValidator
 
@@ -155,28 +156,23 @@ class NotificationMonitorService : NotificationListenerService() {
             if (correlationResult is NotificationCorrelator.CorrelationResult.Skip) return
         }
 
-        // 7. 智能免确认：提升置信度
+        // 7. 置信度评估：只有关键词学习命中才免确认（用户确认过的商家）
+        val keyword = if (parseResult != null) {
+            (parseResult.merchantName ?: parseResult.description)?.trim()?.lowercase()
+        } else null
+
+        val shouldAutoConfirm = if (parseResult != null && keyword != null) {
+            autoConfirmSuggester.shouldAutoConfirm(keyword, parseResult.amount)
+        } else false
+
+        // 预填分类：入库前尝试从学习引擎匹配分类
+        val predictedCategoryId = if (parseResult != null && keyword != null) {
+            categoryLearningEngine.matchCategory(keyword)
+        } else null
+
         val adjustedConfidence = if (parseResult != null) {
-            var confidence = parseResult.confidence
-
-            // 交叉验证信号 1：有订单号 → 更可靠（不太可能是误识别）
-            if (!parseResult.orderId.isNullOrBlank()) {
-                confidence += 10
-            }
-
-            // 交叉验证信号 2：关键词学习命中 → 高置信度
-            val keyword = (parseResult.merchantName ?: parseResult.description)
-                ?.trim()?.lowercase()
-            val shouldAuto = autoConfirmSuggester.shouldAutoConfirm(
-                keyword = keyword,
-                amountCents = parseResult.amount
-            )
-            if (shouldAuto) confidence = maxOf(confidence, 95)
-
-            confidence.coerceAtMost(100)
-        } else {
-            null
-        }
+            if (shouldAutoConfirm) 95 else parseResult.confidence
+        } else null
 
         // 8. 存入 NotificationRecordEntity
         val entity = NotificationRecordEntity(
@@ -195,16 +191,17 @@ class NotificationMonitorService : NotificationListenerService() {
         if (parseResult != null && adjustedConfidence != null) {
             when {
                 adjustedConfidence >= 90 -> {
-                    // 高置信度：静默入库
+                    // 高置信度（关键词学习命中）：静默入库，自动填分类
                     val pending = PendingTransactionEntity(
                         clientId = UUID.randomUUID().toString(),
                         type = parseResult.type,
                         amount = parseResult.amount,
+                        categoryId = predictedCategoryId,
                         description = parseResult.description,
                         date = LocalDate.now().toString(),
                         time = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                         source = "app_notification",
-                        sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(packageName),
+                        sourceDetail = NotificationSourceMapping.friendlyName(packageName),
                         syncStatus = "pending",
                         clientCreatedAt = Instant.now().toString()
                     )
@@ -223,7 +220,7 @@ class NotificationMonitorService : NotificationListenerService() {
                 }
                 adjustedConfidence in 60..89 -> {
                     // 中置信度：弹出确认通知
-                    val source = com.aibill.android.util.NotificationSourceMapping.friendlyName(packageName)
+                    val source = NotificationSourceMapping.friendlyName(packageName)
                     val privacyMode = userPreferences.notificationPrivacy.first()
                     NotificationHelper.showConfirmNotification(
                         context = this,
