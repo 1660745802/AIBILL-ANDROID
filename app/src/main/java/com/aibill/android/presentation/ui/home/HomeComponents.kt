@@ -368,8 +368,9 @@ private fun CategoryChipFlow(
 }
 
 @Composable
-internal fun TransactionItem(transaction: Transaction) {
+internal fun TransactionItem(transaction: Transaction, onClick: () -> Unit = {}) {
     Card(
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(

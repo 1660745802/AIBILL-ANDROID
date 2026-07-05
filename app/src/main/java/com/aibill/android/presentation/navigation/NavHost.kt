@@ -164,7 +164,8 @@ fun AiBillNavHost(
                     aiInputPrefill = aiInputPrefill,
                     onAiInputConsumed = onAiInputConsumed,
                     onNavigateToManualRecord = { navController.navigate(Route.ManualRecord()) },
-                    onNavigateToNotification = { navController.navigate(Route.NotificationCenter) }
+                    onNavigateToNotification = { navController.navigate(Route.NotificationCenter) },
+                    onNavigateToDetail = { id -> navController.navigate(Route.TransactionDetail(id)) },
                 )
             }
             composable<Route.Transactions> {

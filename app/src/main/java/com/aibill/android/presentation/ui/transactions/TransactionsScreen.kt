@@ -101,7 +101,7 @@ fun TransactionsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                    .padding(start = 20.dp, top = 12.dp, end = 12.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 // PR #27：搜索框 + 类型过滤 chip（PRD §5.2.2 多维度筛选）
@@ -110,7 +110,14 @@ fun TransactionsScreen(
                     onKeywordChanged = viewModel::onSearchChanged,
                     modifier = Modifier.weight(1f),
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, top = 6.dp, end = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 FilterChip(
                     selected = uiState.filterType == "all",
                     onClick = { viewModel.onFilterTypeChanged("all") },

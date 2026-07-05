@@ -77,11 +77,13 @@ fun NotificationCenterScreen(
 
     // 确认前编辑对话框
     editItem?.let { item ->
+        val categoriesByType by viewModel.categoriesByType.collectAsStateWithLifecycle()
         NotificationEditDialog(
             item = item,
+            categoriesByType = categoriesByType,
             onDismiss = { editItem = null },
-            onConfirm = { type, amountCents, desc ->
-                viewModel.confirmWithEdit(item.id, type, amountCents, desc)
+            onConfirm = { type, amountCents, desc, categoryId ->
+                viewModel.confirmWithEdit(item.id, type, amountCents, desc, categoryId)
                 editItem = null
             }
         )
@@ -280,12 +282,13 @@ private fun formatTime(timestamp: Long): String {
 }
 
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun NotificationEditDialog(
     item: NotificationRecordEntity,
+    categoriesByType: Map<String, List<com.aibill.android.domain.model.Category>>,
     onDismiss: () -> Unit,
-    onConfirm: (type: String, amountCents: Int, description: String) -> Unit,
+    onConfirm: (type: String, amountCents: Int, description: String, categoryId: Int?) -> Unit,
 ) {
     var type by remember { mutableStateOf(item.parsedType ?: "expense") }
     var amountText by remember {
@@ -294,21 +297,40 @@ private fun NotificationEditDialog(
         )
     }
     var description by remember { mutableStateOf(item.parsedDescription ?: "") }
+    var selectedCategoryId by remember { mutableStateOf<Int?>(null) }
+
+    val availableCategories = categoriesByType[type].orEmpty()
+
+    // 初始化或切换类型时，选中第一个分类
+    LaunchedEffect(type, availableCategories) {
+        if (selectedCategoryId == null || availableCategories.none { it.id == selectedCategoryId }) {
+            selectedCategoryId = availableCategories.firstOrNull()?.id
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("确认记账") },
+        title = { Text("编辑并确认") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 // 类型切换
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("expense" to "支出", "income" to "收入").forEach { (value, label) ->
-                        androidx.compose.material3.FilterChip(
-                            selected = type == value,
-                            onClick = { type = value },
-                            label = { Text(label) }
-                        )
-                    }
+                    androidx.compose.material3.FilterChip(
+                        selected = type == "expense",
+                        onClick = {
+                            type = "expense"
+                            selectedCategoryId = categoriesByType["expense"]?.firstOrNull()?.id
+                        },
+                        label = { Text("支出") }
+                    )
+                    androidx.compose.material3.FilterChip(
+                        selected = type == "income",
+                        onClick = {
+                            type = "income"
+                            selectedCategoryId = categoriesByType["income"]?.firstOrNull()?.id
+                        },
+                        label = { Text("收入") }
+                    )
                 }
                 // 金额输入
                 androidx.compose.material3.OutlinedTextField(
@@ -333,6 +355,32 @@ private fun NotificationEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                // 分类选择
+                Text(
+                    text = "分类",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (availableCategories.isEmpty()) {
+                    Text(
+                        text = "暂无可选分类",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        availableCategories.forEach { cat ->
+                            androidx.compose.material3.FilterChip(
+                                selected = selectedCategoryId == cat.id,
+                                onClick = { selectedCategoryId = cat.id },
+                                label = { Text("${cat.icon} ${cat.name}") },
+                            )
+                        }
+                    }
+                }
                 // 原始通知内容参考
                 Text(
                     text = "原文：${item.content.take(60)}",
@@ -346,7 +394,11 @@ private fun NotificationEditDialog(
                 text = "确认记账",
                 onClick = {
                     val cents = Math.round((amountText.toDoubleOrNull() ?: 0.0) * 100).toInt()
-                    onConfirm(type, cents, description)
+                    val finalCategoryId = availableCategories
+                        .firstOrNull { it.id == selectedCategoryId }
+                        ?.id
+                        ?: availableCategories.firstOrNull()?.id
+                    onConfirm(type, cents, description, finalCategoryId)
                 },
                 enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0
             )

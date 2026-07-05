@@ -47,6 +47,7 @@ fun HomeScreen(
     onAiInputConsumed: () -> Unit = {},
     onNavigateToManualRecord: () -> Unit = {},
     onNavigateToNotification: () -> Unit = {},
+    onNavigateToDetail: (Int) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -212,7 +213,10 @@ fun HomeScreen(
                             items = uiState.todayTransactions,
                             key = { it.clientId },
                         ) { transaction ->
-                            TransactionItem(transaction = transaction)
+                            TransactionItem(
+                                transaction = transaction,
+                                onClick = { transaction.id?.let { onNavigateToDetail(it) } },
+                            )
                         }
                     }
                 }

@@ -5,9 +5,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
+import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
+import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.service.SyncScheduler
 import com.aibill.android.service.WidgetDataUpdater
@@ -20,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -32,6 +35,7 @@ class NotificationCenterViewModel @Inject constructor(
     private val notificationRecordDao: NotificationRecordDao,
     private val pendingTransactionDao: PendingTransactionDao,
     private val transactionRepository: TransactionRepository,
+    private val categoryRepository: CategoryRepository,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
@@ -41,6 +45,27 @@ class NotificationCenterViewModel @Inject constructor(
 
     private val _uiEvent = Channel<UiEvent>(Channel.BUFFERED)
     val uiEvent = _uiEvent.receiveAsFlow()
+
+    /** 按类型分组的分类列表，供编辑弹窗使用 */
+    private val _categoriesByType = MutableStateFlow<Map<String, List<Category>>>(emptyMap())
+    val categoriesByType: StateFlow<Map<String, List<Category>>> = _categoriesByType.asStateFlow()
+
+    init {
+        observeCategories()
+    }
+
+    private fun observeCategories() {
+        viewModelScope.launch {
+            categoryRepository.observeCategories("expense").collect { list ->
+                _categoriesByType.update { it + ("expense" to list) }
+            }
+        }
+        viewModelScope.launch {
+            categoryRepository.observeCategories("income").collect { list ->
+                _categoriesByType.update { it + ("income" to list) }
+            }
+        }
+    }
 
     val pendingNotifications: StateFlow<List<NotificationRecordEntity>> =
         notificationRecordDao.observePending()
@@ -77,9 +102,9 @@ class NotificationCenterViewModel @Inject constructor(
     }
 
     /**
-     * 确认前编辑：用户在弹窗中修改金额/类型/描述后确认
+     * 确认前编辑：用户在弹窗中修改金额/类型/描述/分类后确认
      */
-    fun confirmWithEdit(id: Long, type: String, amountCents: Int, description: String) {
+    fun confirmWithEdit(id: Long, type: String, amountCents: Int, description: String, categoryId: Int?) {
         viewModelScope.launch {
             if (amountCents <= 0) {
                 _uiEvent.send(UiEvent.ShowToast("请输入有效金额"))
@@ -92,6 +117,7 @@ class NotificationCenterViewModel @Inject constructor(
                 amountCents = amountCents,
                 description = description.ifBlank { record.parsedDescription },
                 packageName = record.packageName,
+                categoryId = categoryId,
             )
             _uiEvent.send(UiEvent.ShowToast("已记账 ✓"))
         }
@@ -103,16 +129,26 @@ class NotificationCenterViewModel @Inject constructor(
         amountCents: Int,
         description: String?,
         packageName: String,
+        categoryId: Int? = null,
     ) {
         val clientId = UUID.randomUUID().toString()
         val now = Date()
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
+        // 根据 categoryId 找到分类名称和图标（用于冗余存储）
+        val typeKey = if (type == "income") "income" else "expense"
+        val category = categoryId?.let { id ->
+            _categoriesByType.value[typeKey]?.firstOrNull { it.id == id }
+        }
+
         val pendingTransaction = PendingTransactionEntity(
             clientId = clientId,
             type = type,
             amount = amountCents,
+            categoryId = categoryId,
+            categoryName = category?.name,
+            categoryIcon = category?.icon,
             description = description,
             date = dateFormat.format(now),
             time = timeFormat.format(now),
