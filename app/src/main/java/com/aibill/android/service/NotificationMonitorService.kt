@@ -13,6 +13,7 @@ import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.util.NotificationCorrelator
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationParser
+import com.aibill.android.util.NotificationSourceMapping
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,30 +46,8 @@ class NotificationMonitorService : NotificationListenerService() {
     companion object {
         private const val DEDUP_WINDOW_MS = 1000L
 
-        private val WHITELIST_PACKAGES = setOf(
-            // 支付平台
-            "com.tencent.mm",                    // 微信
-            "com.eg.android.AlipayGphone",       // 支付宝
-            // 短信
-            "com.android.mms",                   // 系统短信
-            "com.google.android.apps.messaging", // Google Messages
-            "com.samsung.android.messaging",     // 三星短信
-            "com.miui.mms",                      // 小米短信
-            // 银行
-            "com.icbc",                          // 工商银行
-            "com.chinamworld.bocmbci",           // 中国银行
-            "com.ccb.start",                     // 建设银行
-            "com.abchina.abc",                   // 农业银行
-            "cmb.pb",                            // 招商银行
-            "com.chinamworld.main",              // 交通银行
-            "com.cmbchina.ccd.pluto.cmbActivity", // 招行信用卡
-            "com.spdbccc.app",                   // 浦发信用卡
-            "com.pingan.paces.ccardi"            // 平安信用卡
-        )
-
-// PR L1：删除私有 SOURCE_NAMES，改用 NotificationSourceMapping.friendlyName(packageName)
-        // 避免双 source of truth（两个 map 内容相同但维护两处）。
-        // 添加新包名只需改 NotificationSourceMapping 一处。
+        /** 白名单直接引用 NotificationSourceMapping，添加新包名只需改一处 */
+        private val WHITELIST_PACKAGES: Set<String> = NotificationSourceMapping.KNOWN_PACKAGES
 
         /**
          * 支付/账单特征关键词。用于预筛：命中才可能是账单通知。

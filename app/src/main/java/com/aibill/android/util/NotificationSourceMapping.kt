@@ -3,28 +3,63 @@ package com.aibill.android.util
 /**
  * 通知来源包名 → 友好名称 统一映射
  *
- * CONTRIBUTION §11.3：三处构造 PendingTransactionEntity.sourceDetail 入口
- * 必须保持一致；之前 Service 用 friendly name，ActionReceiver/ViewModel 用
- * packageName，导致同一笔账显示两种来源，且同步到后端时口径混乱。
+ * 阶段 2.1：扩展到 30+ 家银行/三方支付平台。
+ * 添加新包名只需在此处添加一行，WHITELIST_PACKAGES 引用此 map 的 keys。
  */
 object NotificationSourceMapping {
     private val SOURCE_NAMES = mapOf(
+        // === 支付平台 ===
         "com.tencent.mm" to "微信支付",
         "com.eg.android.AlipayGphone" to "支付宝",
+        // === 短信 App ===
         "com.android.mms" to "短信",
         "com.google.android.apps.messaging" to "短信",
         "com.samsung.android.messaging" to "短信",
         "com.miui.mms" to "短信",
+        "com.huawei.message" to "短信",
+        "com.oppo.mms" to "短信",
+        "com.vivo.mms" to "短信",
+        // === 国有大行 ===
         "com.icbc" to "工商银行",
         "com.chinamworld.bocmbci" to "中国银行",
         "com.ccb.start" to "建设银行",
         "com.abchina.abc" to "农业银行",
-        "cmb.pb" to "招商银行",
         "com.chinamworld.main" to "交通银行",
+        "com.psbc.mbank" to "邮储银行",
+        // === 股份制银行 ===
+        "cmb.pb" to "招商银行",
         "com.cmbchina.ccd.pluto.cmbActivity" to "招行信用卡",
+        "com.cmbc.cc.mbank" to "民生银行",
         "com.spdbccc.app" to "浦发信用卡",
+        "com.spdb.mobilebank.per" to "浦发银行",
         "com.pingan.paces.ccardi" to "平安信用卡",
+        "com.pingan.mobilebank" to "平安银行",
+        "com.cib.cibmb" to "兴业银行",
+        "com.ecitic.bank.mobile" to "中信银行",
+        "com.cgbchina.xpt" to "广发银行",
+        "com.chinaebocloud.hx" to "华夏银行",
+        "com.cebbank.mobile.cemb" to "光大银行",
+        // === 城商行 ===
+        "com.bonc.njcb" to "南京银行",
+        "com.nbbank" to "宁波银行",
+        "com.csii.boc_jiangsu" to "江苏银行",
+        "com.bankofbeijing.mobilebank" to "北京银行",
+        "com.shbank.mper" to "上海银行",
+        // === 三方支付/电商 ===
+        "com.jd.jrapp" to "京东金融",
+        "com.meituan.meituan" to "美团",
+        "com.sankuai.meituan.takeoutnew" to "美团外卖",
+        "com.xunmeng.pinduoduo" to "拼多多",
+        "com.ss.android.ugc.aweme" to "抖音",
+        "com.xingin.xhs" to "小红书",
+        "com.tencent.mobileqq" to "QQ",
+        "com.unionpay" to "云闪付",
+        // === 数字人民币 ===
+        "cn.gov.pbc.dcep" to "数字人民币",
     )
+
+    /** 所有已知支付相关包名集合，供白名单使用 */
+    val KNOWN_PACKAGES: Set<String> = SOURCE_NAMES.keys
 
     fun friendlyName(packageName: String): String =
         SOURCE_NAMES[packageName] ?: packageName
