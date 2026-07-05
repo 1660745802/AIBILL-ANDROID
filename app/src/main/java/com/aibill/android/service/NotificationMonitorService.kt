@@ -130,14 +130,23 @@ class NotificationMonitorService : NotificationListenerService() {
 
         // 7. 智能免确认：提升置信度
         val adjustedConfidence = if (parseResult != null) {
-            // 优先使用商家名作 keyword（跨金额/时间稳定），未抽到时降级用 description
+            var confidence = parseResult.confidence
+
+            // 交叉验证信号 1：有订单号 → 更可靠（不太可能是误识别）
+            if (!parseResult.orderId.isNullOrBlank()) {
+                confidence += 10
+            }
+
+            // 交叉验证信号 2：关键词学习命中 → 高置信度
             val keyword = (parseResult.merchantName ?: parseResult.description)
                 ?.trim()?.lowercase()
             val shouldAuto = autoConfirmSuggester.shouldAutoConfirm(
                 keyword = keyword,
                 amountCents = parseResult.amount
             )
-            if (shouldAuto) 95 else parseResult.confidence
+            if (shouldAuto) confidence = maxOf(confidence, 95)
+
+            confidence.coerceAtMost(100)
         } else {
             null
         }
