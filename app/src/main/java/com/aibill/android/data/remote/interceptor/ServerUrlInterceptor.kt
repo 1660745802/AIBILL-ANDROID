@@ -44,12 +44,19 @@ class ServerUrlInterceptor @Inject constructor(
         // 提取原始请求中的路径部分（去掉占位 base 的 /api/ 前缀）
         val pathSegments = originalUrl.pathSegments
         // 原始 URL 类似 http://localhost:3000/api/auth/login
-        // 我们只需要 auth/login 部分
-        val relativePath = pathSegments.joinToString("/")
+        // pathSegments = ["api", "auth", "login"]
+        // 需要去掉占位 baseUrl 中的 "api" 前缀，只保留 "auth/login"
+        // 因为用户配置的 serverUrl 已包含 /api
+        val relativePath = if (pathSegments.firstOrNull() == "api") {
+            pathSegments.drop(1).joinToString("/")
+        } else {
+            pathSegments.joinToString("/")
+        }
 
-        // 构建新的 URL
+        // 构建新的 URL：保留 parsedBaseUrl 的完整路径，再追加 relativePath
+        val basePath = parsedBaseUrl.encodedPath.trimEnd('/')
         val newUrl = parsedBaseUrl.newBuilder()
-            .encodedPath("/${relativePath}")
+            .encodedPath("$basePath/$relativePath")
             .query(originalUrl.query)
             .build()
 
