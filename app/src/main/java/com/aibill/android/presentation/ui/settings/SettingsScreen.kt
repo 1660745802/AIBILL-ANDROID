@@ -39,6 +39,7 @@ fun SettingsScreen(
     var showPasswordDialog by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
+        viewModel.checkNotificationListenerPermission(context)
         viewModel.events.collect { msg ->
             snackbarHostState.showSnackbar(msg)
         }
@@ -70,12 +71,26 @@ fun SettingsScreen(
 
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    SettingSwitchRow(
-                        title = "自动记账",
-                        subtitle = "监听支付通知并自动记录账单",
-                        checked = uiState.notificationEnabled,
-                        onCheckedChange = { viewModel.onNotificationEnabledChanged(it) }
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("通知监听", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                if (uiState.notificationListenerGranted) "已开启，自动记账运行中" else "未授权，请前往设置开启",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (uiState.notificationListenerGranted) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        if (!uiState.notificationListenerGranted) {
+                            TextButton(onClick = onNavigateToPermissionGuide) {
+                                Text("前往设置")
+                            }
+                        }
+                    }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     SettingSwitchRow(
                         title = "通知栏快捷记账",

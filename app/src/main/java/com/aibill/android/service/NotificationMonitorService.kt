@@ -98,9 +98,11 @@ class NotificationMonitorService : NotificationListenerService() {
     }
 
     private suspend fun handleNotification(sbn: StatusBarNotification) {
-        // 1. 检查全局开关
-        val enabled = userPreferences.notificationEnabled.first()
-        if (!enabled) return
+        // 1. 检查系统"通知使用权"是否已授权（跟随系统权限，无 App 内部开关）
+        val enabledListeners = android.provider.Settings.Secure.getString(
+            contentResolver, "enabled_notification_listeners"
+        ).orEmpty()
+        if (!enabledListeners.contains(packageName)) return
 
         // 2. 检查包名白名单
         val packageName = sbn.packageName ?: return

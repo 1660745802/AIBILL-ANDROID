@@ -30,7 +30,7 @@ class SettingsViewModel @Inject constructor(
     data class UiState(
         val themeMode: String = "system",
         val serverUrl: String = "",
-        val notificationEnabled: Boolean = false,
+        val notificationListenerGranted: Boolean = false,
         val hideFromRecents: Boolean = false,
         val notificationPrivacy: Boolean = false,
         val appLockEnabled: Boolean = false,
@@ -48,7 +48,6 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             val theme = userPreferences.themeMode.first()
             val url = userPreferences.serverUrl.first().orEmpty()
-            val notifEnabled = userPreferences.notificationEnabled.first()
             val hide = userPreferences.hideFromRecents.first()
             val privacy = userPreferences.notificationPrivacy.first()
             val appLock = userPreferences.appLockEnabled.first()
@@ -57,7 +56,6 @@ class SettingsViewModel @Inject constructor(
                 it.copy(
                     themeMode = theme,
                     serverUrl = url,
-                    notificationEnabled = notifEnabled,
                     hideFromRecents = hide,
                     notificationPrivacy = privacy,
                     appLockEnabled = appLock,
@@ -81,11 +79,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun onNotificationEnabledChanged(enabled: Boolean) {
-        viewModelScope.launch {
-            userPreferences.setNotificationEnabled(enabled)
-            _uiState.update { it.copy(notificationEnabled = enabled) }
-        }
+    fun checkNotificationListenerPermission(context: Context) {
+        val enabledListeners = android.provider.Settings.Secure.getString(
+            context.contentResolver, "enabled_notification_listeners"
+        ).orEmpty()
+        val granted = enabledListeners.contains(context.packageName)
+        _uiState.update { it.copy(notificationListenerGranted = granted) }
     }
 
     fun onNotificationPrivacyChanged(enabled: Boolean) {

@@ -56,7 +56,6 @@ class UserPreferences @Inject constructor(
         val NICKNAME = stringPreferencesKey("nickname")
         val DEFAULT_ACCOUNT_ID = intPreferencesKey("default_account_id")
         val THEME_MODE = stringPreferencesKey("theme_mode")
-        val NOTIFICATION_ENABLED = booleanPreferencesKey("notification_enabled")
         val LAST_SYNC_TIME = longPreferencesKey("last_sync_time")
         val HIDE_FROM_RECENTS = booleanPreferencesKey("hide_from_recents")
         val NOTIFICATION_PRIVACY = booleanPreferencesKey("notification_privacy")
@@ -104,13 +103,6 @@ class UserPreferences @Inject constructor(
 
     suspend fun setThemeMode(mode: String) {
         dataStore.edit { it[Keys.THEME_MODE] = mode }
-    }
-
-    // --- Notification ---
-    val notificationEnabled: Flow<Boolean> = dataStore.data.map { it[Keys.NOTIFICATION_ENABLED] ?: false }
-
-    suspend fun setNotificationEnabled(enabled: Boolean) {
-        dataStore.edit { it[Keys.NOTIFICATION_ENABLED] = enabled }
     }
 
     // --- Sync ---
