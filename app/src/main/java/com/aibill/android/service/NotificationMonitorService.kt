@@ -122,7 +122,8 @@ class NotificationMonitorService : NotificationListenerService() {
             val correlationResult = notificationCorrelator.check(
                 packageName = packageName,
                 amount = parseResult.amount,
-                description = parseResult.description
+                description = parseResult.description,
+                orderId = parseResult.orderId,
             )
             if (correlationResult is NotificationCorrelator.CorrelationResult.Skip) return
         }
