@@ -55,6 +55,16 @@ class SyncWorkerSyncTransactionTest {
         retryCount = retryCount,
     )
 
+    /**
+     * PR 14 防御注释：CoroutineWorker 构造函数内部会读 taskExecutor、id 等
+     * WorkerParameters 字段。用 mockk(relaxed=true) 时，只要 doWork() 不碰这些
+     * 内部字段就正常；但若未来 WorkManager 版本升级或 CoroutineWorker 内部实现变化
+     * 导致 doWork() 开始读这些字段，测试会报 NullPointerException。
+     *
+     * 如果发生这种情况，有两个修复路径：
+     * 1. 用 Robolectric 提供真实 WorkerParameters（测试变重但更稳）
+     * 2. 把核心 sync 逻辑抽成纯函数/类（更干净的架构改进）
+     */
     private fun makeWorker(): SyncWorker = SyncWorker(
         appContext = mockk(relaxed = true),
         workerParams = mockk(relaxed = true),
@@ -107,7 +117,7 @@ class SyncWorkerSyncTransactionTest {
         val worker = makeWorker()
         val (result, serverId) = worker.syncTransaction(entity)
 
-        assertEquals("SUCCESS" as String, result.name)
+        assertEquals(SyncWorker.SyncResult.SUCCESS, result)
         assertEquals(99, serverId)
     }
 
@@ -124,7 +134,7 @@ class SyncWorkerSyncTransactionTest {
 
         val (result, serverId) = makeWorker().syncTransaction(entity)
 
-        assertEquals("SUCCESS" as String, result.name)
+        assertEquals(SyncWorker.SyncResult.SUCCESS, result)
         assertEquals(88, serverId)
     }
 
@@ -141,7 +151,7 @@ class SyncWorkerSyncTransactionTest {
 
         val (result, serverId) = makeWorker().syncTransaction(entity)
 
-        assertEquals("SERVER_ANOMALY" as String, result.name)
+        assertEquals(SyncWorker.SyncResult.SERVER_ANOMALY, result)
         assertEquals(null, serverId)
     }
 
@@ -154,7 +164,7 @@ class SyncWorkerSyncTransactionTest {
 
         val (result, _) = makeWorker().syncTransaction(makeEntity("C1"))
 
-        assertEquals("SERVER_ANOMALY" as String, result.name)
+        assertEquals(SyncWorker.SyncResult.SERVER_ANOMALY, result)
     }
 
     @Test
@@ -164,7 +174,7 @@ class SyncWorkerSyncTransactionTest {
 
         val (result, _) = makeWorker().syncTransaction(makeEntity("C1"))
 
-        assertEquals("UNAUTHORIZED" as String, result.name)
+        assertEquals(SyncWorker.SyncResult.UNAUTHORIZED, result)
     }
 
     @Test
@@ -174,7 +184,7 @@ class SyncWorkerSyncTransactionTest {
 
         val (result, _) = makeWorker().syncTransaction(makeEntity("C1"))
 
-        assertEquals("BUSINESS_ERROR" as String, result.name)
+        assertEquals(SyncWorker.SyncResult.BUSINESS_ERROR, result)
     }
 
     @Test
@@ -183,7 +193,7 @@ class SyncWorkerSyncTransactionTest {
 
         val (result, _) = makeWorker().syncTransaction(makeEntity("C1"))
 
-        assertEquals("NETWORK_ERROR" as String, result.name)
+        assertEquals(SyncWorker.SyncResult.NETWORK_ERROR, result)
     }
 
     // ==================== markSynced / markFailed / incrementRetry (via doWork) ====================
