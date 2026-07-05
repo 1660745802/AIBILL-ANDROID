@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.aibill.android.service.BudgetCheckWorker
 import com.aibill.android.service.InsightWorker
+import com.aibill.android.service.NlsHealthCheckWorker
 import com.aibill.android.service.RecurringWorker
 import com.aibill.android.util.NetworkMonitor
 import dagger.hilt.android.HiltAndroidApp
@@ -40,6 +41,7 @@ class AiBillApp : Application(), Configuration.Provider {
         BudgetCheckWorker.schedule(this)
         InsightWorker.schedule(this)
         RecurringWorker.schedule(this)
+        NlsHealthCheckWorker.schedule(this)
     }
 
     override val workManagerConfiguration: Configuration

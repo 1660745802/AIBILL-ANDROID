@@ -210,4 +210,30 @@ object NotificationHelper {
     fun cancelPendingAutoCancel(notificationId: Int) {
         pendingCancels.remove(notificationId)?.let { cancelHandler.removeCallbacks(it) }
     }
+
+    /**
+     * 显示 NLS 断连提醒通知
+     * 当心跳检测发现通知监听服务被系统杀死时调用
+     */
+    fun showNlsDisconnectedNotification(context: Context) {
+        createNotificationChannel(context)
+
+        val intent = Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        val pendingIntent = PendingIntent.getActivity(
+            context, 30000, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("⚠️ 自动记账已断开")
+            .setContentText("通知监听服务被系统关闭，点击前往设置重新开启")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(-1, notification)
+    }
 }
