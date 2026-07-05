@@ -62,7 +62,6 @@ class UserPreferences @Inject constructor(
         val APP_LOCK_ENABLED = booleanPreferencesKey("app_lock_enabled")
         val QUICK_ENTRY_ENABLED = booleanPreferencesKey("quick_entry_enabled")
         val AUTOMATION_LEVEL = stringPreferencesKey("automation_level")
-        val SMALL_AMOUNT_THRESHOLD = intPreferencesKey("small_amount_threshold")
         val AI_PARSE_ENABLED = booleanPreferencesKey("ai_parse_enabled")
     }
 
@@ -154,13 +153,6 @@ class UserPreferences @Inject constructor(
 
     suspend fun setAutomationLevel(level: String) {
         dataStore.edit { it[Keys.AUTOMATION_LEVEL] = level }
-    }
-
-    // --- Small Amount Threshold ---
-    val smallAmountThreshold: Flow<Int> = dataStore.data.map { it[Keys.SMALL_AMOUNT_THRESHOLD] ?: 1000 }
-
-    suspend fun setSmallAmountThreshold(cents: Int) {
-        dataStore.edit { it[Keys.SMALL_AMOUNT_THRESHOLD] = cents }
     }
 
     // --- Clear All (logout) ---

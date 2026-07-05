@@ -1,6 +1,5 @@
 package com.aibill.android.domain.usecase
 
-import com.aibill.android.data.local.dao.AutoRuleDao
 import com.aibill.android.data.local.dao.CategoryRuleDao
 import com.aibill.android.data.local.datastore.UserPreferences
 import kotlinx.coroutines.flow.first
@@ -11,15 +10,13 @@ import javax.inject.Singleton
 /**
  * 智能免确认建议器
  *
- * 渐进策略：
- * - hitCount >= 3 → 建议免确认
+ * 仅基于关键词学习历史判断（准确率优先）：
+ * - hitCount >= threshold → 建议免确认
  * - 用户设置 automationLevel 影响判断阈值
- * - 小额免确认独立判断
  */
 @Singleton
 class AutoConfirmSuggester @Inject constructor(
     private val categoryRuleDao: CategoryRuleDao,
-    private val autoRuleDao: AutoRuleDao,
     private val userPreferences: UserPreferences,
 ) {
 
@@ -45,20 +42,6 @@ class AutoConfirmSuggester @Inject constructor(
 
         Timber.d("AutoConfirm: keyword=[$keyword], hitCount=${rule?.hitCount}, threshold=$threshold, suggest=$suggest")
         return suggest
-    }
-
-    /**
-     * 判断小额是否免确认
-     */
-    suspend fun isSmallAmountAutoConfirm(amountCents: Int): Boolean {
-        val level = userPreferences.automationLevel.first()
-        if (level == "conservative") return false
-
-        val threshold = userPreferences.smallAmountThreshold.first()
-        val enabledRule = autoRuleDao.findRule("small_amount", threshold.toString())
-        val isEnabled = enabledRule?.isEnabled ?: false
-
-        return isEnabled && amountCents <= threshold
     }
 
     /**

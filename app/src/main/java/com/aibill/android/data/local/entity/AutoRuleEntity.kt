@@ -14,7 +14,7 @@ data class AutoRuleEntity(
     val id: Long = 0,
 
     @ColumnInfo(name = "rule_type")
-    val ruleType: String, // "small_amount" / "merchant" / "time_range"
+    val ruleType: String, // "merchant" / "time_range" 等（保留扩展用）
 
     @ColumnInfo(name = "value")
     val value: String, // "1000" / "瑞幸" / "12:00-13:00"
