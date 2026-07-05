@@ -50,8 +50,20 @@ class NotificationCenterViewModel @Inject constructor(
     private val _categoriesByType = MutableStateFlow<Map<String, List<Category>>>(emptyMap())
     val categoriesByType: StateFlow<Map<String, List<Category>>> = _categoriesByType.asStateFlow()
 
+    /** NLS 连接状态，供健康度面板展示 */
+    private val _nlsConnected = MutableStateFlow(false)
+    val nlsConnected: StateFlow<Boolean> = _nlsConnected.asStateFlow()
+
     init {
         observeCategories()
+        checkNlsStatus()
+    }
+
+    fun checkNlsStatus() {
+        val enabledListeners = android.provider.Settings.Secure.getString(
+            appContext.contentResolver, "enabled_notification_listeners"
+        ).orEmpty()
+        _nlsConnected.value = enabledListeners.contains(appContext.packageName)
     }
 
     private fun observeCategories() {

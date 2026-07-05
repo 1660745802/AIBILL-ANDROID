@@ -153,6 +153,7 @@ fun NotificationCenterScreen(
         if (pendingItems.isEmpty()) {
             EmptyState(modifier = Modifier.padding(paddingValues))
         } else {
+            val nlsConnected by viewModel.nlsConnected.collectAsStateWithLifecycle()
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -160,6 +161,14 @@ fun NotificationCenterScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // 健康度面板
+                item(key = "health_status") {
+                    NlsHealthCard(
+                        isConnected = nlsConnected,
+                        pendingCount = pendingCount,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
                 items(pendingItems, key = { it.id }) { item ->
                     NotificationItem(
                         item = item,
@@ -407,4 +416,45 @@ private fun NotificationEditDialog(
             AppTextButton(text = "取消", onClick = onDismiss)
         }
     )
+}
+
+@Composable
+private fun NlsHealthCard(
+    isConnected: Boolean,
+    pendingCount: Int,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isConnected)
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            else
+                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (isConnected) "🟢" else "🔴",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (isConnected) "通知监听正常运行" else "通知监听已断开",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = if (isConnected) "待确认 $pendingCount 条" else "请前往系统设置重新开启",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
 }
