@@ -121,103 +121,108 @@ fun TransactionDetailScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
-                    .padding(horizontal = 16.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(innerPadding),
             ) {
-                Spacer(modifier = Modifier.height(4.dp))
-                // 类型选择
-                DetailCard(label = "💰 类型") {
-                    TypeChipRow(
-                        selected = uiState.type,
-                        onSelected = viewModel::onTypeChanged,
-                    )
-                }
-                // 金额
-                DetailCard(label = "💵 金额") {
-                    DetailTextField(
-                        value = uiState.amount,
-                        onValueChange = viewModel::onAmountChanged,
-                        placeholder = "0.00",
-                    )
-                }
-                // 分类
-                DetailCard(label = "📂 分类") {
-                    CategoryPickerRow(
-                        availableCategories = uiState.categories,
-                        selectedCategoryId = uiState.categoryId,
-                        onSelect = viewModel::onCategorySelected,
-                    )
-                }
-                // 账户
-                DetailCard(label = "🏦 账户") {
-                    AccountPickerRow(
-                        availableAccounts = uiState.accounts,
-                        selectedAccountId = uiState.accountId,
-                        onSelect = viewModel::onAccountSelected,
-                    )
-                }
-                // 描述
-                DetailCard(label = "📝 描述") {
-                    DetailTextField(
-                        value = uiState.description,
-                        onValueChange = viewModel::onDescriptionChanged,
-                        placeholder = "添加描述...",
-                    )
-                }
-                // 日期
-                DetailCard(label = "📅 日期") {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = uiState.date.ifBlank { "未设置" },
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f),
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 16.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    // 类型选择
+                    DetailCard(label = "💰 类型") {
+                        TypeChipRow(
+                            selected = uiState.type,
+                            onSelected = viewModel::onTypeChanged,
                         )
-                        TextButton(onClick = { showDatePicker = true }) {
-                            Icon(
-                                Icons.Default.CalendarMonth,
-                                contentDescription = "选日期",
-                                modifier = Modifier.size(20.dp),
+                    }
+                    // 金额
+                    DetailCard(label = "💵 金额") {
+                        DetailTextField(
+                            value = uiState.amount,
+                            onValueChange = viewModel::onAmountChanged,
+                            placeholder = "0.00",
+                        )
+                    }
+                    // 分类
+                    DetailCard(label = "📂 分类") {
+                        CategoryPickerRow(
+                            availableCategories = uiState.categories,
+                            selectedCategoryId = uiState.categoryId,
+                            onSelect = viewModel::onCategorySelected,
+                        )
+                    }
+                    // 账户
+                    DetailCard(label = "🏦 账户") {
+                        AccountPickerRow(
+                            availableAccounts = uiState.accounts,
+                            selectedAccountId = uiState.accountId,
+                            onSelect = viewModel::onAccountSelected,
+                        )
+                    }
+                    // 描述
+                    DetailCard(label = "📝 描述") {
+                        DetailTextField(
+                            value = uiState.description,
+                            onValueChange = viewModel::onDescriptionChanged,
+                            placeholder = "添加描述...",
+                        )
+                    }
+                    // 日期
+                    DetailCard(label = "📅 日期") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = uiState.date.ifBlank { "未设置" },
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f),
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("选择")
+                            TextButton(onClick = { showDatePicker = true }) {
+                                Icon(
+                                    Icons.Default.CalendarMonth,
+                                    contentDescription = "选日期",
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("选择")
+                            }
                         }
                     }
-                }
-                // 时间
-                DetailCard(label = "🕐 时间") {
-                    DetailTextField(
-                        value = uiState.time,
-                        onValueChange = viewModel::onTimeChanged,
-                        placeholder = "HH:mm",
-                    )
-                }
-                // 标签
-                DetailCard(label = "🏷️ 标签") {
-                    DetailTextField(
-                        value = uiState.tags,
-                        onValueChange = viewModel::onTagsChanged,
-                        placeholder = "用逗号分隔多个标签",
-                    )
+                    // 时间
+                    DetailCard(label = "🕐 时间") {
+                        DetailTextField(
+                            value = uiState.time,
+                            onValueChange = viewModel::onTimeChanged,
+                            placeholder = "HH:mm",
+                        )
+                    }
+                    // 标签
+                    DetailCard(label = "🏷️ 标签") {
+                        DetailTextField(
+                            value = uiState.tags,
+                            onValueChange = viewModel::onTagsChanged,
+                            placeholder = "用逗号分隔多个标签",
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // 保存按钮
+                // 保存按钮固定在底部
                 PrimaryButton(
                     text = "保存修改",
                     onClick = viewModel::onSave,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     enabled = !uiState.isSaving,
                     loading = uiState.isSaving,
                 )
-                Spacer(modifier = Modifier.height(24.dp))
             }
         }
     }
