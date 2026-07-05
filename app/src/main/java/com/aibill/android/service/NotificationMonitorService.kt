@@ -184,6 +184,7 @@ class NotificationMonitorService : NotificationListenerService() {
                         amount = parseResult.amount,
                         description = parseResult.description,
                         date = LocalDate.now().toString(),
+                        time = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                         source = "app_notification",
                         sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(packageName),
                         syncStatus = "pending",

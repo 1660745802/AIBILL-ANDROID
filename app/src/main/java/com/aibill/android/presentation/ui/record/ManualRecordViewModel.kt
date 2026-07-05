@@ -225,6 +225,7 @@ class ManualRecordViewModel @Inject constructor(
                 targetAccountId = state.targetAccountId,
                 description = state.description.ifBlank { null },
                 date = state.date,
+                time = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                 source = TransactionSource.MANUAL,
             )
 
