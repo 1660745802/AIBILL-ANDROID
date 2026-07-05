@@ -63,6 +63,7 @@ class UserPreferences @Inject constructor(
         val QUICK_ENTRY_ENABLED = booleanPreferencesKey("quick_entry_enabled")
         val AUTOMATION_LEVEL = stringPreferencesKey("automation_level")
         val SMALL_AMOUNT_THRESHOLD = intPreferencesKey("small_amount_threshold")
+        val AI_PARSE_ENABLED = booleanPreferencesKey("ai_parse_enabled")
     }
 
     // --- Server URL ---
@@ -124,6 +125,14 @@ class UserPreferences @Inject constructor(
 
     suspend fun setNotificationPrivacy(enabled: Boolean) {
         dataStore.edit { it[Keys.NOTIFICATION_PRIVACY] = enabled }
+    }
+
+    // --- AI Parse ---
+    /** AI 智能解析开关，默认开启。关闭后只走正则不调 AI（高级用户隐私选项） */
+    val aiParseEnabled: Flow<Boolean> = dataStore.data.map { it[Keys.AI_PARSE_ENABLED] ?: true }
+
+    suspend fun setAiParseEnabled(enabled: Boolean) {
+        dataStore.edit { it[Keys.AI_PARSE_ENABLED] = enabled }
     }
 
     // --- App Lock ---

@@ -222,8 +222,11 @@ class NotificationMonitorService : NotificationListenerService() {
                 // < 60 存待审，已通过 status 实现
             }
         } else if (parseResult == null) {
-            // 正则匹配失败，调 AI 兜底解析
-            tryAiParse(fullText, recordId, packageName)
+            // 正则匹配失败，若 AI 开关开启则调 AI 兜底解析
+            val aiEnabled = userPreferences.aiParseEnabled.first()
+            if (aiEnabled) {
+                tryAiParse(fullText, recordId, packageName)
+            }
         }
     }
 
