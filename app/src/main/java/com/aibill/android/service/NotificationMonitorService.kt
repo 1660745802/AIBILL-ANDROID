@@ -40,6 +40,7 @@ class NotificationMonitorService : NotificationListenerService() {
     @Inject lateinit var notificationCorrelator: NotificationCorrelator
     @Inject lateinit var autoConfirmSuggester: AutoConfirmSuggester
     @Inject lateinit var aiApi: com.aibill.android.data.remote.api.AiApi
+    @Inject lateinit var aiResultValidator: com.aibill.android.util.AiResultValidator
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -250,8 +251,20 @@ class NotificationMonitorService : NotificationListenerService() {
             val items = response.data.items
             if (items.isEmpty()) return
 
+            // 二次校验：过滤掉 AI 幻觉结果
+            val validItems = items.filter { item ->
+                val validation = aiResultValidator.validate(
+                    amount = item.amount,
+                    type = item.type,
+                    categoryId = item.categoryId,
+                    description = item.description,
+                )
+                validation.isValid
+            }
+            if (validItems.isEmpty()) return
+
             // 第一条：写入原始记录（保持原通知记录可见金额/类型）
-            val first = items.first()
+            val first = validItems.first()
             notificationRecordDao.updateParsedResult(
                 id = recordId,
                 amount = first.amount,
@@ -266,15 +279,15 @@ class NotificationMonitorService : NotificationListenerService() {
                 recordId = recordId,
                 amount = first.amount,
                 description = first.description ?: first.categoryName,
-                source = if (items.size > 1) "AI 识别 (${items.size} 笔)" else "AI 识别",
+                source = if (validItems.size > 1) "AI 识别 (${validItems.size} 笔)" else "AI 识别",
                 privacyMode = privacyMode,
                 type = first.type,
             )
 
             // 后续条目（多条账单场景）：各自建一条待确认通知
             // 关联到同一条原始通知记录 ID 以便追溯
-            for (i in 1 until items.size) {
-                val item = items[i]
+            for (i in 1 until validItems.size) {
+                val item = validItems[i]
                 val extraRecordId = notificationRecordDao.insert(
                     NotificationRecordEntity(
                         packageName = packageName,
@@ -292,7 +305,7 @@ class NotificationMonitorService : NotificationListenerService() {
                     recordId = extraRecordId,
                     amount = item.amount,
                     description = item.description ?: item.categoryName,
-                    source = "AI 识别 (${i + 1}/${items.size})",
+                    source = "AI 识别 (${i + 1}/${validItems.size})",
                     privacyMode = privacyMode,
                     type = item.type,
                 )
