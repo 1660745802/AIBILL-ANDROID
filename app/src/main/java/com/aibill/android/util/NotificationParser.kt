@@ -26,6 +26,11 @@ class NotificationParser @Inject constructor() {
          * 每次金额/时间都不同；merchantName 是稳定的商家标识，可作为学习 key。
          */
         val merchantName: String? = null,
+        /**
+         * 订单号/商户单号/流水号，用于跨通知去重。
+         * 同一笔交易可能产生多条通知（如微信通知+银行短信），通过 orderId 精确关联。
+         */
+        val orderId: String? = null,
         val confidence: Int // 0-100
     )
 
@@ -86,6 +91,15 @@ class NotificationParser @Inject constructor() {
             Regex("""在(.+?)消费"""),                // 在星巴克消费￥50
             Regex("""【(.+?)】"""),                  // 【美团外卖】...
             Regex("""\[(.+?)]"""),                  // [滴滴出行]
+        )
+
+        // 订单号/商户单号/流水号提取（用于跨通知精确去重）
+        private val ORDER_ID_PATTERNS = listOf(
+            Regex("""订单号[：:\s]*([A-Za-z0-9]+)"""),
+            Regex("""商户单号[：:\s]*([A-Za-z0-9]+)"""),
+            Regex("""流水号[：:\s]*([A-Za-z0-9]+)"""),
+            Regex("""交易单号[：:\s]*([A-Za-z0-9]+)"""),
+            Regex("""交易号[：:\s]*([A-Za-z0-9]+)"""),
         )
     }
 
@@ -195,6 +209,21 @@ class NotificationParser @Inject constructor() {
         return null
     }
 
+    /**
+     * 抽取订单号/商户单号/流水号（用于跨通知精确去重）。
+     * 命中第一个正则即返回；未命中返回 null。
+     */
+    private fun extractOrderId(text: String): String? {
+        for (pattern in ORDER_ID_PATTERNS) {
+            val match = pattern.find(text) ?: continue
+            val id = match.groupValues.getOrNull(1)?.trim()
+            if (!id.isNullOrBlank() && id.length in 4..64) {
+                return id
+            }
+        }
+        return null
+    }
+
     private fun buildResult(
         text: String,
         amountCents: Int,
@@ -205,6 +234,7 @@ class NotificationParser @Inject constructor() {
         type = type,
         description = extractDescription(text),
         merchantName = extractMerchant(text),
+        orderId = extractOrderId(text),
         confidence = confidence,
     )
 }
