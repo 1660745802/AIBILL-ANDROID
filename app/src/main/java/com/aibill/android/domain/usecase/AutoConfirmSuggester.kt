@@ -56,7 +56,8 @@ class AutoConfirmSuggester @Inject constructor(
 
         val threshold = userPreferences.smallAmountThreshold.first()
         val enabledRule = autoRuleDao.findRule("small_amount", threshold.toString())
-        val isEnabled = enabledRule?.isEnabled ?: false
+        // 默认开启：规则不存在时视为启用（"0 操作"原则）
+        val isEnabled = enabledRule?.isEnabled ?: true
 
         return isEnabled && amountCents <= threshold
     }

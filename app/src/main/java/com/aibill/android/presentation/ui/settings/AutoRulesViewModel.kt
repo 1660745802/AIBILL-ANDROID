@@ -44,7 +44,7 @@ class AutoRulesViewModel @Inject constructor(
                 it.copy(
                     automationLevel = level,
                     learnedRules = rules,
-                    smallAmountEnabled = smallAmountRule?.isEnabled ?: false,
+                    smallAmountEnabled = smallAmountRule?.isEnabled ?: true,
                     smallAmountThreshold = threshold
                 )
             }
