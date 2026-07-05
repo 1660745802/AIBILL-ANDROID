@@ -34,7 +34,6 @@ import com.aibill.android.presentation.ui.notification.NotificationCenterScreen
 import com.aibill.android.presentation.ui.profile.ProfileScreen
 import com.aibill.android.presentation.ui.record.ManualRecordScreen
 import com.aibill.android.presentation.ui.recurring.RecurringScreen
-import com.aibill.android.presentation.ui.settings.AutoRulesScreen
 import com.aibill.android.presentation.ui.settings.PermissionGuideScreen
 import com.aibill.android.presentation.ui.settings.SettingsScreen
 import com.aibill.android.presentation.ui.statistics.StatisticsScreen
@@ -252,9 +251,6 @@ fun AiBillNavHost(
                     onNavigateToRecurring = {
                         navController.navigate(Route.Recurring)
                     },
-                    onNavigateToAutoRules = {
-                        navController.navigate(Route.AutoRules)
-                    }
                 )
             }
             composable<Route.PermissionGuide> {
@@ -262,9 +258,6 @@ fun AiBillNavHost(
             }
             composable<Route.Recurring> {
                 RecurringScreen(onBack = { navController.popBackStack() })
-            }
-            composable<Route.AutoRules> {
-                AutoRulesScreen(onBack = { navController.popBackStack() })
             }
             composable<Route.CategoryManage> {
                 CategoryManageScreen(onBack = { navController.popBackStack() })

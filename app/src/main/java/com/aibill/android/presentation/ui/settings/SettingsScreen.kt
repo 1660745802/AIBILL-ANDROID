@@ -29,7 +29,6 @@ fun SettingsScreen(
     onBack: () -> Unit = {},
     onNavigateToPermissionGuide: () -> Unit = {},
     onNavigateToRecurring: () -> Unit = {},
-    onNavigateToAutoRules: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -104,11 +103,6 @@ fun SettingsScreen(
                 title = "自动记账权限",
                 subtitle = "配置通知监听、弹窗、电池优化等权限",
                 onClick = onNavigateToPermissionGuide
-            )
-            SettingsNavCard(
-                title = "智能免确认",
-                subtitle = "管理自动化规则，让 App 越用越智能",
-                onClick = onNavigateToAutoRules
             )
             SettingsNavCard(
                 title = "周期记账",

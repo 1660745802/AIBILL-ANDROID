@@ -63,12 +63,10 @@ class AutoConfirmSuggester @Inject constructor(
 
     /**
      * 综合判断是否应该免确认
+     * 仅基于关键词学习历史判断（准确率优先，不基于金额盲猜）
      */
     suspend fun shouldAutoConfirm(keyword: String?, amountCents: Int): Boolean {
-        // 小额免确认
-        if (isSmallAmountAutoConfirm(amountCents)) return true
-
-        // 关键词免确认
+        // 关键词免确认（基于 CategoryLearningEngine 的 hitCount 积累）
         if (keyword != null && suggestAutoConfirm(keyword)) return true
 
         return false
