@@ -22,12 +22,18 @@ class AutoConfirmSuggester @Inject constructor(
 
     companion object {
         private const val THRESHOLD_CONSERVATIVE = Int.MAX_VALUE // 保守：永不自动
-        private const val THRESHOLD_STANDARD = 3 // 标准：3次
+        private const val THRESHOLD_STANDARD = 2 // 标准：2次（原 3 次，降低门槛加速学习）
         private const val THRESHOLD_AGGRESSIVE = 1 // 激进：1次
+        private const val RULE_EXPIRY_DAYS = 30L // 规则有效期：30 天内有更新才生效
     }
 
     /**
      * 判断某关键词是否建议免确认
+     *
+     * 学习曲线优化：hitCount >= threshold && 最近 30 天内有修正
+     * - 降低门槛（3→2）加速学习
+     * - 添加时效性：超过 30 天未被使用/修正的规则不再自动确认
+     *   （用户消费习惯可能改变）
      */
     suspend fun suggestAutoConfirm(keyword: String): Boolean {
         val level = userPreferences.automationLevel.first()
@@ -38,9 +44,14 @@ class AutoConfirmSuggester @Inject constructor(
         }
 
         val rule = categoryRuleDao.findByKeyword(keyword.trim().lowercase())
-        val suggest = rule != null && rule.hitCount >= threshold
+        if (rule == null) return false
 
-        Timber.d("AutoConfirm: keyword=[$keyword], hitCount=${rule?.hitCount}, threshold=$threshold, suggest=$suggest")
+        val hitCountOk = rule.hitCount >= threshold
+        val recentEnough = (System.currentTimeMillis() - rule.updatedAt) <=
+            RULE_EXPIRY_DAYS * 24 * 60 * 60 * 1000L
+        val suggest = hitCountOk && recentEnough
+
+        Timber.d("AutoConfirm: keyword=[$keyword], hitCount=${rule.hitCount}, threshold=$threshold, recentEnough=$recentEnough, suggest=$suggest")
         return suggest
     }
 
