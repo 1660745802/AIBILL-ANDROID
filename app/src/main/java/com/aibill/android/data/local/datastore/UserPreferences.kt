@@ -120,7 +120,7 @@ class UserPreferences @Inject constructor(
     }
 
     // --- Notification Privacy ---
-    val notificationPrivacy: Flow<Boolean> = dataStore.data.map { it[Keys.NOTIFICATION_PRIVACY] ?: false }
+    val notificationPrivacy: Flow<Boolean> = dataStore.data.map { it[Keys.NOTIFICATION_PRIVACY] ?: true }
 
     suspend fun setNotificationPrivacy(enabled: Boolean) {
         dataStore.edit { it[Keys.NOTIFICATION_PRIVACY] = enabled }
