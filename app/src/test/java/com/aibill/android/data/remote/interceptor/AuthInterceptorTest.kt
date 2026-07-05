@@ -5,7 +5,6 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.mockk.verifyOrder
-import kotlinx.coroutines.test.runTest
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
@@ -86,19 +85,13 @@ class AuthInterceptorTest {
     }
 
     @Test
-    fun `AuthEventBus emits TokenExpired as data object`() = runTest {
-        // 确保 AuthEvent.TokenExpired 是单例（sealed class data object）
-        // 避免有人误改成 data class 引入多次实例化
+    fun `AuthEvent_TokenExpired is data object singleton - prevents listener equality breakage`() {
+        // P0#2 fix 锁住：AuthEvent.TokenExpired 必须是 data object 单例
+        // 避免有人误改成 data class 导致 Turbine/test collectors 基于
+        // equals/hashCode 判等时收到多个不同实例，订阅测试全部失效
         val event1: AuthEvent = AuthEvent.TokenExpired
         val event2: AuthEvent = AuthEvent.TokenExpired
-        // data object 重写 equals/hashCode 应该是同一个
         assertEquals(event1, event2)
-        // 订阅测试：通过 AuthEventBus 收到的事件确实是单例
-        val capturedEvents = mutableListOf<AuthEvent>()
-        val collector = kotlinx.coroutines.GlobalScope
-        // 简化：直接验证 emit 调用的实参是 TokenExpired
-        val mockBus: AuthEventBus = mockk(relaxed = true)
-        mockBus.emit(AuthEvent.TokenExpired)
-        verify { mockBus.emit(AuthEvent.TokenExpired) }
+        assertEquals(event1.hashCode(), event2.hashCode())
     }
 }
