@@ -353,6 +353,7 @@ class HomeViewModel @Inject constructor(
         targetAccountName = targetAccountName,
         description = description,
         date = date,
+        time = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
         source = TransactionSource.AI,
     )
 }
