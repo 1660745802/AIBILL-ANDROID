@@ -77,6 +77,32 @@ class NotificationMonitorService : NotificationListenerService() {
         serviceScope.launch { handleNotification(notification) }
     }
 
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        val notification = sbn ?: return
+        serviceScope.launch { handleNotificationRemoved(notification) }
+    }
+
+    /**
+     * 通知被撤回时的处理逻辑。
+     *
+     * 场景：用户在支付 App 中取消了交易，支付通知被撤回。
+     * 如果此通知已被我们解析入库但尚未确认（30 秒内），则降级为 raw 待审。
+     */
+    private suspend fun handleNotificationRemoved(sbn: StatusBarNotification) {
+        val packageName = sbn.packageName ?: return
+        if (packageName !in WHITELIST_PACKAGES) return
+
+        // 查找 30 秒内该包名的最近一条 parsed 记录
+        val since = System.currentTimeMillis() - 30_000L
+        val recentRecord = notificationRecordDao.findRecentByPackage(packageName, since)
+
+        if (recentRecord != null && recentRecord.status == "parsed") {
+            // 降级为 raw（需要用户手动确认）
+            notificationRecordDao.updateStatus(recentRecord.id, "raw")
+            timber.log.Timber.d("通知撤回: ${packageName} 记录 ${recentRecord.id} 降级为 raw")
+        }
+    }
+
     private suspend fun handleNotification(sbn: StatusBarNotification) {
         // 1. 检查系统"通知使用权"是否已授权（跟随系统权限，无 App 内部开关）
         val enabledListeners = android.provider.Settings.Secure.getString(

@@ -33,6 +33,9 @@ interface NotificationRecordDao {
     @Query("DELETE FROM notification_records WHERE status = 'ignored' AND received_at < :before")
     suspend fun cleanIgnoredBefore(before: Long)
 
+    @Query("SELECT * FROM notification_records WHERE package_name = :packageName AND received_at >= :since ORDER BY received_at DESC LIMIT 1")
+    suspend fun findRecentByPackage(packageName: String, since: Long): NotificationRecordEntity?
+
     @Query("DELETE FROM notification_records")
     suspend fun deleteAll()
 }
