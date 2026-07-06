@@ -124,7 +124,7 @@ fun PermissionGuideScreen(
             PermissionItem(
                 title = "后台自启动",
                 description = brandGuideText,
-                isGranted = true, // 无法检测，默认信任用户已设置
+                isGranted = null, // 无法检测状态
                 buttonText = "去设置",
                 showAlwaysAction = true,
                 onAction = {
@@ -132,6 +132,20 @@ fun PermissionGuideScreen(
                     if (intent != null) {
                         runCatching { context.startActivity(intent) }
                     }
+                }
+            )
+
+            // 5. 无障碍服务（支付页面识别）— 无法程序化检测状态
+            PermissionItem(
+                title = "无障碍服务(支付页识别)",
+                description = "识别微信/支付宝支付结果页，覆盖无通知场景",
+                isGranted = null, // null 表示无法确认，不显示勾/叉
+                buttonText = "去设置",
+                showAlwaysAction = true,
+                onAction = {
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    runCatching { context.startActivity(intent) }
                 }
             )
 
@@ -152,7 +166,7 @@ fun PermissionGuideScreen(
 private fun PermissionItem(
     title: String,
     description: String,
-    isGranted: Boolean,
+    isGranted: Boolean?,
     buttonText: String,
     showAlwaysAction: Boolean = false,
     onAction: () -> Unit,
@@ -168,12 +182,22 @@ private fun PermissionItem(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = if (isGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
-                contentDescription = null,
-                tint = if (isGranted) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(24.dp)
-            )
+            // null = 无法检测，不显示图标
+            when (isGranted) {
+                true -> Icon(
+                    imageVector = Icons.Default.CheckCircle,
+                    contentDescription = null,
+                    tint = Color(0xFF4CAF50),
+                    modifier = Modifier.size(24.dp)
+                )
+                false -> Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(24.dp)
+                )
+                null -> Spacer(modifier = Modifier.size(24.dp))
+            }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -187,7 +211,7 @@ private fun PermissionItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (!isGranted || showAlwaysAction) {
+            if (isGranted != true || showAlwaysAction) {
                 Spacer(modifier = Modifier.width(8.dp))
                 SecondaryButton(text = buttonText, onClick = onAction)
             }

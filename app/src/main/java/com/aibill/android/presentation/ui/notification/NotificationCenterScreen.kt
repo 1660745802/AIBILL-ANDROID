@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Notifications
@@ -154,6 +155,7 @@ fun NotificationCenterScreen(
             EmptyState(modifier = Modifier.padding(paddingValues))
         } else {
             val nlsConnected by viewModel.nlsConnected.collectAsStateWithLifecycle()
+            val allItems by viewModel.allNotifications.collectAsStateWithLifecycle()
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -169,12 +171,22 @@ fun NotificationCenterScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                 }
-                items(pendingItems, key = { it.id }) { item ->
-                    NotificationItem(
-                        item = item,
-                        onConfirm = { editItem = item },
-                        onIgnore = { ignoreConfirmId = item.id }
-                    )
+                // 按时间混排：已入库和待确认在一个列表
+                if (allItems.isEmpty() && !pendingItems.isNotEmpty()) {
+                    item(key = "empty") { EmptyState() }
+                } else {
+                    items(allItems, key = { it.id }) { item ->
+                        val isPending = item.status in listOf("raw", "parsed")
+                        if (isPending) {
+                            NotificationItem(
+                                item = item,
+                                onConfirm = { editItem = item },
+                                onIgnore = { ignoreConfirmId = item.id }
+                            )
+                        } else {
+                            ConfirmedNotificationItem(item = item)
+                        }
+                    }
                 }
                 item { Spacer(modifier = Modifier.height(16.dp)) }
             }
@@ -453,6 +465,56 @@ private fun NlsHealthCard(
                     text = if (isConnected) "待确认 $pendingCount 条" else "请前往系统设置重新开启",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfirmedNotificationItem(item: NotificationRecordEntity) {
+    val timeText = remember(item.receivedAt) {
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(item.receivedAt))
+    }
+    val amountText = item.parsedAmount?.let {
+        val sign = if (item.parsedType == "income") "+" else "-"
+        "$sign¥${"%.2f".format(it / 100.0)}"
+    } ?: ""
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.parsedDescription ?: item.title ?: "自动记录",
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "$timeText · 已入库",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (amountText.isNotBlank()) {
+                Text(
+                    text = amountText,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (item.parsedType == "income") {
+                        com.aibill.android.presentation.theme.IncomeColor
+                    } else {
+                        com.aibill.android.presentation.theme.ExpenseColor
+                    },
                 )
             }
         }

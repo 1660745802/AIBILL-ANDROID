@@ -72,10 +72,13 @@ class NotificationMonitorService : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         NotificationHelper.createNotificationChannel(this)
+        // 注册全局 flush 处理器，所有渠道（通知/短信/无障碍）共享
+        notificationBuffer.globalFlushHandler = ::processBatch
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        notificationBuffer.globalFlushHandler = null
         serviceScope.cancel()
     }
 
@@ -186,24 +189,12 @@ class NotificationMonitorService : NotificationListenerService() {
         item: NotificationBuffer.BufferedItem,
         aiEnabled: Boolean,
     ) {
-        val keyword = item.fullText.trim().lowercase()
-
-        // ① 学习引擎命中 → 直接入库，跳过 AI
+        // ① 学习引擎预匹配分类（但不直接入库，金额/类型仍由 AI 给出）
+        val keyword = (item.title.takeIf { it.isNotBlank() } ?: item.fullText.take(30)).trim().lowercase()
         val learnedCategoryId = categoryLearningEngine.matchCategory(keyword)
-        if (learnedCategoryId != null && item.roughAmount != null && item.roughAmount > 0) {
-            directInsert(
-                item = item,
-                amount = item.roughAmount,
-                type = "expense", // 学习引擎暂不区分收支，默认支出
-                categoryId = learnedCategoryId,
-                description = item.title,
-                source = "learning",
-            )
-            return
-        }
 
-        // ② AI 解析
-        if (!aiEnabled) return // AI 关闭 → 丢弃（不用正则结果面对用户）
+        // ② AI 解析（必须走 AI 获取准确的金额和类型）
+        if (!aiEnabled) return // AI 关闭 → 丢弃
 
         try {
             val response = aiApi.parse(mapOf("input" to item.fullText))
@@ -220,28 +211,47 @@ class NotificationMonitorService : NotificationListenerService() {
                     description = aiItem.description,
                 )
 
+                // 用学习引擎的分类覆盖 AI 的（如果学习引擎有命中）
+                val finalCategoryId = learnedCategoryId ?: aiItem.categoryId
+                val finalCategoryName = if (learnedCategoryId != null) null else aiItem.categoryName
+
                 // 判断是否信息完整
                 val isComplete = aiItem.amount > 0 &&
                     aiItem.type in setOf("expense", "income", "transfer") &&
-                    validation.isValid
+                    validation.isValid &&
+                    // 分类必须明确（非"其他"/null），学习引擎命中也算明确
+                    (learnedCategoryId != null || (
+                        aiItem.categoryId != null &&
+                        !aiItem.categoryName.isNullOrBlank() &&
+                        aiItem.categoryName.lowercase() !in setOf("其他", "其它", "未分类", "other")
+                    ))
 
                 if (isComplete) {
+                    // 入库前 DB 去重：同包名+同金额+60s 内已有 confirmed → 跳过（防无障碍+通知重复）
+                    val recentDuplicate = notificationRecordDao.findRecentConfirmed(
+                        item.packageName, aiItem.amount, item.receivedAt - 60_000L
+                    )
+                    if (recentDuplicate != null) {
+                        Timber.d("入库去重：跳过重复 pkg=${item.packageName} amount=${aiItem.amount}")
+                        continue
+                    }
+
                     // 信息完整 → 直接入库 + 轻通知
                     directInsert(
                         item = item,
                         amount = aiItem.amount,
                         type = aiItem.type,
-                        categoryId = aiItem.categoryId,
+                        categoryId = finalCategoryId,
                         description = aiItem.description ?: aiItem.categoryName,
-                        source = "ai",
+                        source = if (learnedCategoryId != null) "learning+ai" else "ai",
                     )
-                    // 触发学习：记住商家→分类映射
+                    // 触发学习：记住商家→分类+类型映射
                     val learnKey = (aiItem.description ?: aiItem.categoryName)?.trim()
-                    if (!learnKey.isNullOrBlank() && aiItem.categoryId != null) {
-                        categoryLearningEngine.learnFromCorrection(learnKey, aiItem.categoryId)
+                    if (!learnKey.isNullOrBlank() && finalCategoryId != null) {
+                        categoryLearningEngine.learnFromCorrection(learnKey, finalCategoryId)
                     }
                 } else {
-                    // AI 有结果但缺少关键信息 → 进待审池 + 发确认通知
+                    // AI 有结果但信息不完整 → 进待审池 + 发确认通知
                     insertPendingReview(item, aiItem)
                 }
             }

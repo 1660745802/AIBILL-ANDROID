@@ -38,6 +38,12 @@ class NotificationBuffer @Inject constructor() {
     private val pool = ConcurrentLinkedDeque<BufferedItem>()
     private var flushJob: Job? = null
 
+    /**
+     * 全局 flush 处理器。由 NotificationMonitorService 在 onCreate 时注册。
+     * 所有渠道（通知/短信/无障碍）共享同一个处理逻辑。
+     */
+    var globalFlushHandler: (suspend (List<BufferedItem>) -> Unit)? = null
+
     companion object {
         const val BUFFER_DELAY_MS = 60_000L  // 60s 缓冲（覆盖银行短信延迟 30-60s）
         const val MAX_BATCH_SIZE = 5
@@ -86,7 +92,8 @@ class NotificationBuffer @Inject constructor() {
         if (batch.isEmpty()) return
 
         val deduplicated = deduplicate(batch)
-        scope.launch { onFlush(deduplicated) }
+        val handler = globalFlushHandler ?: onFlush
+        scope.launch { handler(deduplicated) }
     }
 
     /**

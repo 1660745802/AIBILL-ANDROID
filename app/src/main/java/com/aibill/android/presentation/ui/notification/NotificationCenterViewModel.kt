@@ -87,6 +87,25 @@ class NotificationCenterViewModel @Inject constructor(
                 initialValue = emptyList()
             )
 
+    val confirmedNotifications: StateFlow<List<NotificationRecordEntity>> =
+        notificationRecordDao.observeConfirmed()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyList()
+            )
+
+    /** 通知中心展示用：待确认始终显示 + 已确认只显示最近24h，按时间排序。
+     *  Room Flow 在数据变化时自动推送。24h 窗口在极端情况(App 不杀超24h)有偏差，
+     *  但新数据插入会触发 Flow 重新查询，实际影响极小。 */
+    val allNotifications: StateFlow<List<NotificationRecordEntity>> =
+        notificationRecordDao.observeAllWithConfirmedSince(System.currentTimeMillis() - 24 * 60 * 60 * 1000L)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyList()
+            )
+
     val pendingCount: StateFlow<Int> =
         notificationRecordDao.observePendingCount()
             .stateIn(

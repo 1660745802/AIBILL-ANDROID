@@ -63,6 +63,20 @@
             android:exported="false"
             android:foregroundServiceType="specialUse" />
 
+        <!-- 支付页面无障碍识别服务 -->
+        <service
+            android:name=".service.PaymentAccessibilityService"
+            android:exported="false"
+            android:label="AIBILL 支付识别"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
         <!-- 快速记账小组件 -->
         <receiver
             android:name=".presentation.widget.QuickRecordWidgetReceiver"

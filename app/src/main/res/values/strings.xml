@@ -13,4 +13,7 @@
     <!-- Widgets -->
     <string name="widget_quick_record_desc">快速记账小组件，点击打开记账页面</string>
     <string name="widget_monthly_summary_desc">月度汇总小组件，显示本月收支情况</string>
+
+    <!-- Accessibility Service -->
+    <string name="accessibility_service_description">AIBILL 支付识别服务：在您完成微信/支付宝付款后，自动从支付结果页识别金额和商家，帮您自动记账。仅识别支付结果页信息，不读取其他内容。</string>
 </resources>
