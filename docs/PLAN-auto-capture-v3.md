@@ -19,8 +19,8 @@
 
 1. **AI 是唯一裁判**：不在本地判断"是不是支付"，只排除"100%不是支付"的垃圾
 2. **后端零改动**：沿用现有 `/api/ai/parse` 单条接口
-3. **去重在本地**：缓冲 30s 收齐同一笔的多条通知，去重后逐条调 AI
-4. **静默入库不弹窗**：AI 确认是支付就直接入库，用户事后批量审阅
+3. **去重在本地**：缓冲 60s 收齐同一笔的多条通知，去重后逐条调 AI
+4. **入库即通知**：AI 确认是支付就直接入库 + 发轻通知告知用户（无需操作）
 5. **正则降级为兜底**：AI 失败/超时时才用正则提取金额
 
 ---
@@ -51,22 +51,22 @@
     │ 放行
     ▼
 ┌─────────────────────────────────────────┐
-│ L2: 缓冲去重（30s 窗口）                 │
+│ L2: 缓冲去重（60s 窗口）                 │
 │                                         │
 │ 通知进入内存缓冲池，不立即处理。          │
 │ 触发条件（任一满足即处理）：              │
-│   • 最早通知已等 30s（超时）              │
+│   • 最早通知已等 60s（超时）              │
 │   • 池中满 5 条（批量效率）               │
 │                                         │
 │ 去重规则：                               │
-│   跨包名 + 同金额(本地正则快速提取) + 30s内│
+│   跨包名 + 同金额(本地正则快速提取) + 60s内│
 │   → 合并，只保留信息最丰富的那条           │
 │   （优先级：微信 > 银行App > 短信）       │
 │                                         │
 │ 不合并条件：                             │
 │   • 同包名两条 → 不合并（真的两笔）       │
 │   • 金额不同 → 不合并                    │
-│   • 超过 30s → 不合并                    │
+│   • 超过 60s → 不合并                    │
 │                                         │
 │ 注意：这里的"金额提取"只是用简单正则       │
 │ 提取数字用于去重比较，不作为最终结果。     │
@@ -199,7 +199,7 @@ class NotificationBuffer @Inject constructor() {
         pool.addLast(item)
         if (pool.size >= 5) { flush(scope, onFlush); return }
         if (flushJob?.isActive != true) {
-            flushJob = scope.launch { delay(30_000L); flush(scope, onFlush) }
+            flushJob = scope.launch { delay(60_000L); flush(scope, onFlush) }
         }
     }
 
@@ -240,7 +240,7 @@ class NotificationBuffer @Inject constructor() {
         if (a.packageName == b.packageName) return false        // 同App不合并
         if (a.roughAmount == null || b.roughAmount == null) return false
         if (a.roughAmount != b.roughAmount) return false        // 金额不同不合并
-        if (abs(a.receivedAt - b.receivedAt) > 30_000) return false
+        if (abs(a.receivedAt - b.receivedAt) > 60_000) return false
         return true
     }
 
@@ -298,9 +298,10 @@ fun isLikelyFinancial(packageName: String, title: String, fullText: String): Boo
 | 1.1 | 新增 NotificationBuffer.kt | 新文件 ~80 行 |
 | 1.2 | 重构 NotificationMonitorService.handleNotification | 重写主方法 ~60 行 |
 | 1.3 | 新增 processBatch() 方法（学习引擎→AI→正则降级→入库） | ~80 行 |
-| 1.4 | 删除 showConfirmNotification 逐条弹窗调用 | 删除 |
+| 1.4 | NotificationHelper 改为轻通知（showAutoRecordedNotification 无按钮5s消失 + showPendingNotification 合并待确认） | ~40 行 |
 | 1.5 | 删除 AutoConfirmSuggester / confidence 分级逻辑 | 删除 |
-| 1.6 | 编译验证 + 安装测试 | — |
+| 1.6 | 首页"今日自动记录 X 笔"展示 | ~20 行 |
+| 1.7 | 编译验证 + 安装测试 | — |
 
 ### Phase 2（用户感知优化 + 分享 OCR）
 
@@ -332,7 +333,7 @@ fun isLikelyFinancial(packageName: String, title: String, fullText: String): Boo
 | 用户每日操作次数 | 8+（逐条确认） | 0（看通知即可，无需点击） |
 | AI 调用量 | 不可控（聊天也调） | = 真实支付笔数 × (1-学习命中率) |
 | 漏报率 | ~5% | <5%（AI+正则双兜底+待审池） |
-| 用户感知延迟 | 即时弹窗 | 30s（缓冲去重窗口） |
+| 用户感知延迟 | 即时弹窗 | 60s（缓冲去重窗口） |
 
 ---
 
@@ -376,8 +377,9 @@ fun isLikelyFinancial(packageName: String, title: String, fullText: String): Boo
 
 ```
 权限引导页展示规则：
-  • 可程序化检测的权限 → 显示勾/叉 + "去开启"按钮
-  • 无法检测的权限 → 不显示勾/叉，常驻"去设置"按钮 + 说明文字
+  • 能程序化确认状态的权限 → 实时显示 ✓/✗ + "去开启"按钮
+  • 无法程序化确认的权限 → 不显示状态（不打勾不打叉），只给"去设置"按钮
+    （用户手动开启后回来看到的仍是"去设置"，因为确认不了）
 
 ┌────────────────────────────────────────────────┐
 │  权限设置                                       │
@@ -407,7 +409,7 @@ fun isLikelyFinancial(packageName: String, title: String, fullText: String): Boo
 
 - [ ] 微信聊天消息不再出现在通知中心
 - [ ] 一笔支付只产生一条入库记录（不管收到几条通知）
-- [ ] 正常支付（微信/支付宝/银行）30s 内自动入库，无需任何用户操作
+- [ ] 正常支付（微信/支付宝/银行）60s 内自动入库，用户收到轻通知无需操作
 - [ ] AI 不可用时，含金额的通知仍会存入待审池
 - [ ] 首页能看到今日自动记录笔数
 - [ ] 编译通过 + 安装到设备验证
