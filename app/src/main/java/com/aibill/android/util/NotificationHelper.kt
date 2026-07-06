@@ -236,4 +236,58 @@ object NotificationHelper {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(-1, notification)
     }
+
+    /**
+     * v3 轻通知：AI 入库成功后展示，无按钮，5s 自动消失。
+     * 用户看一眼就知道"账记了"，无需任何操作。
+     * 点击 → 进通知中心页可修改/删除。
+     */
+    fun showAutoRecordedNotification(
+        context: Context,
+        recordId: Long,
+        amount: Int,
+        description: String?,
+        source: String,
+        type: String = "expense",
+        privacyMode: Boolean = false,
+    ) {
+        createNotificationChannel(context)
+
+        val notificationId = recordId.toInt()
+        val amountDisplay = formatAmount(amount, privacyMode)
+        val sign = if (type == "income") "+" else "-"
+        val descDisplay = if (privacyMode) "***" else (description ?: source)
+
+        // 点击 → 打开通知中心页
+        val contentIntent = Intent(context, com.aibill.android.presentation.MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("navigate_to", "notification_center")
+        }
+        val contentPending = PendingIntent.getActivity(
+            context,
+            recordId.toInt() + 50000,
+            contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("已自动记录")
+            .setContentText("$descDisplay $sign$amountDisplay")
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT) // 不用 HIGH，轻提示即可
+            .setAutoCancel(true)
+            .setContentIntent(contentPending)
+            // 无按钮：用户无需操作
+            .setVisibility(
+                if (privacyMode) NotificationCompat.VISIBILITY_SECRET
+                else NotificationCompat.VISIBILITY_PUBLIC
+            )
+            .build()
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(notificationId, notification)
+
+        // 5s 自动消失
+        scheduleAutoCancel(manager, notificationId, 5_000L)
+    }
 }
