@@ -202,8 +202,8 @@ class NotificationMonitorService : NotificationListenerService() {
             val items = response.data.items
             if (items.isEmpty()) return // AI 判定不是支付 → 丢弃
 
-            // 单条通知 = 单笔交易。AI 可能返回多条（重复/幻觉），只取第一条。
-            val aiItem = items.first()
+            // 通知场景 = 单笔交易。AI 可能返回多条，取信息最完整的一条。
+            val aiItem = items.maxByOrNull { aiItemScore(it) } ?: return
 
             val validation = aiResultValidator.validate(
                 amount = aiItem.amount,
@@ -263,6 +263,20 @@ class NotificationMonitorService : NotificationListenerService() {
     // ═══════════════════════════════════════════════════════════════
     // 入库方法
     // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * AI 返回多条时选最优：按信息完整度评分。
+     * 有金额+1，有明确类型+1，有分类(非"其他")+2，有描述+1
+     */
+    private fun aiItemScore(item: com.aibill.android.data.remote.dto.response.AiParsedItemDto): Int {
+        var score = 0
+        if (item.amount > 0) score += 1
+        if (item.type in setOf("expense", "income", "transfer")) score += 1
+        if (item.categoryId != null && !item.categoryName.isNullOrBlank() &&
+            item.categoryName.lowercase() !in setOf("其他", "其它", "未分类", "other")) score += 2
+        if (!item.description.isNullOrBlank()) score += 1
+        return score
+    }
 
     /**
      * 信息完整，直接入库 + 发轻通知
