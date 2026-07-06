@@ -151,11 +151,12 @@ fun NotificationCenterScreen(
             }
         }
     ) { paddingValues ->
-        if (pendingItems.isEmpty()) {
+        val nlsConnected by viewModel.nlsConnected.collectAsStateWithLifecycle()
+        val allItems by viewModel.allNotifications.collectAsStateWithLifecycle()
+
+        if (allItems.isEmpty() && pendingItems.isEmpty()) {
             EmptyState(modifier = Modifier.padding(paddingValues))
         } else {
-            val nlsConnected by viewModel.nlsConnected.collectAsStateWithLifecycle()
-            val allItems by viewModel.allNotifications.collectAsStateWithLifecycle()
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()

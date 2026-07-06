@@ -4,35 +4,27 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
-import com.aibill.android.data.local.dao.NotificationRecordDao
-import com.aibill.android.data.local.entity.NotificationRecordEntity
-import com.aibill.android.util.BankSmsPatterns
-import com.aibill.android.util.NotificationCorrelator
-import com.aibill.android.util.NotificationHelper
-import com.aibill.android.data.local.datastore.UserPreferences
+import com.aibill.android.util.NotificationParser
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
 /**
- * SMS 短信接收器
+ * SMS 短信接收器 (v3)
  *
- * 监听银行短信（RECEIVE_SMS），解析交易信息并入库。
- * 与 NotificationMonitorService 共用去重逻辑（NotificationCorrelator），
- * 同一笔交易不会因为同时收到通知和短信而重复记录。
+ * 监听银行短信（RECEIVE_SMS），入统一 NotificationBuffer。
+ * 由 Buffer 去重后交给 AI 解析，与通知渠道共享同一套处理逻辑。
+ * 不再单独入库或弹窗——所有渠道统一由 processBatch 处理。
  */
 @AndroidEntryPoint
 class SmsReceiverService : BroadcastReceiver() {
 
-    @Inject lateinit var notificationRecordDao: NotificationRecordDao
-    @Inject lateinit var bankSmsPatterns: BankSmsPatterns
-    @Inject lateinit var notificationCorrelator: NotificationCorrelator
-    @Inject lateinit var userPreferences: UserPreferences
+    @Inject lateinit var notificationBuffer: NotificationBuffer
+    @Inject lateinit var notificationParser: NotificationParser
 
     private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -42,7 +34,6 @@ class SmsReceiverService : BroadcastReceiver() {
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         if (messages.isNullOrEmpty()) return
 
-        // 合并多段短信为完整文本
         val fullText = messages.joinToString("") { it.messageBody ?: "" }
         val sender = messages.firstOrNull()?.originatingAddress.orEmpty()
 
@@ -54,7 +45,7 @@ class SmsReceiverService : BroadcastReceiver() {
 
         receiverScope.launch {
             try {
-                handleSms(context, sender, fullText)
+                handleSms(sender, fullText)
             } catch (e: Exception) {
                 Timber.e(e, "SMS 处理异常")
             } finally {
@@ -63,45 +54,23 @@ class SmsReceiverService : BroadcastReceiver() {
         }
     }
 
-    private suspend fun handleSms(context: Context, sender: String, text: String) {
-        // 1. 银行短信格式匹配
-        val parseResult = bankSmsPatterns.parse(sender, text) ?: return
+    private fun handleSms(sender: String, text: String) {
+        // 支付特征预筛（银行短信几乎都有，但过滤营销短信）
+        if (!NotificationMonitorService.PAYMENT_SIGNAL.containsMatchIn(text)) return
 
-        // 2. 通知关联去重（同一笔交易可能通知+短信都到）
-        val correlationResult = notificationCorrelator.check(
-            packageName = "sms:$sender",
-            amount = parseResult.amount,
-            description = parseResult.description,
-            orderId = parseResult.orderId,
-        )
-        if (correlationResult is NotificationCorrelator.CorrelationResult.Skip) {
-            Timber.d("SMS 去重: 跳过重复短信 sender=$sender amount=${parseResult.amount}")
-            return
-        }
+        // 快速提取金额用于去重
+        val roughAmount = notificationParser.extractAmountOnly(text)
 
-        // 3. 存入 NotificationRecordEntity（复用通知中心展示）
-        val entity = NotificationRecordEntity(
-            packageName = "sms:$sender",
-            title = parseResult.bankName,
-            content = text,
-            parsedAmount = parseResult.amount,
-            parsedType = parseResult.type,
-            parsedDescription = parseResult.description,
-            status = "parsed",
-            receivedAt = System.currentTimeMillis()
-        )
-        val recordId = notificationRecordDao.insert(entity)
-
-        // 4. 弹窗确认（银行短信一律弹窗，不静默入库，保证准确率）
-        val privacyMode = userPreferences.notificationPrivacy.first()
-        NotificationHelper.showConfirmNotification(
-            context = context,
-            recordId = recordId,
-            amount = parseResult.amount,
-            description = parseResult.description,
-            source = parseResult.bankName ?: "银行短信",
-            privacyMode = privacyMode,
-            type = parseResult.type,
+        // 入统一 Buffer（与通知渠道共享去重 + AI 处理）
+        notificationBuffer.enqueue(
+            item = NotificationBuffer.BufferedItem(
+                packageName = "sms:$sender",
+                title = sender,
+                fullText = text,
+                roughAmount = roughAmount,
+            ),
+            scope = receiverScope,
+            onFlush = { /* globalFlushHandler 处理 */ },
         )
     }
 }

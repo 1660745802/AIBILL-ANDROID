@@ -36,9 +36,9 @@ interface NotificationRecordDao {
     @Query("SELECT * FROM notification_records WHERE package_name = :packageName AND content = :content AND received_at > :since LIMIT 1")
     suspend fun findDuplicate(packageName: String, content: String, since: Long): NotificationRecordEntity?
 
-    /** 入库前去重：同包名+同金额+60s内已有confirmed记录（防无障碍+通知重复入库） */
-    @Query("SELECT * FROM notification_records WHERE package_name = :packageName AND parsed_amount = :amount AND status = 'confirmed' AND received_at > :since LIMIT 1")
-    suspend fun findRecentConfirmed(packageName: String, amount: Int, since: Long): NotificationRecordEntity?
+    /** 入库前去重：同金额+60s内已有confirmed记录（防多渠道重复入库） */
+    @Query("SELECT * FROM notification_records WHERE parsed_amount = :amount AND status = 'confirmed' AND received_at > :since LIMIT 1")
+    suspend fun findRecentConfirmed(amount: Int, since: Long): NotificationRecordEntity?
 
     @Query("DELETE FROM notification_records WHERE status = 'ignored' AND received_at < :before")
     suspend fun cleanIgnoredBefore(before: Long)
