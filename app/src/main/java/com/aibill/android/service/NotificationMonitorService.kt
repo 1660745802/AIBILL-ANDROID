@@ -170,7 +170,7 @@ class NotificationMonitorService : NotificationListenerService() {
                     val aiEnabled = userPreferences.aiParseEnabled.first()
                     processOneNotification(merged, aiEnabled)
                     // 标记已处理（60s 内同金额不再处理）
-                    if (roughAmount != null) notificationBuffer.markProcessed(roughAmount)
+                    if (roughAmount != null) notificationBuffer.markProcessed(packageName, roughAmount)
                 } catch (e: Exception) {
                     appLogger.error("NLS", "处理异常: ${e.message}")
                     Timber.w(e, "处理通知异常: $packageName")

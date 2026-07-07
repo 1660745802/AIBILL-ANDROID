@@ -36,6 +36,7 @@ class NotificationBuffer @Inject constructor() {
     private val recentlyProcessed = ConcurrentLinkedDeque<ProcessedRecord>()
 
     private data class ProcessedRecord(
+        val packageName: String,
         val amount: Int,
         val processedAt: Long,
     )
@@ -46,13 +47,14 @@ class NotificationBuffer @Inject constructor() {
     }
 
     /**
-     * 第一层：60s 长窗口去重。
-     * 返回 false = 最近已处理过同金额，直接丢弃。
+     * 60s 长窗口去重：只去"跨包名+同金额"的重复（同一笔支付的多渠道通知）。
+     * 同包名来两条 = 真实的两笔交易，不去重。
      */
     fun isDuplicateInWindow(item: BufferedItem): Boolean {
         pruneProcessed()
         val amount = item.roughAmount ?: return false
         return recentlyProcessed.any { record ->
+            record.packageName != item.packageName && // 必须跨包名
             record.amount == amount &&
             abs(item.receivedAt - record.processedAt) <= DEDUP_WINDOW_MS
         }
@@ -110,9 +112,9 @@ class NotificationBuffer @Inject constructor() {
     /**
      * 标记某金额已处理完成（加入 60s 长窗口）
      */
-    fun markProcessed(amount: Int) {
+    fun markProcessed(packageName: String, amount: Int) {
         recentlyProcessed.addLast(
-            ProcessedRecord(amount = amount, processedAt = System.currentTimeMillis())
+            ProcessedRecord(packageName = packageName, amount = amount, processedAt = System.currentTimeMillis())
         )
     }
 

@@ -31,8 +31,8 @@ class PaymentAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** 防抖：同一金额 10s 内不重复处理 */
-    private var lastAmount: Int? = null
+    /** 防抖：同内容 10s 内不重复处理 */
+    private var lastTextHash: Int? = null
     private var lastTime: Long = 0L
 
     companion object {
@@ -43,9 +43,6 @@ class PaymentAccessibilityService : AccessibilityService() {
 
         /** 支付成功关键词（页面上出现这些词说明在支付结果页） */
         private val SUCCESS_KEYWORDS = listOf("支付成功", "付款成功", "交易成功", "支付完成")
-
-        /** 金额正则（从节点文字中提取） */
-        private val AMOUNT_REGEX = Regex("""[¥￥]\s*(\d+\.?\d{0,2})""")
     }
 
     override fun onServiceConnected() {
@@ -71,27 +68,22 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 遍历节点树：找"支付成功"关键词
             if (!hasKeywordInTree(rootNode, SUCCESS_KEYWORDS)) return
 
-            // 页面有"支付成功" → 提取金额
-            val amount = findAmountInTree(rootNode)
-            if (amount == null || amount <= 0) {
-                appLogger.debug("A11Y", "支付页检测到但未提取到金额: $packageName")
-                return
-            }
+            // 页面有"支付成功" → 收集所有文字拼起来交给 AI
+            val allText = collectAllText(rootNode)
+            if (allText.isBlank()) return
 
-            // 防抖：同金额 10s 内不重复
+            // 防抖：同内容 10s 内不重复
             val now = System.currentTimeMillis()
-            if (amount == lastAmount && (now - lastTime) < DEBOUNCE_MS) return
-            lastAmount = amount
+            val textHash = allText.hashCode()
+            if (textHash == lastTextHash && (now - lastTime) < DEBOUNCE_MS) return
+            lastTextHash = textHash
             lastTime = now
 
-            // 提取商家名
-            val merchant = findMerchantInTree(rootNode)
+            appLogger.info("A11Y", "✓支付页全文: ${allText.take(100)} pkg=$packageName")
 
-            appLogger.info("A11Y", "✓识别支付: ¥${"%.2f".format(amount / 100.0)} 商家=$merchant pkg=$packageName")
-
-            // 入去重池
+            // 入去重池，后续由通知服务的 5s 合并逻辑统一调 AI
             serviceScope.launch {
-                enqueueToBuffer(packageName, amount, merchant)
+                enqueueToBuffer(packageName, allText)
             }
         } finally {
             rootNode.recycle()
@@ -131,87 +123,47 @@ class PaymentAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 遍历节点树提取金额（¥XX.XX 格式）
-     * 返回金额（分）
+     * 收集节点树中所有可见文字，拼成一段发给 AI
      */
-    private fun findAmountInTree(root: AccessibilityNodeInfo): Int? {
-        val text = root.text?.toString()
-        if (text != null) {
-            val match = AMOUNT_REGEX.find(text)
-            if (match != null) {
-                val yuan = match.groupValues[1]
-                return notificationParser.extractAmountOnly("¥$yuan")
-            }
-        }
-
-        for (i in 0 until root.childCount) {
-            val child = root.getChild(i) ?: continue
-            val result = findAmountInTree(child)
-            child.recycle()
-            if (result != null) return result
-        }
-        return null
+    private fun collectAllText(root: AccessibilityNodeInfo): String {
+        val texts = mutableListOf<String>()
+        collectTextsRecursive(root, texts)
+        return texts.distinct().joinToString(" ")
     }
 
-    /**
-     * 遍历节点树查找商家名。
-     * 策略：找"收款方"/"商户"/"付款给"标签同级或下一个节点的文本。
-     * 如果找不到标签，取金额节点附近的非数字文本作为描述。
-     */
-    private fun findMerchantInTree(root: AccessibilityNodeInfo): String? {
-        val labels = listOf("收款方", "商户", "商家", "付款给", "收款人")
-
-        // 方式1：通过标签查找
-        for (label in labels) {
-            val nodes = root.findAccessibilityNodeInfosByText(label)
-            if (nodes.isNullOrEmpty()) continue
-            for (node in nodes) {
-                val parent = node.parent ?: continue
-                for (i in 0 until parent.childCount) {
-                    val child = parent.getChild(i) ?: continue
-                    val childText = child.text?.toString()?.trim()
-                    if (!childText.isNullOrBlank() && childText != label &&
-                        childText.length in 2..30 && !childText.contains("¥")) {
-                        child.recycle()
-                        parent.recycle()
-                        node.recycle()
-                        return childText
-                    }
-                    child.recycle()
-                }
-                parent.recycle()
-                node.recycle()
-            }
+    private fun collectTextsRecursive(node: AccessibilityNodeInfo, texts: MutableList<String>) {
+        val text = node.text?.toString()?.trim()
+        if (!text.isNullOrBlank() && text.length in 1..100) {
+            texts.add(text)
         }
-
-        return null
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectTextsRecursive(child, texts)
+            child.recycle()
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
     // 入去重池
     // ═══════════════════════════════════════════════════════════════
 
-    private suspend fun enqueueToBuffer(packageName: String, amount: Int, merchant: String?) {
-        val fullText = buildString {
-            append("支付成功 ")
-            append("¥${"%.2f".format(amount / 100.0)}")
-            if (!merchant.isNullOrBlank()) append(" $merchant")
-        }
+    private suspend fun enqueueToBuffer(packageName: String, fullText: String) {
+        val roughAmount = notificationParser.extractAmountOnly(fullText)
 
         val item = NotificationBuffer.BufferedItem(
             packageName = packageName,
             title = "支付成功",
             fullText = fullText,
-            roughAmount = amount,
+            roughAmount = roughAmount,
         )
 
         // 60s 去重：通知渠道可能已处理
         if (notificationBuffer.isDuplicateInWindow(item)) {
-            appLogger.debug("A11Y", "60s去重: 通知已处理 amount=$amount")
+            appLogger.debug("A11Y", "60s去重: 通知已处理 amount=$roughAmount")
             return
         }
 
-        // 加入合并池（通知服务的 5s 延迟会把它合并进去）
+        // 加入合并池
         notificationBuffer.addToPendingMerge(item)
     }
 }
