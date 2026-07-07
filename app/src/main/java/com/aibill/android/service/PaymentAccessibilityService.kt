@@ -41,8 +41,11 @@ class PaymentAccessibilityService : AccessibilityService() {
         private const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
         private val PAYMENT_APPS = setOf(PACKAGE_WECHAT, PACKAGE_ALIPAY)
 
-        /** 支付成功关键词（页面上出现这些词说明在支付结果页） */
+        /** 支付成功关键词（必须精确，避免聊天列表里的"到账"文字误触发） */
         private val SUCCESS_KEYWORDS = listOf("支付成功", "付款成功", "交易成功", "支付完成")
+
+        /** 排除词：如果页面同时包含这些词说明不是支付结果页（是聊天列表/首页等） */
+        private val EXCLUDE_KEYWORDS = listOf("朋友圈", "视频号", "扫一扫", "搜索小程序", "通讯录", "发现")
     }
 
     override fun onServiceConnected() {
@@ -67,6 +70,9 @@ class PaymentAccessibilityService : AccessibilityService() {
         try {
             // 遍历节点树：找"支付成功"关键词
             if (!hasKeywordInTree(rootNode, SUCCESS_KEYWORDS)) return
+
+            // 排除：如果页面同时有"朋友圈/通讯录"等，说明是微信首页/聊天列表，不是支付结果页
+            if (hasKeywordInTree(rootNode, EXCLUDE_KEYWORDS)) return
 
             // 页面有"支付成功" → 收集所有文字拼起来交给 AI
             val allText = collectAllText(rootNode)

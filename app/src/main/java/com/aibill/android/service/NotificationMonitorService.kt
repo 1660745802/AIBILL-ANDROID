@@ -116,6 +116,9 @@ class NotificationMonitorService : NotificationListenerService() {
             .joinToString(" ")
         if (fullText.isBlank()) return
 
+        // 排除系统运行通知和通知分组摘要（无意义）
+        if (fullText.contains("正在运行") || fullText.contains("GroupSummary")) return
+
         // 0. 内存级去重（用内容hash，防系统重复触发+协程竞态）
         val contentKey = "$packageName:${fullText.hashCode()}"
         val now = System.currentTimeMillis()
