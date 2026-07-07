@@ -120,7 +120,10 @@ class NotificationMonitorService : NotificationListenerService() {
         val contentKey = "$packageName:${fullText.hashCode()}"
         val now = System.currentTimeMillis()
         val lastSeen = recentNotificationKeys.put(contentKey, now)
-        if (lastSeen != null && (now - lastSeen) < 5000L) return
+        if (lastSeen != null && (now - lastSeen) < 5000L) {
+            appLogger.debug("NLS", "内存去重: pkg=$packageName (重复触发)")
+            return
+        }
         // 清理旧key防内存泄漏
         if (recentNotificationKeys.size > 20) {
             recentNotificationKeys.entries.removeIf { now - it.value > 10000L }
@@ -157,21 +160,25 @@ class NotificationMonitorService : NotificationListenerService() {
         // 7. 5s 短延迟合并：收集同金额跨渠道通知，合并文本后一起调 AI
         val isFirst = notificationBuffer.addToPendingMerge(item)
         if (isFirst) {
+            appLogger.debug("NLS", "5s合并启动: pkg=$packageName amount=$roughAmount")
             // 第一条：启动 5s 延迟后处理
             serviceScope.launch {
                 kotlinx.coroutines.delay(NotificationBuffer.MERGE_DELAY_MS)
                 try {
                     val merged = notificationBuffer.collectAndMerge(roughAmount) ?: return@launch
+                    appLogger.debug("NLS", "5s合并完成: text=${merged.fullText.take(80)}")
                     val aiEnabled = userPreferences.aiParseEnabled.first()
                     processOneNotification(merged, aiEnabled)
                     // 标记已处理（60s 内同金额不再处理）
                     if (roughAmount != null) notificationBuffer.markProcessed(roughAmount)
                 } catch (e: Exception) {
+                    appLogger.error("NLS", "处理异常: ${e.message}")
                     Timber.w(e, "处理通知异常: $packageName")
                 }
             }
+        } else {
+            appLogger.debug("NLS", "合并池等待: pkg=$packageName amount=$roughAmount (非第一条)")
         }
-        // 不是第一条 → 已在合并池里等着，5s 后会被 collectAndMerge 取出合并
     }
 
     /**
@@ -262,6 +269,7 @@ class NotificationMonitorService : NotificationListenerService() {
                     aiItem.amount, item.receivedAt - 60_000L
                 )
                 if (recentDuplicate != null) {
+                    appLogger.debug("NLS", "DB去重: 60s内已入库同金额=${aiItem.amount}")
                     Timber.d("入库去重：跳过重复 amount=${aiItem.amount}")
                     return
                 }

@@ -30,6 +30,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     @Inject lateinit var notificationBuffer: NotificationBuffer
     @Inject lateinit var notificationParser: NotificationParser
     @Inject lateinit var userPreferences: UserPreferences
+    @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -65,6 +66,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             notificationTimeout = 300
             packageNames = arrayOf(PACKAGE_WECHAT, PACKAGE_ALIPAY)
         }
+        appLogger.info("A11Y", "无障碍服务已连接")
         Timber.d("PaymentAccessibilityService connected")
     }
 
@@ -92,6 +94,8 @@ class PaymentAccessibilityService : AccessibilityService() {
         lastProcessedKey = key
         lastProcessedTime = now
 
+        appLogger.info("A11Y", "检测到支付页: pkg=$packageName class=$className")
+
         // 尝试提取支付信息
         serviceScope.launch {
             val rootNode = rootInActiveWindow ?: return@launch
@@ -99,18 +103,23 @@ class PaymentAccessibilityService : AccessibilityService() {
             rootNode.recycle()
 
             if (result != null) {
+                appLogger.info("A11Y", "✓识别到支付: ¥${"%.2f".format(result.amount/100.0)} 商家=${result.merchant}")
                 Timber.d("无障碍识别到支付: ${result.amount}分, ${result.merchant}")
                 enqueueToBuffer(packageName, result)
+            } else {
+                appLogger.debug("A11Y", "支付页未提取到金额: $packageName")
             }
         }
     }
 
     override fun onInterrupt() {
+        appLogger.warn("A11Y", "无障碍服务被中断")
         Timber.w("PaymentAccessibilityService interrupted")
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        appLogger.warn("A11Y", "无障碍服务销毁")
         serviceScope.cancel()
     }
 
@@ -234,6 +243,7 @@ class PaymentAccessibilityService : AccessibilityService() {
 
         // 60s 去重
         if (notificationBuffer.isDuplicateInWindow(item)) {
+            appLogger.debug("A11Y", "60s去重: 通知已处理 amount=${result.amount}")
             Timber.d("无障碍去重：已处理 amount=${result.amount}")
             return
         }
