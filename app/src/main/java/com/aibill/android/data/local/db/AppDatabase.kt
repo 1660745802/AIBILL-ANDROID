@@ -3,6 +3,7 @@ package com.aibill.android.data.local.db
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import com.aibill.android.data.local.dao.AccountDao
+import com.aibill.android.data.local.dao.AppLogDao
 import com.aibill.android.data.local.dao.AutoRuleDao
 import com.aibill.android.data.local.dao.CategoryDao
 import com.aibill.android.data.local.dao.CategoryRuleDao
@@ -29,8 +30,9 @@ import com.aibill.android.data.local.entity.TemplateEntity
         TemplateEntity::class,
         AutoRuleEntity::class,
         RecurringRuleEntity::class,
+        com.aibill.android.data.local.entity.AppLogEntity::class,
     ],
-    version = 6, // v5 → v6: PendingTransactionEntity 新增 category_name/category_icon/account_name
+    version = 7, // v6 → v7: 新增 app_logs 表
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -43,6 +45,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun templateDao(): TemplateDao
     abstract fun autoRuleDao(): AutoRuleDao
     abstract fun recurringDao(): RecurringDao
+    abstract fun appLogDao(): AppLogDao
 
     companion object {
         const val DATABASE_NAME = "aibill.db"

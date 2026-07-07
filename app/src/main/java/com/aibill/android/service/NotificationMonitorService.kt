@@ -49,6 +49,7 @@ class NotificationMonitorService : NotificationListenerService() {
     @Inject lateinit var aiApi: com.aibill.android.data.remote.api.AiApi
     @Inject lateinit var aiResultValidator: AiResultValidator
     @Inject lateinit var notificationBuffer: NotificationBuffer
+    @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -113,7 +114,7 @@ class NotificationMonitorService : NotificationListenerService() {
 
         // 3. 排除层：过滤明显不是账务的通知
         if (!isLikelyFinancial(packageName, title, fullText)) {
-            Timber.d("排除层过滤: pkg=$packageName, title=$title")
+            appLogger.debug("NLS", "排除: pkg=$packageName title=$title")
             return
         }
 
@@ -133,7 +134,7 @@ class NotificationMonitorService : NotificationListenerService() {
 
         // 6. 60s 长窗口去重：已处理过同金额 → 丢弃
         if (notificationBuffer.isDuplicateInWindow(item)) {
-            Timber.d("60s去重丢弃: pkg=$packageName amount=$roughAmount")
+            appLogger.debug("NLS", "60s去重: pkg=$packageName amount=$roughAmount")
             return
         }
 
@@ -197,13 +198,23 @@ class NotificationMonitorService : NotificationListenerService() {
         val learnedCategoryId = categoryLearningEngine.matchCategory(keyword)
 
         // ② AI 解析（必须走 AI 获取准确的金额和类型）
-        if (!aiEnabled) return // AI 关闭 → 丢弃
+        if (!aiEnabled) {
+            appLogger.info("NLS", "AI关闭，丢弃: ${item.fullText.take(30)}")
+            return
+        }
 
         try {
+            appLogger.info("NLS", "调AI: pkg=${item.packageName} text=${item.fullText.take(50)}")
             val response = aiApi.parse(mapOf("input" to item.fullText))
-            if (response.code != 0 || response.data == null) return // AI 失败 → 丢弃
+            if (response.code != 0 || response.data == null) {
+                appLogger.warn("NLS", "AI失败: code=${response.code}")
+                return
+            }
             val items = response.data.items
-            if (items.isEmpty()) return // AI 判定不是支付 → 丢弃
+            if (items.isEmpty()) {
+                appLogger.info("NLS", "AI判定非支付，丢弃")
+                return
+            }
 
             // 通知场景 = 单笔交易。AI 可能返回多条，取信息最完整的一条。
             val aiItem = items.maxByOrNull { aiItemScore(it) } ?: return
@@ -248,6 +259,7 @@ class NotificationMonitorService : NotificationListenerService() {
                     description = aiItem.description ?: aiItem.categoryName,
                     source = if (learnedCategoryId != null) "learning+ai" else "ai",
                 )
+                appLogger.info("NLS", "✓入库: ¥${"%.2f".format(aiItem.amount/100.0)} ${aiItem.description ?: aiItem.categoryName} type=${aiItem.type}")
                 // 触发学习
                 val learnKey = (aiItem.description ?: aiItem.categoryName)?.trim()
                 if (!learnKey.isNullOrBlank() && finalCategoryId != null) {
@@ -255,10 +267,12 @@ class NotificationMonitorService : NotificationListenerService() {
                 }
             } else {
                 // AI 有结果但信息不完整 → 进待审池 + 发确认通知
+                appLogger.info("NLS", "→待审: amount=${aiItem.amount} type=${aiItem.type} cat=${aiItem.categoryName}")
                 insertPendingReview(item, aiItem)
             }
         } catch (e: Exception) {
             // AI 调用失败（网络/超时）→ 丢弃，不面对用户
+            appLogger.error("NLS", "AI异常: ${e.message}")
             Timber.w(e, "AI 解析失败，丢弃: ${item.packageName}")
         }
     }

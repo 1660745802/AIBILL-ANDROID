@@ -25,6 +25,7 @@ class SettingsViewModel @Inject constructor(
     private val settingsApi: SettingsApi,
     private val authApi: AuthApi,
     private val userPreferences: UserPreferences,
+    private val appLogger: com.aibill.android.util.AppLogger,
 ) : ViewModel() {
 
     data class UiState(
@@ -126,6 +127,22 @@ class SettingsViewModel @Inject constructor(
                 is Result.Success -> _events.send("密码修改成功")
                 is Result.Error -> _events.send(result.message)
                 else -> {}
+            }
+        }
+    }
+
+    fun onExportLogs(context: Context) {
+        viewModelScope.launch {
+            try {
+                val logText = appLogger.exportAsText()
+                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(android.content.Intent.EXTRA_TEXT, logText)
+                    putExtra(android.content.Intent.EXTRA_SUBJECT, "AIBILL 日志导出")
+                }
+                context.startActivity(android.content.Intent.createChooser(intent, "分享日志"))
+            } catch (e: Exception) {
+                _events.send("日志导出失败: ${e.message}")
             }
         }
     }

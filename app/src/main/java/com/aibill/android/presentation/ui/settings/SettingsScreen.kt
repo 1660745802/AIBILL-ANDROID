@@ -187,6 +187,22 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.onExportLogs(context) }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("导出日志", style = MaterialTheme.typography.bodyMedium)
+                            Text("排查自动记账问题时分享给开发者", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }

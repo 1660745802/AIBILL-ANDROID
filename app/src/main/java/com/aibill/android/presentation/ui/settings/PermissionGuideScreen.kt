@@ -149,6 +149,16 @@ fun PermissionGuideScreen(
                 }
             )
 
+            // 6. 锁定最近任务（通用，防止被一键清理）
+            PermissionItem(
+                title = "锁定最近任务",
+                description = "在最近任务列表中下拉锁定 App，防止被清理杀死",
+                isGranted = null, // 无法检测
+                buttonText = "已了解",
+                showAlwaysAction = true,
+                onAction = { /* 纯提示，无跳转 */ }
+            )
+
             Spacer(modifier = Modifier.weight(1f))
 
             // 底部按钮

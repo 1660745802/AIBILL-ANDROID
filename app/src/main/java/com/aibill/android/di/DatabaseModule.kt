@@ -36,6 +36,9 @@ object DatabaseModule {
                     db.execSQL("ALTER TABLE pending_transactions ADD COLUMN category_name TEXT")
                     db.execSQL("ALTER TABLE pending_transactions ADD COLUMN category_icon TEXT")
                     db.execSQL("ALTER TABLE pending_transactions ADD COLUMN account_name TEXT")
+                },
+                androidx.room.migration.Migration(6, 7) { db ->
+                    db.execSQL("CREATE TABLE IF NOT EXISTS app_logs (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, timestamp INTEGER NOT NULL, level TEXT NOT NULL, tag TEXT NOT NULL, message TEXT NOT NULL)")
                 }
             )
             // 不允许 fallbackToDestructiveMigration：schema 不匹配时必须显式写 Migration，
@@ -82,4 +85,9 @@ object DatabaseModule {
     @Singleton
     fun provideRecurringDao(db: AppDatabase): RecurringDao =
         db.recurringDao()
+
+    @Provides
+    @Singleton
+    fun provideAppLogDao(db: AppDatabase): com.aibill.android.data.local.dao.AppLogDao =
+        db.appLogDao()
 }
