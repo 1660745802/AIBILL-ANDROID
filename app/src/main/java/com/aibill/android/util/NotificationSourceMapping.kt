@@ -45,10 +45,44 @@ object NotificationSourceMapping {
         "com.csii.boc_jiangsu" to "江苏银行",
         "com.bankofbeijing.mobilebank" to "北京银行",
         "com.shbank.mper" to "上海银行",
-        // === 三方支付/电商 ===
+        // === 三方支付/电商/生活服务 ===
         "com.jd.jrapp" to "京东金融",
+        "com.jingdong.app.mall" to "京东",
         "com.meituan.meituan" to "美团",
+        "com.sankuai.meituan.takeoutnew" to "美团外卖",
+        "me.ele" to "饿了么",
+        "com.taobao.taobao" to "淘宝",
+        "com.tmall.wireless" to "天猫",
+        "com.achievo.vipshop" to "唯品会",
+        "com.xunmeng.pinduoduo" to "拼多多",
+        "com.didi.sdk" to "滴滴出行",
+        "com.sdu.didi.psnger" to "滴滴出行",
         "com.unionpay" to "云闪付",
+        "com.bestpay.vip" to "翼支付",
+        "com.suning.mobile.ebuy" to "苏宁易购",
+        "com.douban.frodo" to "豆瓣",
+        "com.dangdang.buy2" to "当当",
+        // === 出行/住宿 ===
+        "ctrip.android.view" to "携程",
+        "com.Qunar" to "去哪儿",
+        "com.MobileTicket" to "铁路12306",
+        "com.autonavi.minimap" to "高德地图",
+        "com.baidu.BaiduMap" to "百度地图",
+        "com.Lbsyun.amap" to "哈啰出行",
+        "com.jingyao.easybike" to "哈啰",
+        "com.mfw.roadbook" to "马蜂窝",
+        // === 生活缴费/理财 ===
+        "com.tencent.liteapp.wepay" to "微信支付分",
+        "com.ant.credit.score" to "芝麻信用",
+        "com.alipay.mobile.ant.fincommon" to "蚂蚁财富",
+        "com.tianhong.fund" to "天弘基金(余额宝)",
+        "com.eastmoney" to "东方财富",
+        "com.hexin.plat.android" to "同花顺",
+        "com.lufax.android" to "陆金所",
+        // === 保险 ===
+        "com.zhongan.health" to "众安保险",
+        // === 记账/信用卡管理 ===
+        "com.cardinfo.boss" to "51信用卡",
         // === 数字人民币 ===
         "cn.gov.pbc.dcep" to "数字人民币",
     )
