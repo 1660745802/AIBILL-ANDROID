@@ -90,7 +90,7 @@ class AccountRepositoryImpl @Inject constructor(
             categoryApi.updateAccount(id, mapOf(
                 "name" to name,
                 "icon" to icon,
-                "initial_balance" to initialBalance,
+                "current_balance" to initialBalance, // API 推荐 current_balance（后端反算 initial_balance）
             ))
         }
         return when (response) {
