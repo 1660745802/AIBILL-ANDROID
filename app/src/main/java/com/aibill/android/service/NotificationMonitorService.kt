@@ -106,7 +106,8 @@ class NotificationMonitorService : NotificationListenerService() {
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()
         val infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString().orEmpty()
 
-        val fullText = listOf(title, text, bigText, subText, infoText)
+        // 合并文本：bigText 是 text 的展开完整版，优先用 bigText（text 可能是截断摘要）
+        val fullText = listOf(title, bigText.ifBlank { text }, subText, infoText)
             .filter { it.isNotBlank() }
             .distinct()
             .joinToString(" ")
@@ -117,6 +118,8 @@ class NotificationMonitorService : NotificationListenerService() {
             appLogger.debug("NLS", "排除: pkg=$packageName title=$title")
             return
         }
+
+        appLogger.info("NLS", "通知放行: pkg=$packageName title=$title text=${text.take(50)} bigText=${bigText.take(50)} fullText=${fullText.take(80)}")
 
         // 4. 1s 内容去重（防同一条通知被系统多次分发）
         val since = System.currentTimeMillis() - DEDUP_WINDOW_MS
