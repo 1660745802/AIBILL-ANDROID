@@ -220,7 +220,7 @@ class NotificationMonitorService : NotificationListenerService() {
         }
 
         try {
-            appLogger.info("NLS", "调AI: pkg=${item.packageName} text=${item.fullText.take(50)}")
+            appLogger.info("NLS", "调AI: pkg=${item.packageName} text=${item.fullText}")
             val response = aiApi.parse(mapOf("input" to item.fullText))
             if (response.code != 0 || response.data == null) {
                 appLogger.warn("NLS", "AI失败: code=${response.code}")
