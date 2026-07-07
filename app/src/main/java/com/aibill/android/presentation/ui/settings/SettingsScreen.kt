@@ -203,20 +203,6 @@ fun SettingsScreen(
                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { viewModel.onClearLogs(context) }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("清理日志", style = MaterialTheme.typography.bodyMedium)
-                            Text("清除本地日志文件和记录", style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
                 }
             }
         }

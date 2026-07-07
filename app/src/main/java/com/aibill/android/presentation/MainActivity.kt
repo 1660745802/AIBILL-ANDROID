@@ -39,6 +39,9 @@ class MainActivity : FragmentActivity() {
     @Inject
     lateinit var authEventBus: AuthEventBus
 
+    @Inject
+    lateinit var appLogger: com.aibill.android.util.AppLogger
+
     private val mainViewModel: MainViewModel by viewModels()
 
     private var isLocked by mutableStateOf(false)
@@ -58,6 +61,7 @@ class MainActivity : FragmentActivity() {
         navigateTo = intent?.getStringExtra("navigate_to")
         aiInputPrefill = intent?.getStringExtra("ai_input")
         observeAuthEvents()
+        appLogger.autoCleanOldLogs(this) // 每次打开 App 清理 7 天前日志+文件
 
         // PR #41：进程启动时若启用 AppLock，立刻进入锁定态，
         // 不依赖 wasInBackground（仅靠 onStart 设置）

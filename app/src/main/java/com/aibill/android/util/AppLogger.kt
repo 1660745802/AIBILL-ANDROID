@@ -57,13 +57,27 @@ class AppLogger @Inject constructor(
         }
     }
 
-    /** 清理所有日志（DB记录 + cache文件） */
+    /** 清理所有日志（DB记录 + cache文件）— 用户手动触发 */
     fun cleanAllLogs(context: android.content.Context? = null) {
         scope.launch {
             try {
                 appLogDao.cleanBefore(System.currentTimeMillis()) // 清全部
                 context?.cacheDir?.listFiles()?.filter {
                     it.name.startsWith("aibill_log_")
+                }?.forEach { it.delete() }
+            } catch (_: Exception) {}
+        }
+    }
+
+    /** App 打开时自动清理 7 天前的日志记录 + 旧日志文件 */
+    fun autoCleanOldLogs(context: android.content.Context? = null) {
+        val sevenDaysAgo = System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L
+        scope.launch {
+            try {
+                appLogDao.cleanBefore(sevenDaysAgo)
+                // 清理 7 天前的日志文件
+                context?.cacheDir?.listFiles()?.filter {
+                    it.name.startsWith("aibill_log_") && it.lastModified() < sevenDaysAgo
                 }?.forEach { it.delete() }
             } catch (_: Exception) {}
         }

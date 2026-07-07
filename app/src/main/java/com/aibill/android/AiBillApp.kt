@@ -24,9 +24,6 @@ class AiBillApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         initTimber()
-        // 引用 networkMonitor 以触发 Hilt 实例化 NetworkMonitor，
-        // 其 init 块会注册 ConnectivityManager.NetworkCallback，
-        // 联网恢复时自动调用 SyncScheduler.scheduleSyncIfNeeded
         networkMonitor.isOnline
         scheduleWorkers()
     }
