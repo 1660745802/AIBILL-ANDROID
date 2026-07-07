@@ -1,7 +1,9 @@
 package com.aibill.android.presentation.ui.settings
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
@@ -79,13 +81,19 @@ fun PermissionGuideScreen(
             modifier = modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text(
-                text = "为保证自动记账功能正常运行，请开启以下权限：",
-                style = MaterialTheme.typography.bodyLarge
-            )
+            // 可滚动的权限列表
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = "为保证自动记账功能正常运行，请开启以下权限：",
+                    style = MaterialTheme.typography.bodyLarge
+                )
 
             // 1. 通知监听权限
             PermissionItem(
@@ -152,21 +160,19 @@ fun PermissionGuideScreen(
             // 6. 锁定最近任务（通用，防止被一键清理）
             PermissionItem(
                 title = "锁定最近任务",
-                description = "在最近任务列表中下拉锁定 App，防止被清理杀死",
-                isGranted = null, // 无法检测
+                description = "打开最近任务 → 找到 AIBILL → 下拉锁定（出现🔒图标）",
+                isGranted = null,
                 buttonText = "已了解",
                 showAlwaysAction = true,
-                onAction = { /* 纯提示，无跳转 */ }
+                onAction = { /* 无法程序化打开最近任务面板 */ }
             )
+            }
 
-            Spacer(modifier = Modifier.weight(1f))
-
-            // 底部按钮
+            // 底部按钮（固定不随滚动）
             PrimaryButton(
-                text = if (allGranted) "已全部开启" else "请完成上述设置",
+                text = if (allGranted) "已全部开启" else "继续",
                 onClick = onBack,
-                enabled = allGranted,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
             )
         }
     }

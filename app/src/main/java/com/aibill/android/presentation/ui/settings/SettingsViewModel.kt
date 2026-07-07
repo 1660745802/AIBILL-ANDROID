@@ -135,15 +135,29 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val logText = appLogger.exportAsText()
+                // 生成文件到 cache 目录（可清理）
+                val logFile = java.io.File(context.cacheDir, "aibill_log_${System.currentTimeMillis()}.txt")
+                logFile.writeText(logText)
+                // 通过 FileProvider 分享
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    context, "${context.packageName}.fileprovider", logFile
+                )
                 val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                     type = "text/plain"
-                    putExtra(android.content.Intent.EXTRA_TEXT, logText)
-                    putExtra(android.content.Intent.EXTRA_SUBJECT, "AIBILL 日志导出")
+                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                context.startActivity(android.content.Intent.createChooser(intent, "分享日志"))
+                context.startActivity(android.content.Intent.createChooser(intent, "分享日志文件"))
             } catch (e: Exception) {
                 _events.send("日志导出失败: ${e.message}")
             }
+        }
+    }
+
+    fun onClearLogs(context: Context) {
+        viewModelScope.launch {
+            appLogger.cleanOldLogs(context)
+            _events.send("日志已清理")
         }
     }
 }
