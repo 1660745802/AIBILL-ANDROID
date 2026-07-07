@@ -72,13 +72,10 @@ class NotificationMonitorService : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         NotificationHelper.createNotificationChannel(this)
-        // 注册全局 flush 处理器，所有渠道（通知/短信/无障碍）共享
-        notificationBuffer.globalFlushHandler = ::processBatch
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        notificationBuffer.globalFlushHandler = null
         serviceScope.cancel()
     }
 
@@ -125,18 +122,39 @@ class NotificationMonitorService : NotificationListenerService() {
         val duplicate = notificationRecordDao.findDuplicate(packageName, fullText, since)
         if (duplicate != null) return
 
-        // 5. 入缓冲池（60s 后统一处理）
+        // 5. 构建 BufferedItem
         val roughAmount = notificationParser.extractAmountOnly(fullText)
-        notificationBuffer.enqueue(
-            item = NotificationBuffer.BufferedItem(
-                packageName = packageName,
-                title = title,
-                fullText = fullText,
-                roughAmount = roughAmount,
-            ),
-            scope = serviceScope,
-            onFlush = ::processBatch,
+        val item = NotificationBuffer.BufferedItem(
+            packageName = packageName,
+            title = title,
+            fullText = fullText,
+            roughAmount = roughAmount,
         )
+
+        // 6. 60s 长窗口去重：已处理过同金额 → 丢弃
+        if (notificationBuffer.isDuplicateInWindow(item)) {
+            Timber.d("60s去重丢弃: pkg=$packageName amount=$roughAmount")
+            return
+        }
+
+        // 7. 5s 短延迟合并：收集同金额跨渠道通知，合并文本后一起调 AI
+        val isFirst = notificationBuffer.addToPendingMerge(item)
+        if (isFirst) {
+            // 第一条：启动 5s 延迟后处理
+            serviceScope.launch {
+                kotlinx.coroutines.delay(NotificationBuffer.MERGE_DELAY_MS)
+                try {
+                    val merged = notificationBuffer.collectAndMerge(roughAmount) ?: return@launch
+                    val aiEnabled = userPreferences.aiParseEnabled.first()
+                    processOneNotification(merged, aiEnabled)
+                    // 标记已处理（60s 内同金额不再处理）
+                    if (roughAmount != null) notificationBuffer.markProcessed(roughAmount)
+                } catch (e: Exception) {
+                    Timber.w(e, "处理通知异常: $packageName")
+                }
+            }
+        }
+        // 不是第一条 → 已在合并池里等着，5s 后会被 collectAndMerge 取出合并
     }
 
     /**
@@ -167,23 +185,8 @@ class NotificationMonitorService : NotificationListenerService() {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // L3 + L4: 批量处理（学习引擎 → AI → 入库/待审/丢弃）
+    // L3 + L4: 解析 + 入库
     // ═══════════════════════════════════════════════════════════════
-
-    /**
-     * 缓冲池 flush 后的回调。接收去重后的通知列表，逐条处理。
-     */
-    private suspend fun processBatch(batch: List<NotificationBuffer.BufferedItem>) {
-        val aiEnabled = userPreferences.aiParseEnabled.first()
-
-        for (item in batch) {
-            try {
-                processOneNotification(item, aiEnabled)
-            } catch (e: Exception) {
-                Timber.w(e, "处理通知异常: ${item.packageName}")
-            }
-        }
-    }
 
     private suspend fun processOneNotification(
         item: NotificationBuffer.BufferedItem,

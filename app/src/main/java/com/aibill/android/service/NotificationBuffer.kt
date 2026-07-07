@@ -1,27 +1,21 @@
 package com.aibill.android.service
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentLinkedDeque
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
 
 /**
- * 通知缓冲池。
+ * 通知去重器（v3.2）
  *
- * 设计目标：收齐同一笔支付产生的多条通知（微信+银行+短信），去重后只保留一条交给 AI。
- *
- * 触发条件（任一满足即 flush）：
- * - 最早通知已等 60s（超时）
- * - 池中满 5 条（批量效率）
+ * 两层机制：
+ * 1. 短延迟合并（5s）：同金额跨包名的通知合并文本后一起发 AI，信息更全
+ * 2. 长窗口去重（60s）：合并处理后记入窗口，后续同金额直接丢弃
  *
  * 去重规则：
- * - 跨包名 + 同金额 + 60s 内 → 合并（保留信息最丰富的那条）
- * - 同包名两条 → 不合并（视为两笔真实交易）
- * - 金额为 null → 不参与金额去重（全部保留，交给 AI）
+ * - 跨包名 + 同金额 + 窗口内 → 合并或丢弃
+ * - 同包名 → 不去重（视为两笔真实交易）
+ * - 金额为 null → 不去重
  */
 @Singleton
 class NotificationBuffer @Inject constructor() {
@@ -30,116 +24,102 @@ class NotificationBuffer @Inject constructor() {
         val packageName: String,
         val title: String,
         val fullText: String,
-        /** 用简单正则快速提取的金额（分），仅用于去重比较，不作为最终结果 */
+        /** 用简单正则快速提取的金额（分），仅用于去重比较 */
         val roughAmount: Int?,
         val receivedAt: Long = System.currentTimeMillis(),
     )
 
-    private val pool = ConcurrentLinkedDeque<BufferedItem>()
-    private var flushJob: Job? = null
+    /** 短延迟合并池：5s 内同金额的通知攒在一起 */
+    private val pendingMerge = ConcurrentLinkedDeque<BufferedItem>()
 
-    /**
-     * 全局 flush 处理器。由 NotificationMonitorService 在 onCreate 时注册。
-     * 所有渠道（通知/短信/无障碍）共享同一个处理逻辑。
-     */
-    var globalFlushHandler: (suspend (List<BufferedItem>) -> Unit)? = null
+    /** 60s 已处理记录（长窗口去重） */
+    private val recentlyProcessed = ConcurrentLinkedDeque<ProcessedRecord>()
+
+    private data class ProcessedRecord(
+        val amount: Int,
+        val processedAt: Long,
+    )
 
     companion object {
-        const val BUFFER_DELAY_MS = 60_000L  // 60s 缓冲（覆盖银行短信延迟 30-60s）
-        const val MAX_BATCH_SIZE = 5
+        const val MERGE_DELAY_MS = 5_000L   // 5s 短延迟合并
+        const val DEDUP_WINDOW_MS = 60_000L // 60s 长窗口去重
     }
 
     /**
-     * 通知入池。到期或满批时通过 onFlush 回调交出去重后的列表。
+     * 第一层：60s 长窗口去重。
+     * 返回 false = 最近已处理过同金额，直接丢弃。
      */
-    fun enqueue(
-        item: BufferedItem,
-        scope: CoroutineScope,
-        onFlush: suspend (List<BufferedItem>) -> Unit,
-    ) {
-        pool.addLast(item)
+    fun isDuplicateInWindow(item: BufferedItem): Boolean {
+        pruneProcessed()
+        val amount = item.roughAmount ?: return false
+        return recentlyProcessed.any { record ->
+            record.amount == amount &&
+            abs(item.receivedAt - record.processedAt) <= DEDUP_WINDOW_MS
+        }
+    }
 
-        // 满 5 条 → 立即 flush
-        if (pool.size >= MAX_BATCH_SIZE) {
-            flush(scope, onFlush)
-            return
+    /**
+     * 第二层：5s 短延迟合并。
+     * 将通知加入合并池，返回是否是该金额的第一条（触发延迟处理）。
+     */
+    fun addToPendingMerge(item: BufferedItem): Boolean {
+        val amount = item.roughAmount
+        // 查是否已有同金额在等待合并
+        val hasExisting = if (amount != null) {
+            pendingMerge.any { it.roughAmount == amount && it.packageName != item.packageName }
+        } else false
+
+        pendingMerge.addLast(item)
+        return !hasExisting // true = 第一条，需要启动 5s 延迟
+    }
+
+    /**
+     * 5s 到期后取出同金额的所有通知，合并文本。
+     * 返回合并后的 BufferedItem（fullText 包含所有渠道的文本）。
+     */
+    fun collectAndMerge(triggerAmount: Int?): BufferedItem? {
+        if (triggerAmount == null) {
+            // 无金额的直接取出第一条
+            val item = pendingMerge.pollFirst() ?: return null
+            return item
         }
 
-        // 否则延迟 60s flush（已有延迟任务就不重复创建）
-        if (flushJob == null || flushJob?.isActive != true) {
-            flushJob = scope.launch {
-                delay(BUFFER_DELAY_MS)
-                flush(scope, onFlush)
+        // 取出所有同金额的
+        val matched = mutableListOf<BufferedItem>()
+        val remaining = mutableListOf<BufferedItem>()
+        for (item in pendingMerge) {
+            if (item.roughAmount == triggerAmount) {
+                matched.add(item)
+            } else {
+                remaining.add(item)
             }
         }
+        pendingMerge.clear()
+        remaining.forEach { pendingMerge.addLast(it) }
+
+        if (matched.isEmpty()) return null
+
+        // 合并文本：按信息丰富度排序，拼接
+        val sorted = matched.sortedByDescending { it.fullText.length }
+        val mergedText = sorted.joinToString("\n") { "[${it.title}] ${it.fullText}" }
+
+        // 用信息最丰富的那条作为基础，替换 fullText 为合并后的
+        return sorted.first().copy(fullText = mergedText)
     }
 
     /**
-     * 主动 flush（如用户打开 App 时立即处理）
+     * 标记某金额已处理完成（加入 60s 长窗口）
      */
-    fun flushNow(scope: CoroutineScope, onFlush: suspend (List<BufferedItem>) -> Unit) {
-        flush(scope, onFlush)
+    fun markProcessed(amount: Int) {
+        recentlyProcessed.addLast(
+            ProcessedRecord(amount = amount, processedAt = System.currentTimeMillis())
+        )
     }
 
-    private fun flush(scope: CoroutineScope, onFlush: suspend (List<BufferedItem>) -> Unit) {
-        flushJob?.cancel()
-        flushJob = null
-
-        val batch = mutableListOf<BufferedItem>()
-        while (pool.isNotEmpty()) {
-            pool.pollFirst()?.let { batch.add(it) }
+    private fun pruneProcessed() {
+        val cutoff = System.currentTimeMillis() - DEDUP_WINDOW_MS
+        while (recentlyProcessed.peekFirst()?.let { it.processedAt < cutoff } == true) {
+            recentlyProcessed.pollFirst()
         }
-        if (batch.isEmpty()) return
-
-        val deduplicated = deduplicate(batch)
-        val handler = globalFlushHandler ?: onFlush
-        scope.launch { handler(deduplicated) }
-    }
-
-    /**
-     * 去重：跨包名 + 同金额 + 60s 内 → 合并为一条（保留信息最丰富的）
-     */
-    internal fun deduplicate(batch: List<BufferedItem>): List<BufferedItem> {
-        val result = mutableListOf<BufferedItem>()
-        val consumed = mutableSetOf<Int>()
-
-        for (i in batch.indices) {
-            if (i in consumed) continue
-            var best = batch[i]
-            for (j in i + 1 until batch.size) {
-                if (j in consumed) continue
-                if (shouldMerge(best, batch[j])) {
-                    consumed.add(j)
-                    if (infoScore(batch[j]) > infoScore(best)) {
-                        best = batch[j]
-                    }
-                }
-            }
-            result.add(best)
-        }
-        return result
-    }
-
-    private fun shouldMerge(a: BufferedItem, b: BufferedItem): Boolean {
-        // 同 App 不合并（即使同金额，视为两笔真实交易）
-        if (a.packageName == b.packageName) return false
-        // 任一无金额 → 无法判断，不合并
-        if (a.roughAmount == null || b.roughAmount == null) return false
-        // 金额不同 → 不合并
-        if (a.roughAmount != b.roughAmount) return false
-        // 时间超过 60s → 不合并
-        if (abs(a.receivedAt - b.receivedAt) > BUFFER_DELAY_MS) return false
-        return true
-    }
-
-    /**
-     * 信息丰富度评分。优先保留内容多的、来自微信/支付宝的（它们有商家名）。
-     */
-    private fun infoScore(item: BufferedItem): Int {
-        var score = item.fullText.length.coerceAtMost(100)
-        // 微信/支付宝通知通常有商家名，信息最丰富
-        if (item.packageName.contains("tencent")) score += 20
-        if (item.packageName.contains("Alipay")) score += 15
-        return score
     }
 }

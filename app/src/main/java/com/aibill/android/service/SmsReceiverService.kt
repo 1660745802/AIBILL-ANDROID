@@ -55,22 +55,21 @@ class SmsReceiverService : BroadcastReceiver() {
     }
 
     private fun handleSms(sender: String, text: String) {
-        // 支付特征预筛（银行短信几乎都有，但过滤营销短信）
+        // 支付特征预筛
         if (!NotificationMonitorService.PAYMENT_SIGNAL.containsMatchIn(text)) return
 
-        // 快速提取金额用于去重
         val roughAmount = notificationParser.extractAmountOnly(text)
-
-        // 入统一 Buffer（与通知渠道共享去重 + AI 处理）
-        notificationBuffer.enqueue(
-            item = NotificationBuffer.BufferedItem(
-                packageName = "sms:$sender",
-                title = sender,
-                fullText = text,
-                roughAmount = roughAmount,
-            ),
-            scope = receiverScope,
-            onFlush = { /* globalFlushHandler 处理 */ },
+        val item = NotificationBuffer.BufferedItem(
+            packageName = "sms:$sender",
+            title = sender,
+            fullText = text,
+            roughAmount = roughAmount,
         )
+
+        // 60s 去重：通知渠道可能已经处理了
+        if (notificationBuffer.isDuplicateInWindow(item)) return
+
+        // 加入合并池（通知服务的 5s 延迟会把它合并进去）
+        notificationBuffer.addToPendingMerge(item)
     }
 }

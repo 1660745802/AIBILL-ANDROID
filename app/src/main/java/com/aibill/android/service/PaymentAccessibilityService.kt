@@ -225,16 +225,21 @@ class PaymentAccessibilityService : AccessibilityService() {
             if (!result.merchant.isNullOrBlank()) append(" ${result.merchant}")
         }
 
-        notificationBuffer.enqueue(
-            item = NotificationBuffer.BufferedItem(
-                packageName = packageName,
-                title = "支付成功",
-                fullText = fullText,
-                roughAmount = result.amount,
-            ),
-            scope = serviceScope,
-            onFlush = { /* flush 回调在 MonitorService 里处理，这里只负责入池 */ },
+        val item = NotificationBuffer.BufferedItem(
+            packageName = packageName,
+            title = "支付成功",
+            fullText = fullText,
+            roughAmount = result.amount,
         )
+
+        // 60s 去重
+        if (notificationBuffer.isDuplicateInWindow(item)) {
+            Timber.d("无障碍去重：已处理 amount=${result.amount}")
+            return
+        }
+
+        // 加入合并池（通知服务的 5s 延迟会把它合并进去）
+        notificationBuffer.addToPendingMerge(item)
     }
 
     private fun AccessibilityNodeInfo.findNodesByText(text: String): List<AccessibilityNodeInfo>? {
