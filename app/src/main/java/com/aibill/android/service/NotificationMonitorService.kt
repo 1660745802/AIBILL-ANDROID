@@ -97,14 +97,6 @@ class NotificationMonitorService : NotificationListenerService() {
     private val recentNotificationKeys = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     private suspend fun handleNotification(sbn: StatusBarNotification) {
-        // 0. 内存级去重（防竞态：两个协程同时执行 DB 查询前就拦住）
-        val notifKey = "${sbn.packageName}:${sbn.key}:${sbn.postTime}"
-        val now = System.currentTimeMillis()
-        val lastSeen = recentNotificationKeys.put(notifKey, now)
-        if (lastSeen != null && (now - lastSeen) < 2000L) return
-        // 清理 5s 前的旧 key 防内存泄漏
-        recentNotificationKeys.entries.removeIf { now - it.value > 5000L }
-
         // 1. 包名白名单
         val packageName = sbn.packageName ?: return
         if (packageName !in WHITELIST_PACKAGES) return
@@ -123,6 +115,16 @@ class NotificationMonitorService : NotificationListenerService() {
             .distinct()
             .joinToString(" ")
         if (fullText.isBlank()) return
+
+        // 0. 内存级去重（用内容hash，防系统重复触发+协程竞态）
+        val contentKey = "$packageName:${fullText.hashCode()}"
+        val now = System.currentTimeMillis()
+        val lastSeen = recentNotificationKeys.put(contentKey, now)
+        if (lastSeen != null && (now - lastSeen) < 5000L) return
+        // 清理旧key防内存泄漏
+        if (recentNotificationKeys.size > 20) {
+            recentNotificationKeys.entries.removeIf { now - it.value > 10000L }
+        }
 
         // 3. 排除层：过滤明显不是账务的通知
         if (!isLikelyFinancial(packageName, title, fullText)) {

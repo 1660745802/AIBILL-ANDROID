@@ -48,11 +48,6 @@ object NotificationSourceMapping {
         // === 三方支付/电商 ===
         "com.jd.jrapp" to "京东金融",
         "com.meituan.meituan" to "美团",
-        "com.sankuai.meituan.takeoutnew" to "美团外卖",
-        "com.xunmeng.pinduoduo" to "拼多多",
-        "com.ss.android.ugc.aweme" to "抖音",
-        "com.xingin.xhs" to "小红书",
-        "com.tencent.mobileqq" to "QQ",
         "com.unionpay" to "云闪付",
         // === 数字人民币 ===
         "cn.gov.pbc.dcep" to "数字人民币",
