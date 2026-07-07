@@ -202,8 +202,12 @@ class NotificationMonitorService : NotificationListenerService() {
                 PAYMENT_SIGNAL.containsMatchIn(fullText)
             }
             else -> {
-                // 银行/短信等白名单 App → 全部放行
-                true
+                // 银行 App：包名含 bank/银行号段 → 全部放行（银行几乎只发账务通知）
+                if (packageName.contains("bank") || packageName.startsWith("cmb") ||
+                    packageName.contains("icbc") || packageName.contains("ccb") ||
+                    packageName.contains("boc") || packageName.contains("abchina")) return true
+                // 其他（美团/京东/云闪付等）：用 PAYMENT_SIGNAL 过滤营销
+                PAYMENT_SIGNAL.containsMatchIn(fullText)
             }
         }
     }
