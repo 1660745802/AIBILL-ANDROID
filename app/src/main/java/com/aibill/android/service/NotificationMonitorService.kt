@@ -93,7 +93,18 @@ class NotificationMonitorService : NotificationListenerService() {
     // L1: 排除层 → L2: 入缓冲
     // ═══════════════════════════════════════════════════════════════
 
+    /** 内存级去重：防止系统短时间内对同一通知多次触发 onNotificationPosted */
+    private val recentNotificationKeys = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     private suspend fun handleNotification(sbn: StatusBarNotification) {
+        // 0. 内存级去重（防竞态：两个协程同时执行 DB 查询前就拦住）
+        val notifKey = "${sbn.packageName}:${sbn.key}:${sbn.postTime}"
+        val now = System.currentTimeMillis()
+        val lastSeen = recentNotificationKeys.put(notifKey, now)
+        if (lastSeen != null && (now - lastSeen) < 2000L) return
+        // 清理 5s 前的旧 key 防内存泄漏
+        recentNotificationKeys.entries.removeIf { now - it.value > 5000L }
+
         // 1. 包名白名单
         val packageName = sbn.packageName ?: return
         if (packageName !in WHITELIST_PACKAGES) return
