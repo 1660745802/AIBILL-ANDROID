@@ -156,7 +156,7 @@ class SettingsViewModel @Inject constructor(
 
     fun onClearLogs(context: Context) {
         viewModelScope.launch {
-            appLogger.cleanOldLogs(context)
+            appLogger.cleanAllLogs(context)
             _events.send("日志已清理")
         }
     }
