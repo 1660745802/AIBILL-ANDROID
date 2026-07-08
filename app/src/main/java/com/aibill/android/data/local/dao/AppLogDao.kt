@@ -11,7 +11,7 @@ interface AppLogDao {
     @Insert
     suspend fun insert(log: AppLogEntity)
 
-    @Query("SELECT * FROM app_logs ORDER BY timestamp DESC LIMIT 500")
+    @Query("SELECT * FROM app_logs ORDER BY timestamp DESC")
     suspend fun getRecent(): List<AppLogEntity>
 
     /** 清理 7 天前的日志 */

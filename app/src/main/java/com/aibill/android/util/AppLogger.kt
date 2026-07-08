@@ -70,24 +70,24 @@ class AppLogger @Inject constructor(
     }
 
     /** App 打开时自动清理 7 天前的日志记录 + 旧日志文件 */
+    /** App 打开时自动清理 2 天前的日志 */
     fun autoCleanOldLogs(context: android.content.Context? = null) {
-        val sevenDaysAgo = System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L
+        val twoDaysAgo = System.currentTimeMillis() - 2 * 24 * 60 * 60 * 1000L
         scope.launch {
             try {
-                appLogDao.cleanBefore(sevenDaysAgo)
-                // 清理 7 天前的日志文件
+                appLogDao.cleanBefore(twoDaysAgo)
                 context?.cacheDir?.listFiles()?.filter {
-                    it.name.startsWith("aibill_log_") && it.lastModified() < sevenDaysAgo
+                    it.name.startsWith("aibill_log_") && it.lastModified() < twoDaysAgo
                 }?.forEach { it.delete() }
             } catch (_: Exception) {}
         }
     }
 
-    /** 导出日志为文本 */
+    /** 导出全部日志为文本（不限条数） */
     suspend fun exportAsText(): String {
         val logs = appLogDao.getRecent()
         return buildString {
-            appendLine("=== AIBILL 日志导出 (最近500条) ===")
+            appendLine("=== AIBILL 日志导出 ===")
             appendLine("导出时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}")
             appendLine()
             for (log in logs) {
