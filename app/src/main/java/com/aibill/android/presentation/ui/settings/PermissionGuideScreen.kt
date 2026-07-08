@@ -106,6 +106,31 @@ fun PermissionGuideScreen(
                 }
             )
 
+            // 检测"权限有但服务未连接"（vivo等ROM首次授权需toggle）
+            if (isNotificationListenerEnabled && !com.aibill.android.service.NotificationMonitorService.isConnected) {
+                androidx.compose.material3.Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = androidx.compose.material3.CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "⚠️ 通知监听未生效",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Text(
+                            text = "部分手机需要关闭再重新打开通知使用权才能生效。请点击上方\"去开启\"，关闭后再次开启。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
+            }
+
             // 2. 通知弹窗权限（Android 13+ 发通知需要）
             PermissionItem(
                 title = "通知弹窗权限",

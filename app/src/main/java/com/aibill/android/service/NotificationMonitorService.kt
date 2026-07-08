@@ -68,6 +68,11 @@ class NotificationMonitorService : NotificationListenerService() {
             "转入|转出|转账|汇款|消费|交易|扣款|扣费|代扣|缴费|充值|提现|退款|退货|红包|" +
             "余额|账单|还款|欠款|尾号|卡号|信用卡|储蓄卡|银行卡|收益|利息|分期|贷款|工资|薪资|报销"
         )
+
+        /** 全局可读的 NLS 连接状态，供权限引导页检测"权限有但未连接" */
+        @Volatile
+        var isConnected: Boolean = false
+            private set
     }
 
     override fun onCreate() {
@@ -75,8 +80,21 @@ class NotificationMonitorService : NotificationListenerService() {
         NotificationHelper.createNotificationChannel(this)
     }
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        isConnected = true
+        appLogger.info("NLS", "通知监听服务已连接")
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        isConnected = false
+        appLogger.warn("NLS", "通知监听服务断开")
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        isConnected = false
         serviceScope.cancel()
     }
 
