@@ -94,19 +94,21 @@ internal fun EmptyTodayCard() {
 internal fun AiResultsCard(
     results: List<AiParseResult>,
     categoriesByType: Map<String, List<com.aibill.android.domain.model.Category>>,
+    accounts: List<com.aibill.android.domain.model.Account> = emptyList(),
     onConfirmItem: (AiParseResult) -> Unit,
     onConfirmAll: () -> Unit,
     onDismiss: () -> Unit,
-    onConfirmEdited: (AiParseResult, Int, TransactionType, Int, String) -> Unit = { _, _, _, _, _ -> },
+    onConfirmEdited: (AiParseResult, Int, TransactionType, Int, String, Int?, Int?) -> Unit = { _, _, _, _, _, _, _ -> },
 ) {
     var editTarget by remember { mutableStateOf<AiParseResult?>(null) }
     editTarget?.let { target ->
         AiEditDialog(
             item = target,
             categoriesByType = categoriesByType,
+            accounts = accounts,
             onDismiss = { editTarget = null },
-            onConfirm = { amount, type, categoryId, desc ->
-                onConfirmEdited(target, amount, type, categoryId, desc)
+            onConfirm = { amount, type, categoryId, desc, accId, targetAccId ->
+                onConfirmEdited(target, amount, type, categoryId, desc, accId, targetAccId)
                 editTarget = null
             }
         )
@@ -249,16 +251,21 @@ private fun ParseResultItem(item: AiParseResult, onConfirm: () -> Unit, onEdit: 
 private fun AiEditDialog(
     item: AiParseResult,
     categoriesByType: Map<String, List<com.aibill.android.domain.model.Category>>,
+    accounts: List<com.aibill.android.domain.model.Account> = emptyList(),
     onDismiss: () -> Unit,
-    onConfirm: (amount: Int, type: TransactionType, categoryId: Int, description: String) -> Unit,
+    onConfirm: (amount: Int, type: TransactionType, categoryId: Int, description: String, accountId: Int?, targetAccountId: Int?) -> Unit,
 ) {
     var type by remember { mutableStateOf(item.type) }
     var amountText by remember { mutableStateOf("%.2f".format(item.amount / 100.0)) }
     var description by remember { mutableStateOf(item.description ?: "") }
-    // 当前选中的分类 id，初值为 AI 给的；切换 type 时重置
     var selectedCategoryId by remember { mutableStateOf(item.categoryId) }
+    var selectedAccountId by remember { mutableStateOf(item.accountId) }
+    var selectedTargetAccountId by remember { mutableStateOf(item.targetAccountId) }
 
-    val typeKey = if (type == TransactionType.EXPENSE) "expense" else "income"
+    val typeKey = when (type) {
+        TransactionType.INCOME -> "income"
+        else -> "expense"
+    }
     val availableCategories = categoriesByType[typeKey].orEmpty()
 
     AlertDialog(
@@ -266,12 +273,12 @@ private fun AiEditDialog(
         title = { Text("编辑并确认") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 类型三选
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = type == TransactionType.EXPENSE,
                         onClick = {
                             type = TransactionType.EXPENSE
-                            // 重置为该类型下第一个分类
                             selectedCategoryId = availableCategories.firstOrNull()?.id ?: selectedCategoryId
                         },
                         label = { Text("支出") }
@@ -284,7 +291,13 @@ private fun AiEditDialog(
                         },
                         label = { Text("收入") }
                     )
+                    FilterChip(
+                        selected = type == TransactionType.TRANSFER,
+                        onClick = { type = TransactionType.TRANSFER },
+                        label = { Text("转账") }
+                    )
                 }
+                // 金额
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { newVal ->
@@ -297,6 +310,7 @@ private fun AiEditDialog(
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
+                // 备注
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
@@ -309,25 +323,47 @@ private fun AiEditDialog(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                CategoryChipFlow(
-                    availableCategories = availableCategories,
-                    selectedCategoryId = selectedCategoryId ?: 0,
-                    onSelect = { selectedCategoryId = it },
-                )
+                if (type != TransactionType.TRANSFER) {
+                    CategoryChipFlow(
+                        availableCategories = availableCategories,
+                        selectedCategoryId = selectedCategoryId ?: 0,
+                        onSelect = { selectedCategoryId = it },
+                    )
+                } else {
+                    // 转账：选来源和目标账户
+                    Text("转账不计入收支统计", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // 来源账户
+                    AccountDropdown(
+                        label = "从",
+                        accounts = accounts,
+                        selectedId = selectedAccountId,
+                        onSelect = { selectedAccountId = it },
+                    )
+                    // 目标账户
+                    AccountDropdown(
+                        label = "到",
+                        accounts = accounts.filter { it.id != selectedAccountId },
+                        selectedId = selectedTargetAccountId,
+                        onSelect = { selectedTargetAccountId = it },
+                    )
+                }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     val cents = Math.round((amountText.toDoubleOrNull() ?: 0.0) * 100).toInt()
-                    // 兜底：若用户没动分类但原 AI 分类 id 不在新分类列表，用列表第一个
-                    val finalCategoryId: Int = availableCategories
+                    val finalCategoryId: Int = if (type == TransactionType.TRANSFER) 0
+                    else availableCategories
                         .firstOrNull { it.id == selectedCategoryId }
                         ?.id
                         ?: availableCategories.firstOrNull()?.id
                         ?: selectedCategoryId
                         ?: 0
-                    onConfirm(cents, type, finalCategoryId, description)
+                    onConfirm(cents, type, finalCategoryId, description,
+                        if (type == TransactionType.TRANSFER) selectedAccountId else null,
+                        if (type == TransactionType.TRANSFER) selectedTargetAccountId else null)
                 },
                 enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0
             ) { Text("确认记账") }
@@ -363,6 +399,39 @@ private fun CategoryChipFlow(
                 onClick = { onSelect(cat.id) },
                 label = { Text("${cat.icon} ${cat.name}") },
             )
+        }
+    }
+}
+
+@Composable
+private fun AccountDropdown(
+    label: String,
+    accounts: List<com.aibill.android.domain.model.Account>,
+    selectedId: Int?,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val selectedName = accounts.firstOrNull { it.id == selectedId }?.let { "${it.icon} ${it.name}" } ?: "选择账户"
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = selectedName,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            modifier = Modifier.fillMaxWidth().clickable { expanded = true },
+            singleLine = true,
+        )
+        androidx.compose.material3.DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            accounts.forEach { account ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("${account.icon} ${account.name}") },
+                    onClick = { onSelect(account.id); expanded = false },
+                )
+            }
         }
     }
 }

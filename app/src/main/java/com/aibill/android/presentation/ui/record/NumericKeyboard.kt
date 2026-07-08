@@ -38,17 +38,16 @@ import com.aibill.android.domain.model.Category
 fun NumericKeyboard(
     onInput: (String) -> Unit,
     onDelete: () -> Unit,
-    onEquals: () -> Unit,
     onSave: () -> Unit,
     isSaving: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    // PRD §A.6：金额输入支持 +−×÷，补 ÷（PR #31）
+    // 纯数值输入键盘（无计算功能）
     val keys = listOf(
-        listOf("7", "8", "9", "+"),
-        listOf("4", "5", "6", "-"),
-        listOf("1", "2", "3", "×"),
-        listOf(".", "0", "⌫", "÷"),
+        listOf("7", "8", "9"),
+        listOf("4", "5", "6"),
+        listOf("1", "2", "3"),
+        listOf(".", "0", "⌫"),
     )
     Column(
         modifier = modifier
@@ -62,18 +61,14 @@ fun NumericKeyboard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 row.forEach { key ->
-                    val isOperator = key in listOf("+", "-", "×", "÷")
                     KeyboardButton(
                         label = key,
-                        isOperator = isOperator,
-                        // PR #32：保存中 16 个键全部禁用
+                        isOperator = false,
                         enabled = !isSaving,
                         modifier = Modifier.weight(1f),
                         onClick = {
                             when (key) {
                                 "⌫" -> onDelete()
-                                "×" -> onInput("*")
-                                "÷" -> onInput("/")
                                 else -> onInput(key)
                             }
                         },
@@ -82,22 +77,6 @@ fun NumericKeyboard(
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
-        // "=" 单独一行（之前在键盘里，现在改到底部一行更清晰）
-        Button(
-            onClick = onEquals,
-            enabled = !isSaving,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(40.dp),
-            shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            ),
-        ) {
-            Text("= 计算结果", style = MaterialTheme.typography.titleSmall)
-        }
-        Spacer(modifier = Modifier.height(4.dp))
         Button(
             onClick = onSave,
             enabled = !isSaving,

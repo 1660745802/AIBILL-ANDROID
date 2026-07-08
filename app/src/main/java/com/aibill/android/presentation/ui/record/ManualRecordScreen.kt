@@ -175,7 +175,7 @@ fun ManualRecordScreen(
                         // 数字键盘
                         NumericKeyboard(
                             onInput = viewModel::onAmountInput, onDelete = viewModel::onAmountDelete,
-                            onEquals = viewModel::onAmountEquals, onSave = viewModel::onSave,
+                            onSave = viewModel::onSave,
                             isSaving = state.isSaving,
                         )
                     }

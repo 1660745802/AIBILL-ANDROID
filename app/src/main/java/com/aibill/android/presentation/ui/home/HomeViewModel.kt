@@ -215,6 +215,8 @@ class HomeViewModel @Inject constructor(
         type: TransactionType,
         categoryId: Int,
         description: String,
+        accountId: Int? = null,
+        targetAccountId: Int? = null,
     ) {
         viewModelScope.launch {
             if (amount <= 0) {
@@ -229,10 +231,12 @@ class HomeViewModel @Inject constructor(
             val edited = original.copy(
                 amount = amount,
                 type = type,
-                categoryId = categoryId,
+                categoryId = if (type == TransactionType.TRANSFER) null else categoryId,
                 categoryName = newCategory?.name ?: original.categoryName,
                 categoryIcon = newCategory?.icon ?: original.categoryIcon,
                 description = description.ifBlank { null },
+                accountId = accountId,
+                targetAccountId = targetAccountId,
             )
             // 若用户修改了分类，学习新规则
             if (newCategory != null && categoryId != original.categoryId) {

@@ -195,7 +195,9 @@ fun HomeScreen(
                                 onConfirmItem = viewModel::onConfirmItem,
                                 onConfirmAll = viewModel::onConfirmAll,
                                 onDismiss = viewModel::onDismissResults,
-                                onConfirmEdited = viewModel::onConfirmEditedItem,
+                                onConfirmEdited = { original, amount, type, categoryId, desc, accId, targetAccId ->
+                                    viewModel.onConfirmEditedItem(original, amount, type, categoryId, desc, accId, targetAccId)
+                                },
                             )
                         }
                     }
