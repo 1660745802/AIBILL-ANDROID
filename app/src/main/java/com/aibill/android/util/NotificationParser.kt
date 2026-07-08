@@ -38,8 +38,8 @@ class NotificationParser @Inject constructor() {
         private const val PACKAGE_WECHAT = "com.tencent.mm"
         private const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
 
-        /** 快速金额提取：匹配 ¥/￥ 后的数字，或"XX.XX元"，或"人民币XX.XX"格式（仅用于去重） */
-        private val QUICK_AMOUNT_REGEX = Regex("""[¥￥](\d+\.?\d{0,2})|(\d+\.\d{2})\s*元|人民[币幣](\d+\.?\d{0,2})""")
+        /** 快速金额提取：匹配 ¥/￥后数字、XX.XX元、人民币XX.XX、XX.XX人民币 */
+        private val QUICK_AMOUNT_REGEX = Regex("""[¥￥](\d+\.?\d{0,2})|(\d+\.\d{2})\s*元|人民[币幣](\d+\.?\d{0,2})|(\d+\.?\d{0,2})\s*人民[币幣]""")
 
         // 微信支出模式：匹配多种格式
         private val WECHAT_EXPENSE_PATTERNS = listOf(
@@ -248,7 +248,7 @@ class NotificationParser @Inject constructor() {
      */
     fun extractAmountOnly(text: String): Int? {
         val match = QUICK_AMOUNT_REGEX.find(text) ?: return null
-        val yuan = match.groupValues[1].ifEmpty { match.groupValues[2].ifEmpty { match.groupValues[3] } }
+        val yuan = match.groupValues.drop(1).firstOrNull { it.isNotEmpty() } ?: return null
         return yuanToCents(yuan)
     }
 }

@@ -287,7 +287,6 @@ object NotificationHelper {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(notificationId, notification)
 
-        // 5s 自动消失
-        scheduleAutoCancel(manager, notificationId, 5_000L)
+        // 普通通知，不自动消失，用户手动划掉
     }
 }
