@@ -32,11 +32,24 @@ object BatteryOptimizationHelper {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         runCatching { context.startActivity(intent) }.onFailure {
-            // 部分设备可能不支持，回退到电池优化列表页
+            // 部分设备不支持直接申请，尝试跳转到电池优化列表页
             val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            runCatching { context.startActivity(fallback) }
+            runCatching { context.startActivity(fallback) }.onFailure {
+                // 都不行，尝试品牌特定电池设置页
+                val brandIntent = getManufacturerSettingsIntent(context)
+                if (brandIntent != null) {
+                    runCatching { context.startActivity(brandIntent) }
+                } else {
+                    // 最终兜底：跳应用详情页
+                    val detailIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    runCatching { context.startActivity(detailIntent) }
+                }
+            }
         }
     }
 
