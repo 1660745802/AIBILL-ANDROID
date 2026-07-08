@@ -14,16 +14,15 @@ import timber.log.Timber
 import javax.inject.Inject
 
 /**
- * SMS 短信接收器 (v3)
+ * SMS 短信接收器 (v4)
  *
- * 监听银行短信（RECEIVE_SMS），入统一 NotificationBuffer。
- * 由 Buffer 去重后交给 AI 解析，与通知渠道共享同一套处理逻辑。
- * 不再单独入库或弹窗——所有渠道统一由 processBatch 处理。
+ * 监听银行短信（RECEIVE_SMS），交给 NotificationProcessor 统一处理。
+ * 不再走 NotificationBuffer 合并池——v4 各渠道独立调 AI，按金额后置去重。
  */
 @AndroidEntryPoint
 class SmsReceiverService : BroadcastReceiver() {
 
-    @Inject lateinit var notificationBuffer: NotificationBuffer
+    @Inject lateinit var notificationProcessor: NotificationProcessor
     @Inject lateinit var notificationParser: NotificationParser
 
     private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -54,22 +53,17 @@ class SmsReceiverService : BroadcastReceiver() {
         }
     }
 
-    private fun handleSms(sender: String, text: String) {
+    private suspend fun handleSms(sender: String, text: String) {
         // 支付特征预筛
         if (!NotificationMonitorService.PAYMENT_SIGNAL.containsMatchIn(text)) return
 
-        val roughAmount = notificationParser.extractAmountOnly(text)
-        val item = NotificationBuffer.BufferedItem(
-            packageName = "sms:$sender",
-            title = sender,
-            fullText = text,
-            roughAmount = roughAmount,
+        // 直接交给 Processor（AI + 后置按金额去重）
+        notificationProcessor.process(
+            NotificationProcessor.Item(
+                packageName = "sms:$sender",
+                title = sender,
+                fullText = text,
+            )
         )
-
-        // 60s 去重：通知渠道可能已经处理了
-        if (notificationBuffer.isDuplicateInWindow(item)) return
-
-        // 加入合并池（通知服务的 5s 延迟会把它合并进去）
-        notificationBuffer.addToPendingMerge(item)
     }
 }

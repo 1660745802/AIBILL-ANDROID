@@ -3,31 +3,31 @@ package com.aibill.android.service
 import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import com.aibill.android.util.NotificationParser
+import com.aibill.android.util.AppLogger
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import timber.log.Timber
 import javax.inject.Inject
 
 /**
- * 支付页面无障碍识别服务（v2）
+ * 支付页面无障碍识别服务（v4）
  *
  * 不依赖 Activity 类名（微信频繁改名），而是通过遍历页面节点树
  * 查找"支付成功"关键词 + 金额文字来判断当前是否在支付结果页。
  *
- * 监听 TYPE_WINDOW_CONTENT_CHANGED + TYPE_WINDOW_STATE_CHANGED，
- * 只要页面上同时出现"支付成功"和"¥XX.XX"就触发提取。
+ * v4 改动：
+ * - 砍掉 enqueueToBuffer / NotificationBuffer，直接交给 NotificationProcessor
+ * - 10s 内容防抖保留（同页面多次 onAccessibilityEvent 触发）
+ * - 后置按金额去重在 NotificationProcessor 内统一做
  */
 @AndroidEntryPoint
 class PaymentAccessibilityService : AccessibilityService() {
 
-    @Inject lateinit var notificationBuffer: NotificationBuffer
-    @Inject lateinit var notificationParser: NotificationParser
-    @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
+    @Inject lateinit var notificationProcessor: NotificationProcessor
+    @Inject lateinit var appLogger: AppLogger
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -78,18 +78,25 @@ class PaymentAccessibilityService : AccessibilityService() {
             val allText = collectAllText(rootNode)
             if (allText.isBlank()) return
 
-            // 防抖：同内容 10s 内不重复
+            // 防抖：同内容 10s 内不重复。归一化后再 hash，避免「¥ vs ￥」「全角空格」导致 hash 不一致
             val now = System.currentTimeMillis()
-            val textHash = allText.hashCode()
+            val normalized = normalizeText(allText)
+            val textHash = normalized.hashCode()
             if (textHash == lastTextHash && (now - lastTime) < DEBOUNCE_MS) return
             lastTextHash = textHash
             lastTime = now
 
-            appLogger.info("A11Y", "✓支付页全文: ${allText.take(100)} pkg=$packageName")
+            appLogger.info("A11Y", "✓支付页全文: ${normalized.take(100)} pkg=$packageName")
 
-            // 入去重池，后续由通知服务的 5s 合并逻辑统一调 AI
+            // 直接交给 NotificationProcessor（AI + 后置按金额去重）
             serviceScope.launch {
-                enqueueToBuffer(packageName, allText)
+                notificationProcessor.process(
+                    NotificationProcessor.Item(
+                        packageName = packageName,
+                        title = "支付成功",
+                        fullText = normalized,
+                    )
+                )
             }
         } finally {
             rootNode.recycle()
@@ -137,6 +144,16 @@ class PaymentAccessibilityService : AccessibilityService() {
         return texts.distinct().joinToString(" ")
     }
 
+    /**
+     * 文本归一化：处理全角/半角、空格等字符差异，
+     * 让两次抓取的同一支付页产生相同的 hash，10s 防抖才能生效。
+     */
+    private fun normalizeText(text: String): String =
+        text.replace('￥', '¥')          // 全角人民币符号 → 半角
+            .replace('　', ' ')           // 全角空格 → 半角空格
+            .replace(Regex("\\s+"), " ")  // 多个连续空白 → 单空格
+            .trim()
+
     private fun collectTextsRecursive(node: AccessibilityNodeInfo, texts: MutableList<String>) {
         val text = node.text?.toString()?.trim()
         if (!text.isNullOrBlank() && text.length in 1..100) {
@@ -147,29 +164,5 @@ class PaymentAccessibilityService : AccessibilityService() {
             collectTextsRecursive(child, texts)
             child.recycle()
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // 入去重池
-    // ═══════════════════════════════════════════════════════════════
-
-    private suspend fun enqueueToBuffer(packageName: String, fullText: String) {
-        val roughAmount = notificationParser.extractAmountOnly(fullText)
-
-        val item = NotificationBuffer.BufferedItem(
-            packageName = packageName,
-            title = "支付成功",
-            fullText = fullText,
-            roughAmount = roughAmount,
-        )
-
-        // 60s 去重：通知渠道可能已处理
-        if (notificationBuffer.isDuplicateInWindow(item)) {
-            appLogger.debug("A11Y", "60s去重: 通知已处理 amount=$roughAmount")
-            return
-        }
-
-        // 加入合并池
-        notificationBuffer.addToPendingMerge(item)
     }
 }

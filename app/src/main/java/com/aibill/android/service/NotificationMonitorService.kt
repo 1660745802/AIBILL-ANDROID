@@ -4,13 +4,7 @@ import android.app.Notification
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.aibill.android.data.local.dao.NotificationRecordDao
-import com.aibill.android.data.local.dao.PendingTransactionDao
-import com.aibill.android.data.local.datastore.UserPreferences
-import com.aibill.android.data.local.entity.NotificationRecordEntity
-import com.aibill.android.data.local.entity.PendingTransactionEntity
-import com.aibill.android.domain.model.TransactionType
-import com.aibill.android.domain.usecase.CategoryLearningEngine
-import com.aibill.android.util.AiResultValidator
+import com.aibill.android.util.AppLogger
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationParser
 import com.aibill.android.util.NotificationSourceMapping
@@ -19,37 +13,26 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import timber.log.Timber
-import java.time.Instant
-import java.time.LocalDate
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import java.util.UUID
 import javax.inject.Inject
 
 /**
- * 通知监听服务 v3
+ * 通知监听服务 v4
  *
- * 架构：排除层 → 缓冲去重 → AI 主力解析 → 入库/待审
- * 核心原则：
- * - AI 是唯一裁判，本地只排除明显垃圾
- * - 正则仅用于去重时提取金额，永远不面对用户
- * - 用户看到的 = AI 返回了结果的
+ * 架构：排除层 → 内存去重 → DB 1s 去重 → 直接交给 NotificationProcessor
+ *
+ * v4 改动：
+ * - 砍掉 5s 合并池（合并出 800+ 字把 AI 后端打挂，HTTP 400）
+ * - 砍掉 NotificationBuffer 长窗口去重（移到 NotificationProcessor 里按金额后置去重）
+ * - 每条通知直接调 AI，短文本（≤ 200 字）通过率 100%
  */
 @AndroidEntryPoint
 class NotificationMonitorService : NotificationListenerService() {
 
     @Inject lateinit var notificationParser: NotificationParser
     @Inject lateinit var notificationRecordDao: NotificationRecordDao
-    @Inject lateinit var pendingTransactionDao: PendingTransactionDao
-    @Inject lateinit var userPreferences: UserPreferences
-    @Inject lateinit var categoryLearningEngine: CategoryLearningEngine
-    @Inject lateinit var aiApi: com.aibill.android.data.remote.api.AiApi
-    @Inject lateinit var aiResultValidator: AiResultValidator
-    @Inject lateinit var notificationBuffer: NotificationBuffer
-    @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
+    @Inject lateinit var notificationProcessor: NotificationProcessor
+    @Inject lateinit var appLogger: AppLogger
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -93,7 +76,6 @@ class NotificationMonitorService : NotificationListenerService() {
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         isConnected = false
         serviceScope.cancel()
     }
@@ -108,7 +90,7 @@ class NotificationMonitorService : NotificationListenerService() {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // L1: 排除层 → L2: 入缓冲
+    // L1: 排除层 → L2: 内存去重 → L3: DB 去重 → 交给 Processor
     // ═══════════════════════════════════════════════════════════════
 
     /** 内存级去重：防止系统短时间内对同一通知多次触发 onNotificationPosted */
@@ -161,43 +143,14 @@ class NotificationMonitorService : NotificationListenerService() {
         val duplicate = notificationRecordDao.findDuplicate(packageName, fullText, since)
         if (duplicate != null) return
 
-        // 5. 构建 BufferedItem
-        val roughAmount = notificationParser.extractAmountOnly(fullText)
-        val item = NotificationBuffer.BufferedItem(
-            packageName = packageName,
-            title = title,
-            fullText = fullText,
-            roughAmount = roughAmount,
+        // 5. 直接交给 Processor（AI + 后置按金额去重）
+        notificationProcessor.process(
+            NotificationProcessor.Item(
+                packageName = packageName,
+                title = title,
+                fullText = fullText,
+            )
         )
-
-        // 6. 60s 长窗口去重：已处理过同金额 → 丢弃
-        if (notificationBuffer.isDuplicateInWindow(item)) {
-            appLogger.debug("NLS", "60s去重: pkg=$packageName amount=$roughAmount")
-            return
-        }
-
-        // 7. 5s 短延迟合并：收集同金额跨渠道通知，合并文本后一起调 AI
-        val isFirst = notificationBuffer.addToPendingMerge(item)
-        if (isFirst) {
-            appLogger.debug("NLS", "5s合并启动: pkg=$packageName amount=$roughAmount")
-            // 第一条：启动 5s 延迟后处理
-            serviceScope.launch {
-                kotlinx.coroutines.delay(NotificationBuffer.MERGE_DELAY_MS)
-                try {
-                    val merged = notificationBuffer.collectAndMerge(roughAmount) ?: return@launch
-                    appLogger.debug("NLS", "5s合并完成: text=${merged.fullText.take(80)}")
-                    val aiEnabled = userPreferences.aiParseEnabled.first()
-                    processOneNotification(merged, aiEnabled)
-                    // 标记已处理（60s 内同金额不再处理）
-                    if (roughAmount != null) notificationBuffer.markProcessed(packageName, roughAmount)
-                } catch (e: Exception) {
-                    appLogger.error("NLS", "处理异常: ${e.message}")
-                    Timber.w(e, "处理通知异常: $packageName")
-                }
-            }
-        } else {
-            appLogger.debug("NLS", "合并池等待: pkg=$packageName amount=$roughAmount (非第一条)")
-        }
     }
 
     /**
@@ -229,221 +182,5 @@ class NotificationMonitorService : NotificationListenerService() {
                 PAYMENT_SIGNAL.containsMatchIn(fullText)
             }
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // L3 + L4: 解析 + 入库
-    // ═══════════════════════════════════════════════════════════════
-
-    private suspend fun processOneNotification(
-        item: NotificationBuffer.BufferedItem,
-        aiEnabled: Boolean,
-    ) {
-        // ① 学习引擎预匹配分类（但不直接入库，金额/类型仍由 AI 给出）
-        val keyword = (item.title.takeIf { it.isNotBlank() } ?: item.fullText.take(30)).trim().lowercase()
-        val learnedCategoryId = categoryLearningEngine.matchCategory(keyword)
-
-        // ② AI 解析（必须走 AI 获取准确的金额和类型）
-        if (!aiEnabled) {
-            appLogger.info("NLS", "AI关闭，丢弃: ${item.fullText.take(30)}")
-            return
-        }
-
-        try {
-            appLogger.info("NLS", "调AI: pkg=${item.packageName} text=${item.fullText}")
-            val response = aiApi.parse(mapOf("input" to item.fullText))
-            if (response.code != 0 || response.data == null) {
-                appLogger.warn("NLS", "AI失败: code=${response.code}")
-                return
-            }
-            val items = response.data.items
-            if (items.isEmpty()) {
-                appLogger.info("NLS", "AI判定非支付，丢弃")
-                return
-            }
-
-            // 通知场景 = 单笔交易。AI 可能返回多条，取信息最完整的一条。
-            val aiItem = items.maxByOrNull { aiItemScore(it) } ?: return
-
-            val validation = aiResultValidator.validate(
-                amount = aiItem.amount,
-                type = aiItem.type,
-                categoryId = aiItem.categoryId,
-                description = aiItem.description,
-            )
-
-            // 用学习引擎的分类覆盖 AI 的（如果学习引擎有命中）
-            val finalCategoryId = learnedCategoryId ?: aiItem.categoryId
-
-            // 判断是否信息完整
-            val isComplete = aiItem.amount > 0 &&
-                aiItem.type in setOf("expense", "income", "transfer") &&
-                validation.isValid &&
-                // 分类必须明确（非"其他"/null），学习引擎命中也算明确
-                (learnedCategoryId != null || (
-                    aiItem.categoryId != null &&
-                    !aiItem.categoryName.isNullOrBlank() &&
-                    aiItem.categoryName.lowercase() !in setOf("其他", "其它", "未分类", "other")
-                ))
-
-            if (isComplete) {
-                // 入库前 DB 去重：同金额+60s 内已有 confirmed → 跳过（防多渠道重复）
-                val recentDuplicate = notificationRecordDao.findRecentConfirmed(
-                    aiItem.amount, item.receivedAt - 60_000L
-                )
-                if (recentDuplicate != null) {
-                    appLogger.debug("NLS", "DB去重: 60s内已入库同金额=${aiItem.amount}")
-                    Timber.d("入库去重：跳过重复 amount=${aiItem.amount}")
-                    return
-                }
-
-                // 信息完整 → 直接入库 + 轻通知
-                directInsert(
-                    item = item,
-                    amount = aiItem.amount,
-                    type = aiItem.type,
-                    categoryId = finalCategoryId,
-                    description = aiItem.description ?: aiItem.categoryName,
-                    source = if (learnedCategoryId != null) "learning+ai" else "ai",
-                )
-                appLogger.info("NLS", "✓入库: ¥${"%.2f".format(aiItem.amount/100.0)} ${aiItem.description ?: aiItem.categoryName} type=${aiItem.type}")
-                // 触发学习
-                val learnKey = (aiItem.description ?: aiItem.categoryName)?.trim()
-                if (!learnKey.isNullOrBlank() && finalCategoryId != null) {
-                    categoryLearningEngine.learnFromCorrection(learnKey, finalCategoryId)
-                }
-            } else {
-                // AI 有结果但信息不完整 → 进待审池 + 发确认通知
-                appLogger.info("NLS", "→待审: amount=${aiItem.amount} type=${aiItem.type} cat=${aiItem.categoryName}")
-                insertPendingReview(item, aiItem)
-            }
-        } catch (e: Exception) {
-            // AI 调用失败（网络/超时）→ 丢弃，不面对用户
-            appLogger.error("NLS", "AI异常: ${e.message}")
-            Timber.w(e, "AI 解析失败，丢弃: ${item.packageName}")
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // 入库方法
-    // ═══════════════════════════════════════════════════════════════
-
-    /**
-     * AI 返回多条时选最优：按信息完整度评分。
-     * 有金额+1，有明确类型+1，有分类(非"其他")+2，有描述+1
-     */
-    private fun aiItemScore(item: com.aibill.android.data.remote.dto.response.AiParsedItemDto): Int {
-        var score = 0
-        if (item.amount > 0) score += 1
-        if (item.type in setOf("expense", "income", "transfer")) score += 1
-        if (item.categoryId != null && !item.categoryName.isNullOrBlank() &&
-            item.categoryName.lowercase() !in setOf("其他", "其它", "未分类", "other")) score += 2
-        if (!item.description.isNullOrBlank()) score += 1
-        return score
-    }
-
-    /**
-     * 信息完整，直接入库 + 发轻通知
-     */
-    private suspend fun directInsert(
-        item: NotificationBuffer.BufferedItem,
-        amount: Int,
-        type: String,
-        categoryId: Int?,
-        description: String?,
-        source: String,
-    ) {
-        val clientId = UUID.randomUUID().toString()
-        val now = LocalDate.now().toString()
-        val time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
-
-        // 存通知记录（追溯用）
-        val recordId = notificationRecordDao.insert(
-            NotificationRecordEntity(
-                packageName = item.packageName,
-                title = item.title.ifBlank { null },
-                content = item.fullText,
-                parsedAmount = amount,
-                parsedType = type,
-                parsedDescription = description,
-                status = "confirmed",
-                receivedAt = item.receivedAt,
-            )
-        )
-
-        // 存待同步交易
-        val pending = PendingTransactionEntity(
-            clientId = clientId,
-            type = type,
-            amount = amount,
-            categoryId = categoryId,
-            description = description,
-            date = now,
-            time = time,
-            source = "app_notification",
-            sourceDetail = NotificationSourceMapping.friendlyName(item.packageName),
-            syncStatus = "pending",
-            clientCreatedAt = Instant.now().toString(),
-        )
-        pendingTransactionDao.insert(pending)
-
-        // 关联记录
-        notificationRecordDao.updateStatus(recordId, "confirmed", clientId)
-
-        // 触发同步
-        SyncScheduler.scheduleSyncIfNeeded(applicationContext)
-
-        // Widget 更新
-        WidgetDataUpdater.notifyTransactionAdded(
-            context = applicationContext,
-            type = TransactionType.fromValue(type) ?: TransactionType.EXPENSE,
-            amountCents = amount,
-            date = now,
-        )
-
-        // 发轻通知（无按钮，5s 消失）
-        val privacyMode = userPreferences.notificationPrivacy.first()
-        NotificationHelper.showAutoRecordedNotification(
-            context = this,
-            recordId = recordId,
-            amount = amount,
-            description = description,
-            source = NotificationSourceMapping.friendlyName(item.packageName),
-            type = type,
-            privacyMode = privacyMode,
-        )
-    }
-
-    /**
-     * AI 有结果但信息不完整 → 进待审池 + 发确认通知
-     */
-    private suspend fun insertPendingReview(
-        item: NotificationBuffer.BufferedItem,
-        aiItem: com.aibill.android.data.remote.dto.response.AiParsedItemDto,
-    ) {
-        val recordId = notificationRecordDao.insert(
-            NotificationRecordEntity(
-                packageName = item.packageName,
-                title = item.title.ifBlank { null },
-                content = item.fullText,
-                parsedAmount = aiItem.amount.takeIf { it > 0 },
-                parsedType = aiItem.type.takeIf { it in setOf("expense", "income", "transfer") },
-                parsedDescription = aiItem.description ?: aiItem.categoryName,
-                status = "parsed", // 待审
-                receivedAt = item.receivedAt,
-            )
-        )
-
-        // 发确认通知（有按钮，让用户补充信息）
-        val privacyMode = userPreferences.notificationPrivacy.first()
-        NotificationHelper.showConfirmNotification(
-            context = this,
-            recordId = recordId,
-            amount = aiItem.amount.takeIf { it > 0 } ?: 0,
-            description = aiItem.description ?: aiItem.categoryName,
-            source = NotificationSourceMapping.friendlyName(item.packageName),
-            privacyMode = privacyMode,
-            type = aiItem.type,
-        )
     }
 }

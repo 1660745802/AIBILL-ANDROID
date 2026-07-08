@@ -40,6 +40,15 @@ interface NotificationRecordDao {
     @Query("SELECT * FROM notification_records WHERE parsed_amount = :amount AND status = 'confirmed' AND received_at > :since LIMIT 1")
     suspend fun findRecentConfirmed(amount: Int, since: Long): NotificationRecordEntity?
 
+    /**
+     * 跨包名去重：只去重「不同渠道」通知，同包名同金额（如微信两笔真交易）放行。
+     * 场景：
+     * - 微信 ¥30 + 招行 ¥30（同一笔，跨渠道）→ 命中 → 跳过 ✓
+     * - 微信 ¥30 + 微信 ¥30（真两笔）→ 同包名 → 不命中 → 都入库 ✓
+     */
+    @Query("SELECT * FROM notification_records WHERE parsed_amount = :amount AND status = 'confirmed' AND received_at > :since AND package_name != :excludePackageName LIMIT 1")
+    suspend fun findRecentConfirmedFromOtherChannel(amount: Int, since: Long, excludePackageName: String): NotificationRecordEntity?
+
     @Query("DELETE FROM notification_records WHERE status = 'ignored' AND received_at < :before")
     suspend fun cleanIgnoredBefore(before: Long)
 
