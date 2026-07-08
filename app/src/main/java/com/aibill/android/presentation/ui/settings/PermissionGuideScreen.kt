@@ -215,7 +215,7 @@ private fun PermissionItem(
 ) {
     Card(
         shape = RoundedCornerShape(16.dp),
-        modifier = modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth().heightIn(min = 72.dp)
     ) {
         Row(
             modifier = Modifier
