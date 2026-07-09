@@ -135,6 +135,9 @@ class NotificationProcessor @Inject constructor(
                 return
             }
 
+            // M3: type无效时 fallback 为 expense（防下游非空字段崩溃）
+            val safeType = if (aiItem.type in setOf("expense", "income", "transfer")) aiItem.type else "expense"
+
             val validation = aiResultValidator.validate(
                 amount = aiItem.amount,
                 type = aiItem.type,
@@ -145,7 +148,7 @@ class NotificationProcessor @Inject constructor(
             val finalCategoryId = learnedCategoryId ?: aiItem.categoryId
 
             val isComplete = aiItem.amount > 0 &&
-                aiItem.type in setOf("expense", "income", "transfer") &&
+                safeType in setOf("expense", "income", "transfer") &&
                 validation.isValid &&
                 (learnedCategoryId != null || (
                     aiItem.categoryId != null &&
@@ -171,8 +174,10 @@ class NotificationProcessor @Inject constructor(
                     directInsert(
                         item = item,
                         amount = aiItem.amount,
-                        type = aiItem.type,
+                        type = safeType,
                         categoryId = finalCategoryId,
+                        categoryName = aiItem.categoryName,
+                        categoryIcon = aiItem.categoryIcon,
                         description = aiItem.description ?: aiItem.categoryName,
                         source = if (learnedCategoryId != null) "learning+ai" else "ai",
                     )
@@ -233,6 +238,8 @@ class NotificationProcessor @Inject constructor(
         amount: Int,
         type: String,
         categoryId: Int?,
+        categoryName: String? = null,
+        categoryIcon: String? = null,
         description: String?,
         source: String,
     ) {
@@ -258,6 +265,8 @@ class NotificationProcessor @Inject constructor(
             type = type,
             amount = amount,
             categoryId = categoryId,
+            categoryName = categoryName,
+            categoryIcon = categoryIcon,
             description = description,
             date = now,
             time = time,
