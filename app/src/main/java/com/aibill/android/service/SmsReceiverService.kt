@@ -63,6 +63,7 @@ class SmsReceiverService : BroadcastReceiver() {
                 packageName = "sms:$sender",
                 title = sender,
                 fullText = text,
+                channel = NotificationProcessor.Channel.SMS,
             )
         )
     }

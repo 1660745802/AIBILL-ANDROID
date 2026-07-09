@@ -149,6 +149,7 @@ class NotificationMonitorService : NotificationListenerService() {
                 packageName = packageName,
                 title = title,
                 fullText = fullText,
+                channel = NotificationProcessor.Channel.NLS,
             )
         )
     }

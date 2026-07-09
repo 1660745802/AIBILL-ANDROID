@@ -53,11 +53,15 @@ class NotificationProcessor @Inject constructor(
     private val appLogger: AppLogger,
 ) {
 
-    /** 单条通知的输入项。三渠道（NLS/A11Y/SMS）各自构造，扔进 [process] 即可 */
+    /** 来源渠道 */
+    enum class Channel { NLS, A11Y, SMS }
+
+    /** 单条通知的输入项。三渠道各自构造，扔进 [process] 即可 */
     data class Item(
         val packageName: String,
         val title: String,
         val fullText: String,
+        val channel: Channel = Channel.NLS,
         val receivedAt: Long = System.currentTimeMillis(),
     )
 
@@ -68,6 +72,31 @@ class NotificationProcessor @Inject constructor(
 
     /** 入库路径串行化：dedup-check + insert 必须原子，否则会双写 */
     private val insertMutex = Mutex()
+
+    /** 内存级已入库记录（用于跨渠道去重，比 DB 查询更快更准） */
+    private data class ProcessedEntry(val amount: Int, val channel: Channel, val packageName: String, val time: Long)
+    private val recentProcessed = java.util.concurrent.ConcurrentLinkedDeque<ProcessedEntry>()
+
+    /**
+     * 跨渠道去重判断（内存级）：
+     * - 不同 channel 或不同包名 + 同金额 + 60s 内 → 重复
+     * - 同 channel 同包名 → 不去重（视为真实两笔交易）
+     */
+    private fun isDuplicateAcrossChannels(amount: Int, channel: Channel, packageName: String, now: Long): Boolean {
+        // 先清过期
+        val cutoff = now - DEDUP_WINDOW_MS
+        recentProcessed.removeIf { it.time < cutoff }
+        // 查重：不同渠道 或 不同包名（同金额60s内）
+        return recentProcessed.any {
+            it.amount == amount &&
+            (it.channel != channel || it.packageName != packageName) &&
+            (now - it.time) <= DEDUP_WINDOW_MS
+        }
+    }
+
+    private fun markProcessed(amount: Int, channel: Channel, packageName: String) {
+        recentProcessed.addLast(ProcessedEntry(amount, channel, packageName, System.currentTimeMillis()))
+    }
 
     /**
      * 处理一条通知：调 AI → 校验 → 后置按金额去重 → 入库 / 入待审
@@ -120,23 +149,29 @@ class NotificationProcessor @Inject constructor(
 
             if (isComplete) {
                 val inserted = insertMutex.withLock {
-                    val recentDuplicate = notificationRecordDao.findRecentConfirmedFromOtherChannel(
+                    // 内存级跨渠道去重（精确：区分 channel）
+                    if (isDuplicateAcrossChannels(aiItem.amount, item.channel, item.packageName, item.receivedAt)) {
+                        appLogger.debug("NLS", "跨渠道去重(内存): channel=${item.channel} amount=${aiItem.amount}")
+                        return@withLock false
+                    }
+                    // DB 兜底（进程重启后内存清空时靠这个）
+                    val dbDuplicate = notificationRecordDao.findRecentConfirmedFromOtherChannel(
                         aiItem.amount, item.receivedAt - DEDUP_WINDOW_MS, item.packageName
                     )
-                    if (recentDuplicate != null) {
-                        appLogger.debug("NLS", "DB跨渠道去重: 60s内其他渠道已入库同金额=${aiItem.amount} otherPkg=${recentDuplicate.packageName}")
-                        false
-                    } else {
-                        directInsert(
-                            item = item,
-                            amount = aiItem.amount,
-                            type = aiItem.type,
-                            categoryId = finalCategoryId,
-                            description = aiItem.description ?: aiItem.categoryName,
-                            source = if (learnedCategoryId != null) "learning+ai" else "ai",
-                        )
-                        true
+                    if (dbDuplicate != null) {
+                        appLogger.debug("NLS", "跨渠道去重(DB): otherPkg=${dbDuplicate.packageName} amount=${aiItem.amount}")
+                        return@withLock false
                     }
+                    directInsert(
+                        item = item,
+                        amount = aiItem.amount,
+                        type = aiItem.type,
+                        categoryId = finalCategoryId,
+                        description = aiItem.description ?: aiItem.categoryName,
+                        source = if (learnedCategoryId != null) "learning+ai" else "ai",
+                    )
+                    markProcessed(aiItem.amount, item.channel, item.packageName)
+                    true
                 }
                 if (inserted) {
                     appLogger.info("NLS", "✓入库: ¥${"%.2f".format(aiItem.amount/100.0)} ${aiItem.description ?: aiItem.categoryName} type=${aiItem.type}")
@@ -146,8 +181,23 @@ class NotificationProcessor @Inject constructor(
                     }
                 }
             } else {
-                appLogger.info("NLS", "→待审: amount=${aiItem.amount} type=${aiItem.type} cat=${aiItem.categoryName}")
-                insertPendingReview(item, aiItem)
+                // 待审也用同样去重逻辑
+                val shouldInsert = insertMutex.withLock {
+                    if (isDuplicateAcrossChannels(aiItem.amount, item.channel, item.packageName, item.receivedAt)) {
+                        appLogger.debug("NLS", "待审去重(内存): channel=${item.channel} amount=${aiItem.amount}")
+                        return@withLock false
+                    }
+                    val dbDuplicate = notificationRecordDao.findRecentConfirmedFromOtherChannel(
+                        aiItem.amount, item.receivedAt - DEDUP_WINDOW_MS, item.packageName
+                    )
+                    dbDuplicate == null
+                }
+                if (shouldInsert) {
+                    appLogger.info("NLS", "→待审: amount=${aiItem.amount} type=${aiItem.type} cat=${aiItem.categoryName}")
+                    insertPendingReview(item, aiItem)
+                } else {
+                    appLogger.debug("NLS", "待审去重: 60s内其他渠道已有同金额=${aiItem.amount}")
+                }
             }
         } catch (e: Exception) {
             appLogger.error("NLS", "AI异常: ${e.message}")

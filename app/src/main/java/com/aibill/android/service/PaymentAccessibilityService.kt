@@ -3,7 +3,6 @@ package com.aibill.android.service
 import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import com.aibill.android.util.AppLogger
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,26 +12,23 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * 支付页面无障碍识别服务（v4）
+ * 支付页面无障碍识别服务（v3）
  *
- * 不依赖 Activity 类名（微信频繁改名），而是通过遍历页面节点树
- * 查找"支付成功"关键词 + 金额文字来判断当前是否在支付结果页。
- *
- * v4 改动：
- * - 砍掉 enqueueToBuffer / NotificationBuffer，直接交给 NotificationProcessor
- * - 10s 内容防抖保留（同页面多次 onAccessibilityEvent 触发）
- * - 后置按金额去重在 NotificationProcessor 内统一做
+ * 策略参考 iCost / AutoAccounting：
+ * - 只在页面切换（TYPE_WINDOW_STATE_CHANGED）时触发（不监听内容变化）
+ * - 严格三重条件：有"支付成功"关键词 + 有金额 + 无首页/聊天特征
+ * - 提取简短摘要发 AI（不发全页面 800 字文本）
  */
 @AndroidEntryPoint
 class PaymentAccessibilityService : AccessibilityService() {
 
     @Inject lateinit var notificationProcessor: NotificationProcessor
-    @Inject lateinit var appLogger: AppLogger
+    @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** 防抖：同内容 10s 内不重复处理 */
-    private var lastTextHash: Int? = null
+    /** 防抖：同内容 10s 内不重复 */
+    private var lastHash: Int = 0
     private var lastTime: Long = 0L
 
     companion object {
@@ -41,11 +37,17 @@ class PaymentAccessibilityService : AccessibilityService() {
         private const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
         private val PAYMENT_APPS = setOf(PACKAGE_WECHAT, PACKAGE_ALIPAY)
 
-        /** 支付成功关键词（必须精确，避免聊天列表里的"到账"文字误触发） */
+        /** 支付成功关键词（必须精确匹配这些完整词组，不是子串） */
         private val SUCCESS_KEYWORDS = listOf("支付成功", "付款成功", "交易成功", "支付完成")
 
-        /** 排除词：如果页面同时包含这些词说明不是支付结果页（是聊天列表/首页等） */
-        private val EXCLUDE_KEYWORDS = listOf("朋友圈", "视频号", "扫一扫", "搜索小程序", "通讯录", "发现")
+        /** 首页/聊天列表特征词——有这些说明不是支付结果页 */
+        private val EXCLUDE_KEYWORDS = listOf(
+            "朋友圈", "通讯录", "发现", "搜索小程序", "扫一扫",
+            "视频号", "看一看", "摇一摇", "附近", "小程序面板",
+        )
+
+        /** 金额正则 */
+        private val AMOUNT_REGEX = Regex("""[¥￥]\s*(\d+\.?\d{0,2})""")
     }
 
     override fun onServiceConnected() {
@@ -57,44 +59,47 @@ class PaymentAccessibilityService : AccessibilityService() {
         val ev = event ?: return
         val packageName = ev.packageName?.toString() ?: return
 
-        // 只关注微信/支付宝
         if (packageName !in PAYMENT_APPS) return
 
-        // 监听页面切换和内容变化
-        if (ev.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            ev.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
+        // 只在页面切换时触发（不监听内容变化，避免频繁扫描）
+        if (ev.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
 
-        // 获取当前页面节点树
         val rootNode = rootInActiveWindow ?: return
 
         try {
-            // 遍历节点树：找"支付成功"关键词
-            if (!hasKeywordInTree(rootNode, SUCCESS_KEYWORDS)) return
+            // 条件1：有"支付成功"关键词
+            if (!hasAnyKeyword(rootNode, SUCCESS_KEYWORDS)) return
 
-            // 排除：如果页面同时有"朋友圈/通讯录"等，说明是微信首页/聊天列表，不是支付结果页
-            if (hasKeywordInTree(rootNode, EXCLUDE_KEYWORDS)) return
+            // 条件2：不能有首页/聊天列表特征（排除误触发）
+            if (hasAnyKeyword(rootNode, EXCLUDE_KEYWORDS)) return
 
-            // 页面有"支付成功" → 收集所有文字拼起来交给 AI
-            val allText = collectAllText(rootNode)
-            if (allText.isBlank()) return
+            // 条件3：有金额文字
+            val amountText = findAmount(rootNode) ?: return
 
-            // 防抖：同内容 10s 内不重复。归一化后再 hash，避免「¥ vs ￥」「全角空格」导致 hash 不一致
+            // 三重条件全部满足 → 构建简短摘要
+            val merchant = findMerchant(rootNode)
+            val summary = buildString {
+                append("支付成功 $amountText")
+                if (merchant != null) append(" $merchant")
+            }
+
+            // 防抖
+            val hash = summary.hashCode()
             val now = System.currentTimeMillis()
-            val normalized = normalizeText(allText)
-            val textHash = normalized.hashCode()
-            if (textHash == lastTextHash && (now - lastTime) < DEBOUNCE_MS) return
-            lastTextHash = textHash
+            if (hash == lastHash && (now - lastTime) < DEBOUNCE_MS) return
+            lastHash = hash
             lastTime = now
 
-            appLogger.info("A11Y", "✓支付页全文: ${normalized.take(100)} pkg=$packageName")
+            appLogger.info("A11Y", "✓识别支付页: $summary pkg=$packageName")
 
-            // 直接交给 NotificationProcessor（AI + 后置按金额去重）
+            // 交给 Processor（和通知渠道统一处理）
             serviceScope.launch {
                 notificationProcessor.process(
                     NotificationProcessor.Item(
                         packageName = packageName,
                         title = "支付成功",
-                        fullText = normalized,
+                        fullText = summary, // 简短摘要，不是全页面文字
+                        channel = NotificationProcessor.Channel.A11Y,
                     )
                 )
             }
@@ -114,55 +119,67 @@ class PaymentAccessibilityService : AccessibilityService() {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 节点树遍历
-    // ═══════════════════════════════════════════════════════════════
 
-    /**
-     * 遍历节点树判断是否包含关键词
-     */
-    private fun hasKeywordInTree(root: AccessibilityNodeInfo, keywords: List<String>): Boolean {
-        val text = root.text?.toString()
-        if (text != null && keywords.any { text.contains(it) }) return true
-
-        for (i in 0 until root.childCount) {
-            val child = root.getChild(i) ?: continue
-            if (hasKeywordInTree(child, keywords)) {
-                child.recycle()
+    private fun hasAnyKeyword(root: AccessibilityNodeInfo, keywords: List<String>): Boolean {
+        for (kw in keywords) {
+            val nodes = root.findAccessibilityNodeInfosByText(kw)
+            if (!nodes.isNullOrEmpty()) {
+                nodes.forEach { it.recycle() }
                 return true
             }
-            child.recycle()
         }
         return false
     }
 
-    /**
-     * 收集节点树中所有可见文字，拼成一段发给 AI
-     */
-    private fun collectAllText(root: AccessibilityNodeInfo): String {
-        val texts = mutableListOf<String>()
-        collectTextsRecursive(root, texts)
-        return texts.distinct().joinToString(" ")
+    /** 在节点树中找第一个匹配 ¥XX.XX 格式的文本 */
+    private fun findAmount(root: AccessibilityNodeInfo): String? {
+        return findTextByPattern(root, AMOUNT_REGEX)
     }
 
-    /**
-     * 文本归一化：处理全角/半角、空格等字符差异，
-     * 让两次抓取的同一支付页产生相同的 hash，10s 防抖才能生效。
-     */
-    private fun normalizeText(text: String): String =
-        text.replace('￥', '¥')          // 全角人民币符号 → 半角
-            .replace('　', ' ')           // 全角空格 → 半角空格
-            .replace(Regex("\\s+"), " ")  // 多个连续空白 → 单空格
-            .trim()
+    /** 查找商家名：找"收款方/商户/付款给"附近的文字 */
+    private fun findMerchant(root: AccessibilityNodeInfo): String? {
+        val labels = listOf("收款方", "商户", "商家", "付款给")
+        for (label in labels) {
+            val nodes = root.findAccessibilityNodeInfosByText(label)
+            if (nodes.isNullOrEmpty()) continue
+            for (node in nodes) {
+                val parent = node.parent
+                if (parent != null) {
+                    for (i in 0 until parent.childCount) {
+                        val child = parent.getChild(i) ?: continue
+                        val text = child.text?.toString()?.trim()
+                        if (!text.isNullOrBlank() && text != label && text.length in 2..30 && !text.contains("¥")) {
+                            child.recycle()
+                            parent.recycle()
+                            node.recycle()
+                            return text
+                        }
+                        child.recycle()
+                    }
+                    parent.recycle()
+                }
+                node.recycle()
+            }
+        }
+        return null
+    }
 
-    private fun collectTextsRecursive(node: AccessibilityNodeInfo, texts: MutableList<String>) {
-        val text = node.text?.toString()?.trim()
-        if (!text.isNullOrBlank() && text.length in 1..100) {
-            texts.add(text)
+    /** 递归查找匹配正则的节点文本 */
+    private fun findTextByPattern(node: AccessibilityNodeInfo, pattern: Regex): String? {
+        val text = node.text?.toString()
+        if (text != null) {
+            val match = pattern.find(text)
+            if (match != null) return match.value
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            collectTextsRecursive(child, texts)
+            val result = findTextByPattern(child, pattern)
+            if (result != null) {
+                child.recycle()
+                return result
+            }
             child.recycle()
         }
+        return null
     }
 }
