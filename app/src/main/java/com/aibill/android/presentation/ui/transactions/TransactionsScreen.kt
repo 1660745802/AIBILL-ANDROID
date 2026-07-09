@@ -222,7 +222,7 @@ private fun TransactionList(
             }
             items(
                 items = transactions,
-                key = { it.id ?: it.clientId },
+                key = { "${it.id ?: ""}:${it.clientId}" },
             ) { transaction ->
                 TransactionItem(
                     transaction = transaction,
