@@ -129,6 +129,12 @@ class NotificationProcessor @Inject constructor(
 
             val aiItem = items.maxByOrNull { aiItemScore(it) } ?: return
 
+            // H5: AI返回amount<=0无意义，直接丢弃
+            if (aiItem.amount <= 0) {
+                appLogger.debug("NLS", "AI返回amount<=0，丢弃")
+                return
+            }
+
             val validation = aiResultValidator.validate(
                 amount = aiItem.amount,
                 type = aiItem.type,
@@ -181,22 +187,22 @@ class NotificationProcessor @Inject constructor(
                     }
                 }
             } else {
-                // 待审也用同样去重逻辑
-                val shouldInsert = insertMutex.withLock {
+                // 待审也用同样去重逻辑，且在 Mutex 内完成（防竞态）
+                insertMutex.withLock {
                     if (isDuplicateAcrossChannels(aiItem.amount, item.channel, item.packageName, item.receivedAt)) {
                         appLogger.debug("NLS", "待审去重(内存): channel=${item.channel} amount=${aiItem.amount}")
-                        return@withLock false
+                        return@withLock
                     }
                     val dbDuplicate = notificationRecordDao.findRecentConfirmedFromOtherChannel(
                         aiItem.amount, item.receivedAt - DEDUP_WINDOW_MS, item.packageName
                     )
-                    dbDuplicate == null
-                }
-                if (shouldInsert) {
+                    if (dbDuplicate != null) {
+                        appLogger.debug("NLS", "待审去重(DB): amount=${aiItem.amount}")
+                        return@withLock
+                    }
                     appLogger.info("NLS", "→待审: amount=${aiItem.amount} type=${aiItem.type} cat=${aiItem.categoryName}")
                     insertPendingReview(item, aiItem)
-                } else {
-                    appLogger.debug("NLS", "待审去重: 60s内其他渠道已有同金额=${aiItem.amount}")
+                    markProcessed(aiItem.amount, item.channel, item.packageName)
                 }
             }
         } catch (e: Exception) {
