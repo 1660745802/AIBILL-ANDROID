@@ -384,4 +384,39 @@ class NotificationProcessorTest {
         // Should insert with type="expense" (fallback)
         coVerify(exactly = 1) { pendingTransactionDao.insert(match { it.type == "expense" }) }
     }
+
+    @Test
+    @DisplayName("9. 跨渠道去重覆盖 parsed 状态（H3: confirmed+parsed 都能触发去重）")
+    fun dedupCoversConfirmedAndParsed() = runTest(testDispatcher) {
+        // 模拟：DB 中已有一条 parsed 状态的同金额记录（来自其他包名）
+        val existingParsed = NotificationRecordEntity(
+            id = 99,
+            packageName = "cmb.pb",
+            title = "招商银行",
+            content = "扣款3.00",
+            parsedAmount = 300,
+            parsedType = "expense",
+            parsedDescription = "test",
+            status = "parsed",
+            receivedAt = System.currentTimeMillis() - 5000,
+        )
+
+        val aiItem = makeAiItem(amount = 300, categoryId = 1, categoryName = "餐饮", description = "咖啡")
+        coEvery { aiApi.parse(any()) } returns makeApiResponse(aiItem)
+        setupValidatorValid()
+        coEvery { notificationRecordDao.insert(any()) } returns 1L
+        // DB 兜底返回已有 parsed 记录
+        coEvery { notificationRecordDao.findRecentConfirmedFromOtherChannel(300, any(), any()) } returns existingParsed
+
+        processor.process(makeItem(
+            packageName = "com.tencent.mm",
+            fullText = "微信支付 已支付¥3.00",
+            channel = NotificationProcessor.Channel.NLS,
+        ))
+
+        advanceTimeBy(11_000)
+
+        // 不应入库（被 DB 兜底拦住，因为已有 parsed 记录）
+        coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
+    }
 }

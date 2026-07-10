@@ -31,6 +31,10 @@ class PaymentAccessibilityService : AccessibilityService() {
     private var lastHash: Int = 0
     private var lastTime: Long = 0L
 
+    /** cooldown：同金额 5 分钟内只触发一次（防历史支付页面被重复识别） */
+    private val recentAmounts = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val COOLDOWN_MS = 5 * 60 * 1000L
+
     companion object {
         private const val DEBOUNCE_MS = 10_000L
         private const val PACKAGE_WECHAT = "com.tencent.mm"
@@ -90,6 +94,13 @@ class PaymentAccessibilityService : AccessibilityService() {
             if (hash == lastHash && (now - lastTime) < DEBOUNCE_MS) return
             lastHash = hash
             lastTime = now
+
+            // cooldown：同金额 5 分钟内只触发一次
+            val lastAmountTime = recentAmounts[amountText]
+            if (lastAmountTime != null && (now - lastAmountTime) < COOLDOWN_MS) return
+            recentAmounts[amountText] = now
+            // 清理过期
+            recentAmounts.entries.removeIf { now - it.value > COOLDOWN_MS }
 
             appLogger.info("A11Y", "✓识别支付页: $summary pkg=$packageName")
 
