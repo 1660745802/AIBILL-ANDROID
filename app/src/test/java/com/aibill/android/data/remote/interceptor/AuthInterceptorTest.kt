@@ -26,7 +26,8 @@ class AuthInterceptorTest {
 
     private val tokenManager: TokenManager = mockk(relaxed = true)
     private val authEventBus: AuthEventBus = mockk(relaxed = true)
-    private val interceptor = AuthInterceptor(tokenManager, authEventBus)
+    private val appLogger: com.aibill.android.util.AppLogger = mockk(relaxed = true)
+    private val interceptor = AuthInterceptor(tokenManager, authEventBus, appLogger)
 
     private fun makeChain(request: Request, code: Int): okhttp3.Interceptor.Chain {
         val response = Response.Builder()

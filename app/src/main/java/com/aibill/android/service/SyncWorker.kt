@@ -10,6 +10,7 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
 import com.aibill.android.data.remote.dto.request.TransactionItemRequest
+import com.aibill.android.util.AppLogger
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import retrofit2.HttpException
@@ -22,6 +23,7 @@ class SyncWorker @AssistedInject constructor(
     private val pendingTransactionDao: PendingTransactionDao,
     private val transactionApi: TransactionApi,
     private val syncLock: SyncLock,
+    private val appLogger: AppLogger,
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -31,41 +33,65 @@ class SyncWorker @AssistedInject constructor(
             val pendingList = pendingTransactionDao.getAllPending()
             if (pendingList.isEmpty()) return Result.success()
 
+            appLogger.info("SYNC", "同步开始: ${pendingList.size}条待同步")
             var unauthorizedSeen = false
 
             for (entity in pendingList) {
                 if (entity.retryCount >= MAX_RETRY_COUNT) {
+                    appLogger.warn("SYNC", "超过最大重试: clientId=${entity.clientId}")
                     markFailed(entity.clientId, "Max retry count exceeded")
                     continue
                 }
 
                 val (result, serverId) = syncTransaction(entity)
                 when (result) {
-                    SyncResult.SUCCESS -> markSynced(entity.clientId, serverId)
+                    SyncResult.SUCCESS -> {
+                        markSynced(entity.clientId, serverId)
+                        appLogger.info("SYNC", "同步成功: clientId=${entity.clientId} serverId=$serverId")
+                    }
                     SyncResult.UNAUTHORIZED -> {
                         // Token 过期：标记当前记录失败，避免下次 worker 重复触发 401 循环；
                         // AuthEventBus 已被 AuthInterceptor emit，由 MainActivity 触发跳登录
                         markFailed(entity.clientId, "Token expired, need re-login")
                         unauthorizedSeen = true
+                        appLogger.error("SYNC", "401 Token过期: clientId=${entity.clientId}")
                     }
                     // PR H2：服务端 code==0 但 created[]/duplicates[] 都没有匹配
                     // 的 clientId（服务端漏字段/转换异常），不标 SUCCESS 否则
                     // 后续无 serverId 无法编辑/删除（僵尸记录）。
-                    SyncResult.SERVER_ANOMALY -> markFailed(
-                        clientId = entity.clientId,
-                        error = "Server response missing clientId match (created/duplicates both empty)",
-                    )
-                    SyncResult.BUSINESS_ERROR -> markFailed(entity.clientId, "Business error")
-                    SyncResult.NETWORK_ERROR -> incrementRetry(entity.clientId, "Network error")
+                    SyncResult.SERVER_ANOMALY -> {
+                        markFailed(
+                            clientId = entity.clientId,
+                            error = "Server response missing clientId match (created/duplicates both empty)",
+                        )
+                        appLogger.error("SYNC", "服务端异常(无clientId匹配): clientId=${entity.clientId}")
+                    }
+                    SyncResult.BUSINESS_ERROR -> {
+                        markFailed(entity.clientId, "Business error")
+                        appLogger.warn("SYNC", "业务错误: clientId=${entity.clientId}")
+                    }
+                    SyncResult.NETWORK_ERROR -> {
+                        incrementRetry(entity.clientId, "Network error")
+                        appLogger.warn("SYNC", "网络错误,将重试: clientId=${entity.clientId} retry=${entity.retryCount + 1}")
+                    }
                 }
             }
 
             // 检查剩余 pending（含 failed 状态）数，如果还有任何未同步的，则 retry
             val remainingCount = pendingTransactionDao.getAnyUnsyncedCount()
             return when {
-                unauthorizedSeen -> Result.failure()   // 等用户重新登录后再调度
-                remainingCount > 0 -> Result.retry()
-                else -> Result.success()
+                unauthorizedSeen -> {
+                    appLogger.error("SYNC", "同步结束: 遇到401, 等待重新登录")
+                    Result.failure()   // 等用户重新登录后再调度
+                }
+                remainingCount > 0 -> {
+                    appLogger.info("SYNC", "同步结束: 还有${remainingCount}条未同步, 将retry")
+                    Result.retry()
+                }
+                else -> {
+                    appLogger.info("SYNC", "同步结束: 全部成功")
+                    Result.success()
+                }
             }
         } finally {
             // PR C1：无论成功/异常/重试，必须释放锁，否则后续 login 会死等

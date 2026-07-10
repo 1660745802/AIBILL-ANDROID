@@ -24,6 +24,7 @@ class SmsReceiverService : BroadcastReceiver() {
 
     @Inject lateinit var notificationProcessor: NotificationProcessor
     @Inject lateinit var notificationParser: NotificationParser
+    @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
 
     private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -38,7 +39,7 @@ class SmsReceiverService : BroadcastReceiver() {
 
         if (fullText.isBlank()) return
 
-        Timber.d("SMS received: sender=$sender, text=${fullText.take(50)}...")
+        appLogger.info("SMS", "短信到达: sender=$sender len=${fullText.length}")
 
         val pendingResult = goAsync()
 
@@ -46,6 +47,7 @@ class SmsReceiverService : BroadcastReceiver() {
             try {
                 handleSms(sender, fullText)
             } catch (e: Exception) {
+                appLogger.error("SMS", "处理异常: ${e.message}")
                 Timber.e(e, "SMS 处理异常")
             } finally {
                 pendingResult.finish()
@@ -55,7 +57,12 @@ class SmsReceiverService : BroadcastReceiver() {
 
     private suspend fun handleSms(sender: String, text: String) {
         // 支付特征预筛
-        if (!NotificationMonitorService.PAYMENT_SIGNAL.containsMatchIn(text)) return
+        if (!NotificationMonitorService.PAYMENT_SIGNAL.containsMatchIn(text)) {
+            appLogger.debug("SMS", "预筛不通过: sender=$sender")
+            return
+        }
+
+        appLogger.info("SMS", "预筛通过,交给Processor: sender=$sender")
 
         // 直接交给 Processor（AI + 后置按金额去重）
         notificationProcessor.process(

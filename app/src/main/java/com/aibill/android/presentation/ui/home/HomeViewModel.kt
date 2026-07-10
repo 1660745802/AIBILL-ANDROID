@@ -44,6 +44,7 @@ class HomeViewModel @Inject constructor(
     private val statsRepository: StatsRepository,
     private val notificationRecordDao: com.aibill.android.data.local.dao.NotificationRecordDao,
     private val categoryLearningEngine: CategoryLearningEngine,
+    private val appLogger: com.aibill.android.util.AppLogger,
 ) : ViewModel() {
 
     data class HomeUiState(
@@ -148,13 +149,16 @@ class HomeViewModel @Inject constructor(
 
         viewModelScope.launch {
             _uiState.update { it.copy(isParsing = true, error = null) }
+            appLogger.info("HOME", "AI解析请求: input=${input.take(50)}")
             when (val result = aiRepository.parseInput(input)) {
                 is Result.Success -> {
                     val data = result.data
                     if (data.isEmpty()) {
+                        appLogger.info("HOME", "AI解析成功但结果为空")
                         _uiState.update { it.copy(isParsing = false) }
                         _uiEvent.emit(UiEvent.ShowToast("未能识别有效的记账信息"))
                     } else {
+                        appLogger.info("HOME", "AI解析成功: ${data.size}条结果")
                         _uiState.update {
                             it.copy(
                                 isParsing = false,
@@ -165,6 +169,7 @@ class HomeViewModel @Inject constructor(
                     }
                 }
                 is Result.Error -> {
+                    appLogger.error("HOME", "AI解析失败: code=${result.code} msg=${result.message}")
                     Timber.e("AI 解析失败: ${result.message}")
                     _uiState.update {
                         it.copy(isParsing = false, error = result.message)
@@ -184,6 +189,7 @@ class HomeViewModel @Inject constructor(
 
     fun onConfirmItem(item: AiParseResult) {
         viewModelScope.launch {
+            appLogger.info("HOME", "onConfirmItem: amount=${item.amount} type=${item.type}")
             val transaction = item.toTransaction()
             when (val result =
                 transactionRepository.createTransactions(listOf(transaction))) {
@@ -219,6 +225,7 @@ class HomeViewModel @Inject constructor(
         targetAccountId: Int? = null,
     ) {
         viewModelScope.launch {
+            appLogger.info("HOME", "onConfirmEditedItem: amount=$amount type=$type catId=$categoryId")
             if (amount <= 0) {
                 _uiEvent.emit(UiEvent.ShowError("金额必须大于0"))
                 return@launch

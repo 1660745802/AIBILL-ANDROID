@@ -36,6 +36,7 @@ class NotificationCenterViewModel @Inject constructor(
     private val pendingTransactionDao: PendingTransactionDao,
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
+    private val appLogger: com.aibill.android.util.AppLogger,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
@@ -121,6 +122,7 @@ class NotificationCenterViewModel @Inject constructor(
     fun confirmItem(id: Long) {
         viewModelScope.launch {
             val record = notificationRecordDao.findById(id) ?: return@launch
+            appLogger.info("NOTIFY", "confirmItem: id=$id amount=${record.parsedAmount}")
             insertTransaction(
                 recordId = id,
                 type = record.parsedType ?: "expense",
@@ -137,6 +139,7 @@ class NotificationCenterViewModel @Inject constructor(
      */
     fun confirmWithEdit(id: Long, type: String, amountCents: Int, description: String, categoryId: Int?) {
         viewModelScope.launch {
+            appLogger.info("NOTIFY", "confirmWithEdit: id=$id type=$type amount=$amountCents catId=$categoryId")
             if (amountCents <= 0) {
                 _uiEvent.send(UiEvent.ShowToast("请输入有效金额"))
                 return@launch
@@ -202,6 +205,7 @@ class NotificationCenterViewModel @Inject constructor(
 
     fun ignoreItem(id: Long) {
         viewModelScope.launch {
+            appLogger.info("NOTIFY", "ignoreItem: id=$id")
             notificationRecordDao.updateStatus(id, "ignored")
             _uiEvent.send(UiEvent.ShowToast("已忽略"))
         }
@@ -211,6 +215,7 @@ class NotificationCenterViewModel @Inject constructor(
         viewModelScope.launch {
             // PR #67：批量确认时显示 loading 状态，避免重复点击
             _isConfirming.value = true
+            appLogger.info("NOTIFY", "confirmAll: ${pendingNotifications.value.size}条待确认")
             try {
                 val items = pendingNotifications.value
                 var confirmed = 0

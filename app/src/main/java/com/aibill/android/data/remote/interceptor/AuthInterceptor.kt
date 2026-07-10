@@ -35,7 +35,8 @@ class AuthEventBus @Inject constructor() {
  */
 class AuthInterceptor @Inject constructor(
     private val tokenManager: TokenManager,
-    private val authEventBus: AuthEventBus
+    private val authEventBus: AuthEventBus,
+    private val appLogger: com.aibill.android.util.AppLogger,
 ) : Interceptor {
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -52,6 +53,7 @@ class AuthInterceptor @Inject constructor(
 
         // 401 全局处理
         if (response.code == 401) {
+            appLogger.error("AUTH", "401 Token过期, 触发跳转登录: url=${originalRequest.url}")
             tokenManager.clearToken()
             authEventBus.emit(AuthEvent.TokenExpired)
         }

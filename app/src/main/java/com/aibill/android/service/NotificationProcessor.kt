@@ -225,11 +225,14 @@ class NotificationProcessor @Inject constructor(
         } else {
             // 首条或超过 10s 的新交易
             scoringPool[key] = candidate
-            // 启动 10s 延迟，到期后取最优入库
             scoringJobs[key]?.cancel()
+            appLogger.debug("NLS", "评分窗口启动: amount=$key score=${candidate.score} isComplete=${candidate.isComplete} channel=${candidate.item.channel}")
             scoringJobs[key] = processorScope.launch {
                 delay(SCORE_WINDOW_MS)
-                val best = scoringPool.remove(key) ?: return@launch
+                val best = scoringPool.remove(key) ?: run {
+                    appLogger.warn("NLS", "评分窗口到期但池中无数据: amount=$key")
+                    return@launch
+                }
                 scoringJobs.remove(key)
                 commitBest(best)
             }
@@ -240,6 +243,7 @@ class NotificationProcessor @Inject constructor(
      * 10s 到期，执行去重 + 入库/待审。统一路径。
      */
     private suspend fun commitBest(candidate: ScoredCandidate) {
+        appLogger.debug("NLS", "commitBest: amount=${candidate.amount} score=${candidate.score} isComplete=${candidate.isComplete}")
         insertMutex.withLock {
             // 跨渠道去重（内存）
             if (isDuplicateAcrossChannels(candidate.amount, candidate.item.channel, candidate.item.packageName, candidate.receivedAt)) {

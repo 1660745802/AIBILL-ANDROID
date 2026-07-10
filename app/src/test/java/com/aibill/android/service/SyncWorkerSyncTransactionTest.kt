@@ -35,6 +35,7 @@ class SyncWorkerSyncTransactionTest {
     private val pendingDao: PendingTransactionDao = mockk(relaxed = true)
     private val transactionApi: TransactionApi = mockk()
     private val syncLock: SyncLock = mockk(relaxed = true)
+    private val appLogger: com.aibill.android.util.AppLogger = mockk(relaxed = true)
 
     private fun makeEntity(
         clientId: String = "C1",
@@ -71,6 +72,7 @@ class SyncWorkerSyncTransactionTest {
         pendingTransactionDao = pendingDao,
         transactionApi = transactionApi,
         syncLock = syncLock,
+        appLogger = appLogger,
     )
 
     private fun transactionDto(
