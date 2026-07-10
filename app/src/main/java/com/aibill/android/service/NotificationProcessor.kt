@@ -15,7 +15,11 @@ import com.aibill.android.util.AppLogger
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationSourceMapping
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
@@ -68,10 +72,30 @@ class NotificationProcessor @Inject constructor(
     companion object {
         /** 后置去重窗口：同 amount + 60s 内视为同一笔（跨渠道冗余通知） */
         private const val DEDUP_WINDOW_MS = 60_000L
+        /** 评分窗口：10s 内同金额的 AI 结果比较 score，取最优入库 */
+        private const val SCORE_WINDOW_MS = 10_000L
     }
 
     /** 入库路径串行化：dedup-check + insert 必须原子，否则会双写 */
     private val insertMutex = Mutex()
+
+    /** 评分窗口池：10s 内收集同金额的 AI 结果，取最优 */
+    private data class ScoredCandidate(
+        val item: Item,
+        val amount: Int,
+        val type: String,
+        val categoryId: Int?,
+        val categoryName: String?,
+        val categoryIcon: String?,
+        val description: String?,
+        val source: String,
+        val score: Int,
+        val isComplete: Boolean,
+        val receivedAt: Long,
+    )
+    private val scoringPool = java.util.concurrent.ConcurrentHashMap<Int, ScoredCandidate>() // key=amount
+    private val scoringJobs = java.util.concurrent.ConcurrentHashMap<Int, kotlinx.coroutines.Job>()
+    private val processorScope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
 
     /** 内存级已入库记录（用于跨渠道去重，比 DB 查询更快更准） */
     private data class ProcessedEntry(val amount: Int, val channel: Channel, val packageName: String, val time: Long)
@@ -156,63 +180,104 @@ class NotificationProcessor @Inject constructor(
                     aiItem.categoryName.lowercase() !in setOf("其他", "其它", "未分类", "other")
                 ))
 
-            if (isComplete) {
-                val inserted = insertMutex.withLock {
-                    // 内存级跨渠道去重（精确：区分 channel）
-                    if (isDuplicateAcrossChannels(aiItem.amount, item.channel, item.packageName, item.receivedAt)) {
-                        appLogger.debug("NLS", "跨渠道去重(内存): channel=${item.channel} amount=${aiItem.amount}")
-                        return@withLock false
-                    }
-                    // DB 兜底（进程重启后内存清空时靠这个）
-                    val dbDuplicate = notificationRecordDao.findRecentConfirmedFromOtherChannel(
-                        aiItem.amount, item.receivedAt - DEDUP_WINDOW_MS, item.packageName
-                    )
-                    if (dbDuplicate != null) {
-                        appLogger.debug("NLS", "跨渠道去重(DB): otherPkg=${dbDuplicate.packageName} amount=${aiItem.amount}")
-                        return@withLock false
-                    }
-                    directInsert(
-                        item = item,
-                        amount = aiItem.amount,
-                        type = safeType,
-                        categoryId = finalCategoryId,
-                        categoryName = aiItem.categoryName,
-                        categoryIcon = aiItem.categoryIcon,
-                        description = aiItem.description ?: aiItem.categoryName,
-                        source = if (learnedCategoryId != null) "learning+ai" else "ai",
-                    )
-                    markProcessed(aiItem.amount, item.channel, item.packageName)
-                    true
-                }
-                if (inserted) {
-                    appLogger.info("NLS", "✓入库: ¥${"%.2f".format(aiItem.amount/100.0)} ${aiItem.description ?: aiItem.categoryName} type=${aiItem.type}")
-                    val learnKey = (aiItem.description ?: aiItem.categoryName)?.trim()
-                    if (!learnKey.isNullOrBlank() && finalCategoryId != null) {
-                        categoryLearningEngine.learnFromCorrection(learnKey, finalCategoryId)
-                    }
-                }
-            } else {
-                // 待审也用同样去重逻辑，且在 Mutex 内完成（防竞态）
-                insertMutex.withLock {
-                    if (isDuplicateAcrossChannels(aiItem.amount, item.channel, item.packageName, item.receivedAt)) {
-                        appLogger.debug("NLS", "待审去重(内存): channel=${item.channel} amount=${aiItem.amount}")
-                        return@withLock
-                    }
-                    val dbDuplicate = notificationRecordDao.findRecentConfirmedFromOtherChannel(
-                        aiItem.amount, item.receivedAt - DEDUP_WINDOW_MS, item.packageName
-                    )
-                    if (dbDuplicate != null) {
-                        appLogger.debug("NLS", "待审去重(DB): amount=${aiItem.amount}")
-                        return@withLock
-                    }
-                    appLogger.info("NLS", "→待审: amount=${aiItem.amount} type=${aiItem.type} cat=${aiItem.categoryName}")
-                    insertPendingReview(item, aiItem)
-                    markProcessed(aiItem.amount, item.channel, item.packageName)
-                }
-            }
+            // 构建候选项，统一进入评分窗口
+            val candidate = ScoredCandidate(
+                item = item,
+                amount = aiItem.amount,
+                type = safeType,
+                categoryId = finalCategoryId,
+                categoryName = aiItem.categoryName,
+                categoryIcon = aiItem.categoryIcon,
+                description = aiItem.description ?: aiItem.categoryName,
+                source = if (learnedCategoryId != null) "learning+ai" else "ai",
+                score = aiItemScore(aiItem),
+                isComplete = isComplete,
+                receivedAt = item.receivedAt,
+            )
+            tryCommit(candidate)
         } catch (e: Exception) {
             appLogger.error("NLS", "AI异常: ${e.message}")
             Timber.w(e, "AI 解析失败，丢弃: ${item.packageName}")
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 评分窗口 + 去重 + 入库（统一抽象）
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * 10s 评分窗口：同金额的 AI 结果进来后比较 score，保留最优。
+     * 10s 到期后执行 commitBest()。
+     * 10s-60s 之间再来的同金额直接被 isDuplicateAcrossChannels 拦住。
+     */
+    private fun tryCommit(candidate: ScoredCandidate) {
+        val key = candidate.amount
+        val existing = scoringPool[key]
+
+        if (existing != null && (candidate.receivedAt - existing.receivedAt) <= SCORE_WINDOW_MS) {
+            // 10s 内同金额：比较 score，保留更好的
+            if (candidate.score > existing.score) {
+                scoringPool[key] = candidate
+                appLogger.debug("NLS", "评分替换: amount=$key newScore=${candidate.score} > oldScore=${existing.score}")
+            } else {
+                appLogger.debug("NLS", "评分丢弃: amount=$key score=${candidate.score} ≤ existing=${existing.score}")
+            }
+        } else {
+            // 首条或超过 10s 的新交易
+            scoringPool[key] = candidate
+            // 启动 10s 延迟，到期后取最优入库
+            scoringJobs[key]?.cancel()
+            scoringJobs[key] = processorScope.launch {
+                delay(SCORE_WINDOW_MS)
+                val best = scoringPool.remove(key) ?: return@launch
+                scoringJobs.remove(key)
+                commitBest(best)
+            }
+        }
+    }
+
+    /**
+     * 10s 到期，执行去重 + 入库/待审。统一路径。
+     */
+    private suspend fun commitBest(candidate: ScoredCandidate) {
+        insertMutex.withLock {
+            // 跨渠道去重（内存）
+            if (isDuplicateAcrossChannels(candidate.amount, candidate.item.channel, candidate.item.packageName, candidate.receivedAt)) {
+                appLogger.debug("NLS", "去重(内存): channel=${candidate.item.channel} amount=${candidate.amount}")
+                return@withLock
+            }
+            // 跨渠道去重（DB 兜底）
+            val dbDuplicate = notificationRecordDao.findRecentConfirmedFromOtherChannel(
+                candidate.amount, candidate.receivedAt - DEDUP_WINDOW_MS, candidate.item.packageName
+            )
+            if (dbDuplicate != null) {
+                appLogger.debug("NLS", "去重(DB): amount=${candidate.amount}")
+                return@withLock
+            }
+
+            // 入库或待审
+            if (candidate.isComplete) {
+                directInsert(
+                    item = candidate.item,
+                    amount = candidate.amount,
+                    type = candidate.type,
+                    categoryId = candidate.categoryId,
+                    categoryName = candidate.categoryName,
+                    categoryIcon = candidate.categoryIcon,
+                    description = candidate.description,
+                    source = candidate.source,
+                )
+                appLogger.info("NLS", "✓入库: ¥${"%.2f".format(candidate.amount/100.0)} ${candidate.description} type=${candidate.type} score=${candidate.score}")
+                // 触发学习
+                val learnKey = candidate.description?.trim()
+                if (!learnKey.isNullOrBlank() && candidate.categoryId != null) {
+                    categoryLearningEngine.learnFromCorrection(learnKey, candidate.categoryId)
+                }
+            } else {
+                appLogger.info("NLS", "→待审: amount=${candidate.amount} type=${candidate.type} cat=${candidate.categoryName} score=${candidate.score}")
+                insertPendingReview(candidate.item, candidate.amount, candidate.type, candidate.categoryName, candidate.description)
+            }
+            markProcessed(candidate.amount, candidate.item.channel, candidate.item.packageName)
         }
     }
 
@@ -307,14 +372,24 @@ class NotificationProcessor @Inject constructor(
         item: Item,
         aiItem: AiParsedItemDto,
     ) {
+        insertPendingReview(item, aiItem.amount, aiItem.type, aiItem.categoryName, aiItem.description ?: aiItem.categoryName)
+    }
+
+    private suspend fun insertPendingReview(
+        item: Item,
+        amount: Int,
+        type: String,
+        categoryName: String?,
+        description: String?,
+    ) {
         val recordId = notificationRecordDao.insert(
             NotificationRecordEntity(
                 packageName = item.packageName,
                 title = item.title.ifBlank { null },
                 content = item.fullText,
-                parsedAmount = aiItem.amount.takeIf { it > 0 },
-                parsedType = aiItem.type.takeIf { it in setOf("expense", "income", "transfer") },
-                parsedDescription = aiItem.description ?: aiItem.categoryName,
+                parsedAmount = amount.takeIf { it > 0 },
+                parsedType = type.takeIf { it in setOf("expense", "income", "transfer") },
+                parsedDescription = description ?: categoryName,
                 status = "parsed",
                 receivedAt = item.receivedAt,
             )
@@ -324,11 +399,11 @@ class NotificationProcessor @Inject constructor(
         NotificationHelper.showConfirmNotification(
             context = context,
             recordId = recordId,
-            amount = aiItem.amount.takeIf { it > 0 } ?: 0,
-            description = aiItem.description ?: aiItem.categoryName,
+            amount = amount.takeIf { it > 0 } ?: 0,
+            description = description ?: categoryName,
             source = NotificationSourceMapping.friendlyName(item.packageName),
             privacyMode = privacyMode,
-            type = aiItem.type,
+            type = type,
         )
     }
 }
