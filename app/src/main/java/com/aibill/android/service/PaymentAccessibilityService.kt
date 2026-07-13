@@ -65,9 +65,10 @@ class PaymentAccessibilityService : AccessibilityService() {
 
         if (packageName !in PAYMENT_APPS) return
 
-        // 监听页面切换和内容变化（支付完成可能不切Activity只刷内容）
-        if (ev.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            ev.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
+        // 只在页面切换时触发（参考iCost/AutoAccounting做法）
+        // 支付结果页是新页面 → STATE_CHANGED 能覆盖
+        // 不监听 CONTENT_CHANGED → 避免频繁遍历节点树（每秒几百次）
+        if (ev.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
 
         val rootNode = rootInActiveWindow ?: return
 
