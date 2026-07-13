@@ -81,11 +81,17 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 条件3：有金额文字
             val amountText = findAmount(rootNode) ?: return
 
+            // 条件4：页面不能有历史日期（排除用户翻看历史账单）
+            if (!isRecentPayment(rootNode)) return
+
             // 三重条件全部满足 → 构建简短摘要
             val merchant = findMerchant(rootNode)
-            val summary = buildString {
-                append("支付成功 $amountText")
-                if (merchant != null) append(" $merchant")
+            val summary = if (merchant != null) {
+                "支付成功 $amountText $merchant"
+            } else {
+                // 商家名没找到，收集金额附近的上下文文本给 AI 判断
+                val context = collectNearbyText(rootNode, amountText)
+                "支付成功 $amountText $context"
             }
 
             // 防抖
@@ -174,6 +180,67 @@ class PaymentAccessibilityService : AccessibilityService() {
             }
         }
         return null
+    }
+
+    /**
+     * 判断页面是否是"刚刚发生的支付"而非"历史账单"。
+     * 检查节点树中是否有非今天的日期——有就说明是旧账单，不处理。
+     */
+    private fun isRecentPayment(root: AccessibilityNodeInfo): Boolean {
+        val allTexts = mutableListOf<String>()
+        collectAllNodeTexts(root, allTexts)
+        val today = java.time.LocalDate.now()
+
+        // "昨天"/"X天前"/"X月前" → 历史账单
+        if (allTexts.any { it.contains("昨天") || it.contains("天前") || it.contains("月前") }) return false
+
+        // 检查"X月X日"格式，如果不是今天 → 历史
+        val datePattern = Regex("""(\d{1,2})月(\d{1,2})日""")
+        for (text in allTexts) {
+            val match = datePattern.find(text) ?: continue
+            val month = match.groupValues[1].toIntOrNull() ?: continue
+            val day = match.groupValues[2].toIntOrNull() ?: continue
+            if (month != today.monthValue || day != today.dayOfMonth) return false
+        }
+
+        // 检查"YYYY-MM-DD"或"MM-DD"格式
+        val dashDatePattern = Regex("""(\d{4})-(\d{2})-(\d{2})|(\d{2})-(\d{2})""")
+        for (text in allTexts) {
+            val match = dashDatePattern.find(text) ?: continue
+            val month = (match.groupValues[2].ifEmpty { match.groupValues[4] }).toIntOrNull() ?: continue
+            val day = (match.groupValues[3].ifEmpty { match.groupValues[5] }).toIntOrNull() ?: continue
+            if (month != today.monthValue || day != today.dayOfMonth) return false
+        }
+
+        return true // 没有历史日期特征 → 认为是当前支付
+    }
+
+    /**
+     * 收集金额节点附近的文本作为上下文（商家名通常在金额上方或下方）。
+     * 限制总长度避免过长。
+     */
+    private fun collectNearbyText(root: AccessibilityNodeInfo, amountText: String): String {
+        val allTexts = mutableListOf<String>()
+        collectAllNodeTexts(root, allTexts)
+        // 找到金额文本的位置，取前后各 3 个非空文本
+        val amountIdx = allTexts.indexOfFirst { it.contains(amountText.replace("¥", "").replace("￥", "")) }
+        if (amountIdx < 0) return allTexts.take(5).joinToString(" ")
+        val start = (amountIdx - 3).coerceAtLeast(0)
+        val end = (amountIdx + 3).coerceAtMost(allTexts.size - 1)
+        return allTexts.subList(start, end + 1)
+            .filter { it != amountText && it.length in 2..30 }
+            .joinToString(" ")
+            .take(80)
+    }
+
+    private fun collectAllNodeTexts(node: AccessibilityNodeInfo, result: MutableList<String>) {
+        val text = node.text?.toString()?.trim()
+        if (!text.isNullOrBlank() && text.length in 1..50) result.add(text)
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectAllNodeTexts(child, result)
+            child.recycle()
+        }
     }
 
     /** 递归查找匹配正则的节点文本 */
