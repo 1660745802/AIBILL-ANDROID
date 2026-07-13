@@ -119,6 +119,9 @@ class NotificationMonitorService : NotificationListenerService() {
         // 排除系统运行通知和通知分组摘要（无意义）
         if (fullText.contains("正在运行") || fullText.contains("GroupSummary")) return
 
+        // 排除营销/广告/订购类短信（含金额关键词但不是真实账务）
+        if (packageName.contains("mms") && isLikelySpamSms(fullText)) return
+
         // 0. 内存级去重（用内容hash，防系统重复触发+协程竞态）
         val contentKey = "$packageName:${fullText.hashCode()}"
         val now = System.currentTimeMillis()
@@ -169,19 +172,33 @@ class NotificationMonitorService : NotificationListenerService() {
                 PAYMENT_SIGNAL.containsMatchIn(fullText)
             }
             "com.eg.android.AlipayGphone" -> {
-                if (title.contains("支付") || title.contains("账单") ||
-                    title.contains("花呗") || title.contains("余额") ||
-                    title.contains("到账") || title.contains("收款")) return true
-                PAYMENT_SIGNAL.containsMatchIn(fullText)
+                // 支付宝：只有明确的交易/账务 title 才放行（排除蚂蚁庄园/卡包优惠等）
+                title.contains("交易提醒") || title.contains("支付") ||
+                    title.contains("账单") || title.contains("花呗") ||
+                    title.contains("余额") || title.contains("到账") ||
+                    title.contains("收款") || title.contains("退款")
             }
             else -> {
-                // 银行 App：包名含 bank/银行号段 → 全部放行（银行几乎只发账务通知）
+                // 银行 App：包名含 bank/银行号段 → 全部放行
                 if (packageName.contains("bank") || packageName.startsWith("cmb") ||
                     packageName.contains("icbc") || packageName.contains("ccb") ||
                     packageName.contains("boc") || packageName.contains("abchina")) return true
-                // 其他（美团/京东/云闪付等）：用 PAYMENT_SIGNAL 过滤营销
+                // 其他：用 PAYMENT_SIGNAL 过滤营销
                 PAYMENT_SIGNAL.containsMatchIn(fullText)
             }
         }
+    }
+
+    /**
+     * 判断短信是否是营销/广告/订购类（含金额关键词但不是真实账务）。
+     * 真实银行扣款短信不会包含"退订/回复/办理"等互动词。
+     */
+    private fun isLikelySpamSms(text: String): Boolean {
+        val spamKeywords = listOf(
+            "订购", "退订", "办理", "开通", "激活", "贷款", "借款",
+            "提额", "申请", "审批", "邀请", "回复R", "回复TD",
+            "免费领", "中奖", "恭喜", "点击链接",
+        )
+        return spamKeywords.any { text.contains(it) }
     }
 }

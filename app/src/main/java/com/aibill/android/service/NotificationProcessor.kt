@@ -140,7 +140,8 @@ class NotificationProcessor @Inject constructor(
 
         try {
             appLogger.info("NLS", "调AI: pkg=${item.packageName} text=${item.fullText}")
-            val response = aiApi.parse(mapOf("input" to item.fullText))
+            val cleanedText = cleanMarketingSuffix(item.fullText)
+            val response = aiApi.parse(mapOf("input" to cleanedText))
             if (response.code != 0 || response.data == null) {
                 appLogger.warn("NLS", "AI失败: code=${response.code}")
                 return
@@ -286,8 +287,21 @@ class NotificationProcessor @Inject constructor(
     }
 
     /**
+     * 清理通知文本中的营销后缀，避免 AI 误识别。
+     * 支付宝"交易提醒"格式：真实交易信息 + "点击领取XX" 营销。
+     * 截掉"点击"之后的所有内容。
+     */
+    private fun cleanMarketingSuffix(text: String): String {
+        val cutoffs = listOf("点击领取", "点击查看", "点击开启", "戳我领", "立即领取")
+        for (cutoff in cutoffs) {
+            val idx = text.indexOf(cutoff)
+            if (idx > 0) return text.substring(0, idx).trim()
+        }
+        return text
+    }
+
+    /**
      * AI 返回多条时选最优：按信息完整度评分。
-     * 有金额+1，有明确类型+1，有分类(非"其他")+2，有描述+1
      */
     private fun aiItemScore(item: AiParsedItemDto): Int {
         var score = 0
