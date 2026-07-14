@@ -52,7 +52,18 @@ class NlsHealthCheckWorker(
         Timber.d("NLS 心跳检查: connected=$isConnected")
 
         if (!isConnected) {
-            // NLS 断连，发送通知提醒用户
+            // NLS 断连，先尝试自动恢复
+            try {
+                val component = ComponentName(
+                    applicationContext.packageName,
+                    NotificationMonitorService::class.java.name
+                )
+                android.service.notification.NotificationListenerService.requestRebind(component)
+                Timber.d("NLS 心跳: 已请求 requestRebind 自动恢复")
+            } catch (e: Exception) {
+                Timber.w(e, "NLS 心跳: requestRebind 失败")
+            }
+            // 恢复失败的话发通知提醒用户手动操作
             NotificationHelper.showNlsDisconnectedNotification(applicationContext)
         }
 

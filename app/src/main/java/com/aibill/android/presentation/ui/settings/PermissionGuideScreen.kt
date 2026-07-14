@@ -123,9 +123,14 @@ fun PermissionGuideScreen(
                             color = MaterialTheme.colorScheme.onErrorContainer,
                         )
                         Text(
-                            text = "部分手机需要关闭再重新打开通知使用权才能生效。请点击上方\"去开启\"，关闭后再次开启。",
+                            text = "请关闭再重新打开通知使用权即可恢复。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        com.aibill.android.presentation.theme.SecondaryButton(
+                            text = "前往设置",
+                            onClick = { BatteryOptimizationHelper.openNotificationListenerSettings(context) },
                         )
                     }
                 }

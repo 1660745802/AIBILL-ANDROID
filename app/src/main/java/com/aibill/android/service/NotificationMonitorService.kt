@@ -72,7 +72,14 @@ class NotificationMonitorService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         isConnected = false
-        appLogger.warn("NLS", "通知监听服务断开")
+        appLogger.warn("NLS", "通知监听服务断开，尝试自动恢复")
+        // 自动请求系统重新绑定（Android 7+）
+        try {
+            requestRebind(android.content.ComponentName(this, NotificationMonitorService::class.java))
+            appLogger.info("NLS", "已请求 requestRebind")
+        } catch (e: Exception) {
+            appLogger.error("NLS", "requestRebind 失败: ${e.message}")
+        }
     }
 
     override fun onDestroy() {
