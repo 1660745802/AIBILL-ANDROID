@@ -87,7 +87,7 @@ fun NotificationCenterScreen(
             categoriesByType = categoriesByType,
             accounts = emptyList(), // TODO: 注入账户列表
             onDismiss = { editItem = null },
-            onConfirm = { amount, type, categoryId, desc, accountId, targetAccountId ->
+            onConfirm = { amount, type, categoryId, desc, accountId, targetAccountId, tags ->
                 viewModel.confirmWithEdit(item.id, type, amount, desc, categoryId)
                 editItem = null
             }

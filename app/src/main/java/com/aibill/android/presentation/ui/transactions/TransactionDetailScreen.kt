@@ -40,6 +40,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.InputChip
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.presentation.theme.ExpenseColor
@@ -204,10 +210,9 @@ fun TransactionDetailScreen(
                     }
                     // 标签
                     DetailCard(label = "🏷️ 标签") {
-                        DetailTextField(
-                            value = uiState.tags,
-                            onValueChange = viewModel::onTagsChanged,
-                            placeholder = "用逗号分隔多个标签",
+                        TagEditSection(
+                            tagsText = uiState.tags,
+                            onTagsChanged = viewModel::onTagsChanged,
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -378,6 +383,68 @@ private fun AccountPickerRow(
                 selected = selectedAccountId == acc.id,
                 onClick = { onSelect(acc.id) },
                 label = { Text("${acc.icon} ${acc.name}") },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TagEditSection(
+    tagsText: String,
+    onTagsChanged: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Parse the comma-separated tags string into a list
+    val tags = remember(tagsText) {
+        tagsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
+    }
+    var tagInput by remember { mutableStateOf("") }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            tags.forEach { tag ->
+                InputChip(
+                    selected = false,
+                    onClick = {
+                        val newTags = tags - tag
+                        onTagsChanged(newTags.joinToString(", "))
+                    },
+                    label = { Text(tag, style = MaterialTheme.typography.labelSmall) },
+                    trailingIcon = {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "移除标签",
+                            modifier = Modifier.size(14.dp),
+                        )
+                    },
+                    modifier = Modifier.height(28.dp),
+                )
+            }
+            OutlinedTextField(
+                value = tagInput,
+                onValueChange = { tagInput = it },
+                placeholder = { Text("添加标签", style = MaterialTheme.typography.labelSmall) },
+                modifier = Modifier.width(120.dp).height(36.dp),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.labelSmall,
+                shape = RoundedCornerShape(8.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                ),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = {
+                    if (tagInput.isNotBlank()) {
+                        val trimmed = tagInput.trim()
+                        val newTags = if (trimmed !in tags) tags + trimmed else tags
+                        onTagsChanged(newTags.joinToString(", "))
+                        tagInput = ""
+                    }
+                }),
             )
         }
     }

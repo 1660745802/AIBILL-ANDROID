@@ -156,6 +156,14 @@ fun ManualRecordScreen(
                     }
                 }
 
+                // 标签行（分类和底部面板之间，固定高度）
+                CompactTagRow(
+                    tags = state.tags,
+                    availableTags = state.availableTags,
+                    onTagAdded = viewModel::onTagAdded,
+                    onTagRemoved = viewModel::onTagRemoved,
+                )
+
                 // 底部输入面板：金额 + 备注 + 键盘聚合为一体（带圆角上边和阴影）
                 Surface(
                     shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
@@ -179,13 +187,6 @@ fun ManualRecordScreen(
                         CompactNoteRow(
                             description = state.description,
                             onDescriptionChanged = viewModel::onDescriptionChanged,
-                        )
-                        // 标签
-                        CompactTagRow(
-                            tags = state.tags,
-                            availableTags = state.availableTags,
-                            onTagAdded = viewModel::onTagAdded,
-                            onTagRemoved = viewModel::onTagRemoved,
                         )
                         // 数字键盘
                         NumericKeyboard(
@@ -340,16 +341,16 @@ private fun CompactTagRow(
     var tagInput by remember { mutableStateOf("") }
     var showSuggestions by remember { mutableStateOf(false) }
     val suggestions = remember(tagInput, availableTags, tags) {
-        if (tagInput.isBlank()) emptyList()
-        else availableTags.filter { it.contains(tagInput, ignoreCase = true) && it !in tags }
+        if (tagInput.isBlank()) availableTags.filter { it !in tags }.take(5)
+        else availableTags.filter { it.contains(tagInput, ignoreCase = true) && it !in tags }.take(5)
     }
 
     Column(modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
-        // 已选标签 + 输入框
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
+        // 已选标签 + 输入框（单行紧凑）
+        Row(
+            modifier = Modifier.fillMaxWidth().height(44.dp),
+            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             tags.forEach { tag ->
                 InputChip(
@@ -371,9 +372,9 @@ private fun CompactTagRow(
                 value = tagInput,
                 onValueChange = { value ->
                     tagInput = value
-                    showSuggestions = value.isNotBlank()
+                    showSuggestions = true
                 },
-                placeholder = { Text("添加标签...", style = MaterialTheme.typography.labelSmall) },
+                placeholder = { Text("添加标签", style = MaterialTheme.typography.labelSmall) },
                 modifier = Modifier.width(100.dp).height(36.dp),
                 singleLine = true,
                 textStyle = MaterialTheme.typography.labelSmall,
@@ -391,14 +392,14 @@ private fun CompactTagRow(
                 }),
             )
         }
-        // 下拉建议
+        // 标签建议（输入框获焦时显示）
         if (showSuggestions && suggestions.isNotEmpty()) {
             FlowRow(
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                suggestions.take(5).forEach { suggestion ->
+                suggestions.forEach { suggestion ->
                     SuggestionChip(
                         onClick = {
                             onTagAdded(suggestion)

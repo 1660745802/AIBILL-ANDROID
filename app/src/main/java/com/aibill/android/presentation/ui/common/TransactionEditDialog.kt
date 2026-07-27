@@ -2,10 +2,16 @@ package com.aibill.android.presentation.ui.common
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.aibill.android.domain.model.Account
@@ -15,7 +21,7 @@ import com.aibill.android.domain.model.TransactionType
 /**
  * 通用交易编辑对话框。
  * 首页 AI 确认和通知中心确认统一复用此弹窗。
- * 支持：金额/类型(支出/收入/转账)/分类选择/备注/转账账户选择。
+ * 支持：金额/类型(支出/收入/转账)/分类选择/备注/标签/转账账户选择。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -26,10 +32,12 @@ fun TransactionEditDialog(
     initialDescription: String? = null,
     initialAccountId: Int? = null,
     initialTargetAccountId: Int? = null,
+    initialTags: List<String> = emptyList(),
+    availableTags: List<String> = emptyList(),
     categoriesByType: Map<String, List<Category>>,
     accounts: List<Account> = emptyList(),
     onDismiss: () -> Unit,
-    onConfirm: (amount: Int, type: String, categoryId: Int?, description: String, accountId: Int?, targetAccountId: Int?) -> Unit,
+    onConfirm: (amount: Int, type: String, categoryId: Int?, description: String, accountId: Int?, targetAccountId: Int?, tags: List<String>) -> Unit,
 ) {
     var type by remember { mutableStateOf(initialType) }
     var amountText by remember { mutableStateOf(if (initialAmount > 0) "%.2f".format(initialAmount / 100.0) else "") }
@@ -37,9 +45,17 @@ fun TransactionEditDialog(
     var selectedCategoryId by remember { mutableStateOf(initialCategoryId) }
     var selectedAccountId by remember { mutableStateOf(initialAccountId) }
     var selectedTargetAccountId by remember { mutableStateOf(initialTargetAccountId) }
+    var tags by remember { mutableStateOf(initialTags) }
+    var tagInput by remember { mutableStateOf("") }
+    var showTagSuggestions by remember { mutableStateOf(false) }
 
     val typeKey = if (type == "income") "income" else "expense"
     val availableCategories = categoriesByType[typeKey].orEmpty()
+
+    val tagSuggestions = remember(tagInput, availableTags, tags) {
+        if (tagInput.isBlank()) availableTags.filter { it !in tags }.take(5)
+        else availableTags.filter { it.contains(tagInput, ignoreCase = true) && it !in tags }.take(5)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -91,6 +107,76 @@ fun TransactionEditDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
 
+                // 标签输入区
+                Text("标签", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    tags.forEach { tag ->
+                        InputChip(
+                            selected = false,
+                            onClick = { tags = tags - tag },
+                            label = { Text(tag, style = MaterialTheme.typography.labelSmall) },
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "移除标签",
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            },
+                            modifier = Modifier.height(28.dp),
+                        )
+                    }
+                    OutlinedTextField(
+                        value = tagInput,
+                        onValueChange = { value ->
+                            tagInput = value
+                            showTagSuggestions = true
+                        },
+                        placeholder = { Text("添加标签", style = MaterialTheme.typography.labelSmall) },
+                        modifier = Modifier.width(100.dp).height(36.dp),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.labelSmall,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                        ),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = {
+                            if (tagInput.isNotBlank()) {
+                                val trimmed = tagInput.trim()
+                                if (trimmed !in tags) {
+                                    tags = tags + trimmed
+                                }
+                                tagInput = ""
+                                showTagSuggestions = false
+                            }
+                        }),
+                    )
+                }
+                if (showTagSuggestions && tagSuggestions.isNotEmpty()) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        tagSuggestions.forEach { suggestion ->
+                            SuggestionChip(
+                                onClick = {
+                                    tags = tags + suggestion
+                                    tagInput = ""
+                                    showTagSuggestions = false
+                                },
+                                label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
+                                modifier = Modifier.height(26.dp),
+                            )
+                        }
+                    }
+                }
+
                 if (type != "transfer") {
                     // 分类选择
                     Text("分类", style = MaterialTheme.typography.labelMedium,
@@ -140,6 +226,7 @@ fun TransactionEditDialog(
                         cents, type, finalCategoryId, description,
                         if (type == "transfer") selectedAccountId else null,
                         if (type == "transfer") selectedTargetAccountId else null,
+                        tags,
                     )
                 },
                 enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0
