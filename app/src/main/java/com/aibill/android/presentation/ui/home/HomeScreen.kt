@@ -192,6 +192,7 @@ fun HomeScreen(
                             AiResultsCard(
                                 results = uiState.aiParseResults.orEmpty(),
                                 categoriesByType = uiState.categoriesByType,
+                                availableTags = uiState.availableTags,
                                 onConfirmItem = viewModel::onConfirmItem,
                                 onConfirmAll = viewModel::onConfirmAll,
                                 onDismiss = viewModel::onDismissResults,

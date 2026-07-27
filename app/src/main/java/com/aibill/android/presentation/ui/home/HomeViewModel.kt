@@ -58,6 +58,7 @@ class HomeViewModel @Inject constructor(
         val pendingNotificationCount: Int = 0,
         /** AI 编辑弹窗/手动记账等需要的可选分类列表（按 type 过滤） */
         val categoriesByType: Map<String, List<Category>> = emptyMap(),
+        val availableTags: List<String> = emptyList(),
         val error: String? = null,
     )
 
@@ -84,6 +85,7 @@ class HomeViewModel @Inject constructor(
         refresh()
         observePendingNotifications()
         observeCategories()
+        loadAvailableTags()
     }
 
     private fun observeCategories() {
@@ -317,6 +319,15 @@ class HomeViewModel @Inject constructor(
                 false
             }
             is Result.Loading -> true
+        }
+    }
+
+    private fun loadAvailableTags() {
+        viewModelScope.launch {
+            when (val result = transactionRepository.getTags()) {
+                is Result.Success -> _uiState.update { it.copy(availableTags = result.data) }
+                else -> Unit
+            }
         }
     }
 

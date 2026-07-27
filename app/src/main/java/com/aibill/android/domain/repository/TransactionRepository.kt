@@ -42,6 +42,8 @@ interface TransactionRepository {
     fun observePendingCount(): Flow<Int>
 
     suspend fun syncPending(): Result<Unit>
+
+    suspend fun getTags(): Result<List<String>>
 }
 
 /**

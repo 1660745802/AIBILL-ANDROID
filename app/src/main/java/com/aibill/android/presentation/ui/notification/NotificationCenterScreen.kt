@@ -79,16 +79,18 @@ fun NotificationCenterScreen(
     // 确认前编辑对话框
     editItem?.let { item ->
         val categoriesByType by viewModel.categoriesByType.collectAsStateWithLifecycle()
+        val availableTags by viewModel.availableTags.collectAsStateWithLifecycle()
         com.aibill.android.presentation.ui.common.TransactionEditDialog(
             initialAmount = item.parsedAmount ?: 0,
             initialType = item.parsedType ?: "expense",
             initialCategoryId = null,
             initialDescription = item.parsedDescription,
             categoriesByType = categoriesByType,
+            availableTags = availableTags,
             accounts = emptyList(), // TODO: 注入账户列表
             onDismiss = { editItem = null },
             onConfirm = { amount, type, categoryId, desc, accountId, targetAccountId, tags ->
-                viewModel.confirmWithEdit(item.id, type, amount, desc, categoryId)
+                viewModel.confirmWithEdit(item.id, type, amount, desc, categoryId, tags)
                 editItem = null
             }
         )

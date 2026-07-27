@@ -51,6 +51,9 @@ class NotificationCenterViewModel @Inject constructor(
     private val _categoriesByType = MutableStateFlow<Map<String, List<Category>>>(emptyMap())
     val categoriesByType: StateFlow<Map<String, List<Category>>> = _categoriesByType.asStateFlow()
 
+    private val _availableTags = MutableStateFlow<List<String>>(emptyList())
+    val availableTags: StateFlow<List<String>> = _availableTags.asStateFlow()
+
     /** NLS 连接状态，供健康度面板展示 */
     private val _nlsConnected = MutableStateFlow(false)
     val nlsConnected: StateFlow<Boolean> = _nlsConnected.asStateFlow()
@@ -58,6 +61,16 @@ class NotificationCenterViewModel @Inject constructor(
     init {
         observeCategories()
         checkNlsStatus()
+        loadAvailableTags()
+    }
+
+    private fun loadAvailableTags() {
+        viewModelScope.launch {
+            when (val result = transactionRepository.getTags()) {
+                is com.aibill.android.domain.model.Result.Success -> _availableTags.value = result.data
+                else -> Unit
+            }
+        }
     }
 
     fun checkNlsStatus() {
@@ -137,7 +150,7 @@ class NotificationCenterViewModel @Inject constructor(
     /**
      * 确认前编辑：用户在弹窗中修改金额/类型/描述/分类后确认
      */
-    fun confirmWithEdit(id: Long, type: String, amountCents: Int, description: String, categoryId: Int?) {
+    fun confirmWithEdit(id: Long, type: String, amountCents: Int, description: String, categoryId: Int?, tags: List<String> = emptyList()) {
         viewModelScope.launch {
             appLogger.info("NOTIFY", "confirmWithEdit: id=$id type=$type amount=$amountCents catId=$categoryId")
             if (amountCents <= 0) {
@@ -152,6 +165,7 @@ class NotificationCenterViewModel @Inject constructor(
                 description = description.ifBlank { record.parsedDescription },
                 packageName = record.packageName,
                 categoryId = categoryId,
+                tags = tags,
             )
             _uiEvent.send(UiEvent.ShowToast("已记账 ✓"))
         }
@@ -164,6 +178,7 @@ class NotificationCenterViewModel @Inject constructor(
         description: String?,
         packageName: String,
         categoryId: Int? = null,
+        tags: List<String> = emptyList(),
     ) {
         val clientId = UUID.randomUUID().toString()
         val now = Date()
@@ -186,6 +201,7 @@ class NotificationCenterViewModel @Inject constructor(
             description = description,
             date = dateFormat.format(now),
             time = timeFormat.format(now),
+            tags = if (tags.isNotEmpty()) tags.joinToString(",") else null,
             source = "app_notification",
             sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(packageName),
             clientCreatedAt = now.toInstant().toString()

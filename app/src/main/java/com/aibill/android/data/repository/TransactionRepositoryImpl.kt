@@ -122,6 +122,10 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override suspend fun syncPending(): Result<Unit> = Result.Success(Unit)
 
+    override suspend fun getTags(): Result<List<String>> {
+        return safeApiCall { transactionApi.getTags() }.map { it.items }
+    }
+
     private fun Transaction.toItemRequest() = TransactionItemRequest(
         clientId = clientId,
         source = source.value,

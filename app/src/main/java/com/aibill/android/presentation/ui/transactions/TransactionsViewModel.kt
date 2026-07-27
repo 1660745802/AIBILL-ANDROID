@@ -165,9 +165,9 @@ class TransactionsViewModel @Inject constructor(
 
     private fun loadAvailableTags() {
         viewModelScope.launch {
-            when (val result = com.aibill.android.data.remote.safeApiCall { transactionApi.getTags() }) {
+            when (val result = transactionRepository.getTags()) {
                 is com.aibill.android.domain.model.Result.Success -> {
-                    _uiState.update { it.copy(availableTags = result.data.items) }
+                    _uiState.update { it.copy(availableTags = result.data) }
                 }
                 else -> Unit
             }

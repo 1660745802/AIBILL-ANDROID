@@ -79,12 +79,14 @@ fun AiBillNavHost(
         }
     }
 
-    val showBottomBar = navBackStackEntry?.destination?.route in listOf(
+    val bottomBarRoutes = listOf(
         Route.Home::class.qualifiedName,
         Route.Transactions::class.qualifiedName,
         Route.Statistics::class.qualifiedName,
         Route.Profile::class.qualifiedName,
     )
+    val currentRoute = navBackStackEntry?.destination?.route
+    val showBottomBar = bottomBarRoutes.any { currentRoute?.startsWith(it ?: "") == true }
 
     Scaffold(
         bottomBar = {
@@ -181,10 +183,7 @@ fun AiBillNavHost(
             composable<Route.Statistics> {
                 StatisticsScreen(
                     onNavigateToCategoryTransactions = { categoryId, type ->
-                        navController.navigate(Route.Transactions(categoryId = categoryId, type = type)) {
-                            popUpTo(Route.Home) { saveState = true }
-                            restoreState = false // don't restore old state, need fresh categoryId
-                        }
+                        navController.navigate(Route.Transactions(categoryId = categoryId, type = type))
                     }
                 )
             }
