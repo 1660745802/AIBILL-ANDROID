@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,14 +57,18 @@ import com.aibill.android.domain.model.Transaction
 @Composable
 fun TransactionsScreen(
     initialCategoryId: Int? = null,
+    initialType: String? = null,
     onNavigateToDetail: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: TransactionsViewModel = hiltViewModel(),
 ) {
     // 如果有初始分类筛选，设置到 ViewModel
-    androidx.compose.runtime.LaunchedEffect(initialCategoryId) {
+    androidx.compose.runtime.LaunchedEffect(initialCategoryId, initialType) {
         if (initialCategoryId != null) {
             viewModel.setCategoryFilter(initialCategoryId)
+        }
+        if (initialType != null) {
+            viewModel.onFilterTypeChanged(initialType)
         }
     }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -366,6 +371,7 @@ private fun CategoryFilterDropdown(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
+            modifier = Modifier.heightIn(max = 300.dp),
         ) {
             DropdownMenuItem(
                 text = { Text("全部分类") },

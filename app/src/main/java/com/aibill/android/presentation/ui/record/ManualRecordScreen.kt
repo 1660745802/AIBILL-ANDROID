@@ -368,29 +368,42 @@ private fun CompactTagRow(
                 )
             }
             // 内联输入框
-            OutlinedTextField(
-                value = tagInput,
-                onValueChange = { value ->
-                    tagInput = value
-                    showSuggestions = true
-                },
-                placeholder = { Text("添加标签", style = MaterialTheme.typography.bodySmall) },
-                modifier = Modifier.weight(1f).heightIn(min = 44.dp),
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodySmall,
-                shape = RoundedCornerShape(8.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                ),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = {
-                    if (tagInput.isNotBlank()) {
-                        onTagAdded(tagInput)
-                        tagInput = ""
-                        showSuggestions = false
-                    }
-                }),
-            )
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(36.dp)
+                    .background(
+                        MaterialTheme.colorScheme.surfaceContainerHigh,
+                        RoundedCornerShape(8.dp)
+                    )
+                    .padding(horizontal = 10.dp),
+                contentAlignment = androidx.compose.ui.Alignment.CenterStart,
+            ) {
+                if (tagInput.isEmpty()) {
+                    Text("添加标签", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                }
+                androidx.compose.foundation.text.BasicTextField(
+                    value = tagInput,
+                    onValueChange = { value ->
+                        tagInput = value
+                        showSuggestions = true
+                    },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        color = MaterialTheme.colorScheme.onSurface
+                    ),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        if (tagInput.isNotBlank()) {
+                            onTagAdded(tagInput)
+                            tagInput = ""
+                            showSuggestions = false
+                        }
+                    }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
         // 标签建议（输入框获焦时显示）
         if (showSuggestions && suggestions.isNotEmpty()) {

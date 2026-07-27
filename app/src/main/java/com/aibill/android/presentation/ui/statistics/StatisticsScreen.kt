@@ -47,7 +47,7 @@ import com.aibill.android.presentation.theme.SecondaryButton
 
 @Composable
 fun StatisticsScreen(
-    onNavigateToCategoryTransactions: (Int) -> Unit = {},
+    onNavigateToCategoryTransactions: (Int, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
     viewModel: StatisticsViewModel = hiltViewModel(),
 ) {
@@ -190,7 +190,7 @@ fun StatisticsScreen(
                             selectedTab = state.selectedTab,
                             onClick = {
                                 // 跳转到流水页按该分类筛选
-                                category.categoryId?.let { onNavigateToCategoryTransactions(it) }
+                                category.categoryId?.let { onNavigateToCategoryTransactions(it, state.selectedTab) }
                             },
                         )
                     }

@@ -172,6 +172,7 @@ fun AiBillNavHost(
                 val route = backStackEntry.toRoute<Route.Transactions>()
                 TransactionsScreen(
                     initialCategoryId = route.categoryId,
+                    initialType = route.type,
                     onNavigateToDetail = { id ->
                         navController.navigate(Route.TransactionDetail(id))
                     }
@@ -179,8 +180,8 @@ fun AiBillNavHost(
             }
             composable<Route.Statistics> {
                 StatisticsScreen(
-                    onNavigateToCategoryTransactions = { categoryId ->
-                        navController.navigate(Route.Transactions(categoryId = categoryId)) {
+                    onNavigateToCategoryTransactions = { categoryId, type ->
+                        navController.navigate(Route.Transactions(categoryId = categoryId, type = type)) {
                             popUpTo(Route.Home) { saveState = true }
                             restoreState = false // don't restore old state, need fresh categoryId
                         }
