@@ -181,9 +181,7 @@ fun AiBillNavHost(
                 StatisticsScreen(
                     onNavigateToCategoryTransactions = { categoryId ->
                         navController.navigate(Route.Transactions(categoryId = categoryId)) {
-                            popUpTo(Route.Home) { saveState = true }
                             launchSingleTop = true
-                            restoreState = false // 不恢复旧状态，用新 categoryId
                         }
                     }
                 )

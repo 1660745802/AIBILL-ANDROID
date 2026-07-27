@@ -237,7 +237,7 @@ private fun AmountInputField(
             placeholder = {
                 Text(
                     "0.00",
-                    fontSize = 36.sp,
+                    fontSize = 28.sp,
                     fontWeight = FontWeight.Bold,
                     color = amountColor.copy(alpha = 0.4f),
                     textAlign = TextAlign.Center,
@@ -245,7 +245,7 @@ private fun AmountInputField(
                 )
             },
             textStyle = androidx.compose.ui.text.TextStyle(
-                fontSize = 36.sp,
+                fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = amountColor,
                 textAlign = TextAlign.Center,
@@ -374,10 +374,10 @@ private fun CompactTagRow(
                     tagInput = value
                     showSuggestions = true
                 },
-                placeholder = { Text("添加标签", style = MaterialTheme.typography.labelSmall) },
-                modifier = Modifier.width(100.dp).height(36.dp),
+                placeholder = { Text("添加标签", style = MaterialTheme.typography.bodySmall) },
+                modifier = Modifier.weight(1f).heightIn(min = 44.dp),
                 singleLine = true,
-                textStyle = MaterialTheme.typography.labelSmall,
+                textStyle = MaterialTheme.typography.bodySmall,
                 shape = RoundedCornerShape(8.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -428,10 +429,10 @@ private fun TagEditSection(
             OutlinedTextField(
                 value = tagInput,
                 onValueChange = { tagInput = it },
-                placeholder = { Text("添加标签", style = MaterialTheme.typography.labelSmall) },
-                modifier = Modifier.width(120.dp).height(36.dp),
+                placeholder = { Text("添加标签", style = MaterialTheme.typography.bodySmall) },
+                modifier = Modifier.weight(1f).heightIn(min = 44.dp),
                 singleLine = true,
-                textStyle = MaterialTheme.typography.labelSmall,
+                textStyle = MaterialTheme.typography.bodySmall,
                 shape = RoundedCornerShape(8.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),

@@ -137,7 +137,7 @@ fun TransactionEditDialog(
                             showTagSuggestions = true
                         },
                         placeholder = { Text("添加标签", style = MaterialTheme.typography.labelSmall) },
-                        modifier = Modifier.width(100.dp).height(36.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 44.dp),
                         singleLine = true,
                         textStyle = MaterialTheme.typography.labelSmall,
                         shape = RoundedCornerShape(8.dp),
