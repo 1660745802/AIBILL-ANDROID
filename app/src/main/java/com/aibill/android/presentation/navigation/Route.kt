@@ -22,6 +22,7 @@ sealed interface Route {
     // --- 独立页面 ---
     @Serializable data class ManualRecord(val templateId: Long? = null) : Route
     @Serializable data class TransactionDetail(val id: Int) : Route
+    @Serializable data class CategoryTransactions(val categoryId: Int, val type: String) : Route
     @Serializable data object AiChat : Route
     @Serializable data object Budget : Route
     @Serializable data object NotificationCenter : Route

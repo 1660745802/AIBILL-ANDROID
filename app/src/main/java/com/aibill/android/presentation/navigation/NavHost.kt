@@ -84,6 +84,7 @@ fun AiBillNavHost(
         Route.Transactions::class.qualifiedName,
         Route.Statistics::class.qualifiedName,
         Route.Profile::class.qualifiedName,
+        Route.CategoryTransactions::class.qualifiedName,
     )
     val currentRoute = navBackStackEntry?.destination?.route
     val showBottomBar = bottomBarRoutes.any { currentRoute?.startsWith(it ?: "") == true }
@@ -183,7 +184,7 @@ fun AiBillNavHost(
             composable<Route.Statistics> {
                 StatisticsScreen(
                     onNavigateToCategoryTransactions = { categoryId, type ->
-                        navController.navigate(Route.Transactions(categoryId = categoryId, type = type))
+                        navController.navigate(Route.CategoryTransactions(categoryId = categoryId, type = type))
                     }
                 )
             }
@@ -225,6 +226,16 @@ fun AiBillNavHost(
             composable<Route.TransactionDetail> {
                 TransactionDetailScreen(
                     onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable<Route.CategoryTransactions> { backStackEntry ->
+                val route = backStackEntry.toRoute<Route.CategoryTransactions>()
+                TransactionsScreen(
+                    initialCategoryId = route.categoryId,
+                    initialType = route.type,
+                    onNavigateToDetail = { id ->
+                        navController.navigate(Route.TransactionDetail(id))
+                    },
                 )
             }
             composable<Route.Template> {

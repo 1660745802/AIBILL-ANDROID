@@ -91,7 +91,7 @@ fun StatisticsScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         when {
-            state.isLoading -> {
+            state.isLoading && state.summary == null -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,

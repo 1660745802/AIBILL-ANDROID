@@ -35,7 +35,7 @@ fun BottomNavBar(navController: NavHostController) {
 
     NavigationBar {
         bottomNavItems.forEach { item ->
-            val isSelected = currentRoute == item.route::class.qualifiedName
+            val isSelected = currentRoute?.startsWith(item.route::class.qualifiedName ?: "") == true
 
             NavigationBarItem(
                 selected = isSelected,
