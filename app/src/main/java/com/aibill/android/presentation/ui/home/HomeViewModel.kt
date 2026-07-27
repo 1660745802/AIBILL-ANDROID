@@ -223,6 +223,7 @@ class HomeViewModel @Inject constructor(
         description: String,
         accountId: Int? = null,
         targetAccountId: Int? = null,
+        tags: List<String> = emptyList(),
     ) {
         viewModelScope.launch {
             appLogger.info("HOME", "onConfirmEditedItem: amount=$amount type=$type catId=$categoryId")
@@ -253,7 +254,7 @@ class HomeViewModel @Inject constructor(
                 }
             }
             when (val result =
-                transactionRepository.createTransactions(listOf(edited.toTransaction()))) {
+                transactionRepository.createTransactions(listOf(edited.toTransaction(tags)))) {
                 is Result.Success -> {
                     val remaining =
                         _uiState.value.aiParseResults?.filter { it !== original }
@@ -306,7 +307,7 @@ class HomeViewModel @Inject constructor(
         )) {
             is Result.Success -> {
                 _uiState.update {
-                    it.copy(isLoading = false, todayTransactions = result.data.items)
+                    it.copy(isLoading = false, todayTransactions = result.data.items.distinctBy { t -> t.clientId })
                 }
                 true
             }
@@ -351,7 +352,7 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun AiParseResult.toTransaction(): Transaction = Transaction(
+    private fun AiParseResult.toTransaction(extraTags: List<String> = emptyList()): Transaction = Transaction(
         clientId = UUID.randomUUID().toString(),
         type = type,
         amount = amount,
@@ -366,5 +367,6 @@ class HomeViewModel @Inject constructor(
         date = date,
         time = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
         source = TransactionSource.AI,
+        tags = extraTags.ifEmpty { null },
     )
 }

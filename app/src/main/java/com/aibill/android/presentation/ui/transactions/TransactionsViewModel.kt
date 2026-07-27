@@ -95,7 +95,10 @@ class TransactionsViewModel @Inject constructor(
             )) {
                 is Result.Success -> {
                     val pageResult = result.data
-                    allTransactions.addAll(pageResult.items)
+                    // 去重：防后端返回重复记录导致 key 冲突崩溃
+                    val existingIds = allTransactions.map { it.clientId }.toSet()
+                    val newItems = pageResult.items.filter { it.clientId !in existingIds }
+                    allTransactions.addAll(newItems)
                     val grouped = allTransactions.groupBy { it.date }
                         .toSortedMap(compareByDescending { it })
                     // PR #47：使用服务端 total 准确判定 hasMore (PRD §6.5.2)

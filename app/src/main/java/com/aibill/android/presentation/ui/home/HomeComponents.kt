@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -46,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -95,10 +97,11 @@ internal fun AiResultsCard(
     results: List<AiParseResult>,
     categoriesByType: Map<String, List<com.aibill.android.domain.model.Category>>,
     accounts: List<com.aibill.android.domain.model.Account> = emptyList(),
+    availableTags: List<String> = emptyList(),
     onConfirmItem: (AiParseResult) -> Unit,
     onConfirmAll: () -> Unit,
     onDismiss: () -> Unit,
-    onConfirmEdited: (AiParseResult, Int, TransactionType, Int, String, Int?, Int?) -> Unit = { _, _, _, _, _, _, _ -> },
+    onConfirmEdited: (AiParseResult, Int, TransactionType, Int, String, Int?, Int?, List<String>) -> Unit = { _, _, _, _, _, _, _, _ -> },
 ) {
     var editTarget by remember { mutableStateOf<AiParseResult?>(null) }
     editTarget?.let { target ->
@@ -106,9 +109,10 @@ internal fun AiResultsCard(
             item = target,
             categoriesByType = categoriesByType,
             accounts = accounts,
+            availableTags = availableTags,
             onDismiss = { editTarget = null },
-            onConfirm = { amount, type, categoryId, desc, accId, targetAccId ->
-                onConfirmEdited(target, amount, type, categoryId, desc, accId, targetAccId)
+            onConfirm = { amount, type, categoryId, desc, accId, targetAccId, tags ->
+                onConfirmEdited(target, amount, type, categoryId, desc, accId, targetAccId, tags)
                 editTarget = null
             }
         )
@@ -247,13 +251,15 @@ private fun ParseResultItem(item: AiParseResult, onConfirm: () -> Unit, onEdit: 
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun AiEditDialog(
     item: AiParseResult,
     categoriesByType: Map<String, List<com.aibill.android.domain.model.Category>>,
     accounts: List<com.aibill.android.domain.model.Account> = emptyList(),
+    availableTags: List<String> = emptyList(),
     onDismiss: () -> Unit,
-    onConfirm: (amount: Int, type: TransactionType, categoryId: Int, description: String, accountId: Int?, targetAccountId: Int?) -> Unit,
+    onConfirm: (amount: Int, type: TransactionType, categoryId: Int, description: String, accountId: Int?, targetAccountId: Int?, tags: List<String>) -> Unit,
 ) {
     var type by remember { mutableStateOf(item.type) }
     var amountText by remember { mutableStateOf("%.2f".format(item.amount / 100.0)) }
@@ -261,12 +267,18 @@ private fun AiEditDialog(
     var selectedCategoryId by remember { mutableStateOf(item.categoryId) }
     var selectedAccountId by remember { mutableStateOf(item.accountId) }
     var selectedTargetAccountId by remember { mutableStateOf(item.targetAccountId) }
+    var tags by remember { mutableStateOf<List<String>>(emptyList()) }
+    var tagInput by remember { mutableStateOf("") }
 
     val typeKey = when (type) {
         TransactionType.INCOME -> "income"
         else -> "expense"
     }
     val availableCategories = categoriesByType[typeKey].orEmpty()
+    val tagSuggestions = remember(tagInput, availableTags, tags) {
+        if (tagInput.isBlank()) availableTags.filter { it !in tags }.take(5)
+        else availableTags.filter { it.contains(tagInput, ignoreCase = true) && it !in tags }.take(5)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -348,6 +360,65 @@ private fun AiEditDialog(
                         onSelect = { selectedTargetAccountId = it },
                     )
                 }
+                // 标签
+                Text(
+                    text = "标签",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // 已选标签 + 输入
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    tags.forEach { tag ->
+                        androidx.compose.material3.InputChip(
+                            selected = false,
+                            onClick = { tags = tags - tag },
+                            label = { Text(tag, style = MaterialTheme.typography.labelSmall) },
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "移除标签",
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            },
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = tagInput,
+                    onValueChange = { tagInput = it },
+                    placeholder = { Text("添加标签") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = {
+                        if (tagInput.isNotBlank()) {
+                            tags = tags + tagInput.trim()
+                            tagInput = ""
+                        }
+                    }),
+                )
+                // 标签建议
+                if (tagSuggestions.isNotEmpty()) {
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        tagSuggestions.forEach { suggestion ->
+                            androidx.compose.material3.SuggestionChip(
+                                onClick = {
+                                    tags = tags + suggestion
+                                    tagInput = ""
+                                },
+                                label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
+                            )
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
@@ -363,7 +434,8 @@ private fun AiEditDialog(
                         ?: 0
                     onConfirm(cents, type, finalCategoryId, description,
                         if (type == TransactionType.TRANSFER) selectedAccountId else null,
-                        if (type == TransactionType.TRANSFER) selectedTargetAccountId else null)
+                        if (type == TransactionType.TRANSFER) selectedTargetAccountId else null,
+                        tags)
                 },
                 enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0
             ) { Text("确认记账") }

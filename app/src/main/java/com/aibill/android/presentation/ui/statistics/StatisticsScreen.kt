@@ -183,7 +183,7 @@ fun StatisticsScreen(
                     }
                     items(
                         items = state.categoryStats,
-                        key = { it.categoryId },
+                        key = { "${it.categoryId}:${it.categoryName}" },
                     ) { category ->
                         CategoryStatItem(
                             category = category,

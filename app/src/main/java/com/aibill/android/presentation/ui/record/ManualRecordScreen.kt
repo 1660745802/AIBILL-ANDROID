@@ -65,6 +65,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,6 +74,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.IncomeColor
+import com.aibill.android.presentation.theme.PrimaryButton
 import com.aibill.android.presentation.utils.toYuanDisplay
 import kotlinx.coroutines.delay
 
@@ -119,18 +122,23 @@ fun ManualRecordScreen(
             )
         },
     ) { padding ->
-        val selectedCategory = state.categories.firstOrNull { it.id == state.selectedCategoryId }
         Box(modifier = Modifier
             .fillMaxSize()
             .padding(padding)
-            // PR #33：避免软键盘弹起时遮挡备注/分类等输入区
             .imePadding()
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // 类型切换（固定顶部）
                 TypeSelector(selectedType = state.type, onTypeSelected = viewModel::onTypeChanged)
 
-                // 分类网格 / 转账账户（中部主区域，占据最大空间，可滚动）
+                // 金额输入框（大字号，居中，使用系统键盘）
+                AmountInputField(
+                    amountText = state.amountText,
+                    onAmountChanged = viewModel::onAmountTextChanged,
+                    type = state.type,
+                )
+
+                // 分类网格 / 转账账户（中部主区域，占据最大空间）
                 Box(modifier = Modifier.weight(1f).heightIn(min = 120.dp)) {
                     if (state.type == "transfer") {
                         Column(
@@ -156,45 +164,41 @@ fun ManualRecordScreen(
                     }
                 }
 
-                // 标签行（分类和底部面板之间，固定高度）
-                CompactTagRow(
-                    tags = state.tags,
-                    availableTags = state.availableTags,
-                    onTagAdded = viewModel::onTagAdded,
-                    onTagRemoved = viewModel::onTagRemoved,
-                )
-
-                // 底部输入面板：金额 + 备注 + 键盘聚合为一体（带圆角上边和阴影）
-                Surface(
-                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    shadowElevation = 12.dp,
-                    modifier = Modifier.fillMaxWidth(),
+                // 底部固定区域：标签行 + 备注 + 保存按钮
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Column(modifier = Modifier.padding(top = 8.dp)) {
-                        // 金额行：左=选中分类，右=金额大字
-                        InputAmountRow(
-                            selectedLabel = when {
-                                state.type == "transfer" -> "转账"
-                                selectedCategory != null -> "${selectedCategory.icon} ${selectedCategory.name}"
-                                else -> "请选择分类"
-                            },
-                            amountText = state.amountText,
-                            amountFen = state.amountFen,
-                            type = state.type,
-                        )
-                        // 备注
-                        CompactNoteRow(
-                            description = state.description,
-                            onDescriptionChanged = viewModel::onDescriptionChanged,
-                        )
-                        // 数字键盘
-                        NumericKeyboard(
-                            onInput = viewModel::onAmountInput, onDelete = viewModel::onAmountDelete,
-                            onSave = viewModel::onSave,
-                            isSaving = state.isSaving,
-                        )
-                    }
+                    // 标签行
+                    CompactTagRow(
+                        tags = state.tags,
+                        availableTags = state.availableTags,
+                        onTagAdded = viewModel::onTagAdded,
+                        onTagRemoved = viewModel::onTagRemoved,
+                    )
+
+                    // 备注输入
+                    OutlinedTextField(
+                        value = state.description,
+                        onValueChange = viewModel::onDescriptionChanged,
+                        placeholder = { Text("备注（选填）...", style = MaterialTheme.typography.bodyMedium) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        ),
+                    )
+
+                    // 保存按钮
+                    PrimaryButton(
+                        text = if (state.isSaving) "保存中..." else "保存",
+                        onClick = viewModel::onSave,
+                        enabled = !state.isSaving,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
             AnimatedVisibility(
@@ -206,10 +210,9 @@ fun ManualRecordScreen(
 }
 
 @Composable
-private fun InputAmountRow(
-    selectedLabel: String,
+private fun AmountInputField(
     amountText: String,
-    amountFen: Int,
+    onAmountChanged: (String) -> Unit,
     type: String,
 ) {
     val amountColor = when (type) {
@@ -217,32 +220,56 @@ private fun InputAmountRow(
         "transfer" -> MaterialTheme.colorScheme.primary
         else -> ExpenseColor
     }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            text = selectedLabel,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                text = if (amountText.isEmpty()) "¥0.00" else "¥$amountText",
-                fontSize = 34.sp, fontWeight = FontWeight.Bold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, letterSpacing = (-1).sp,
+        OutlinedTextField(
+            value = amountText,
+            onValueChange = { newVal ->
+                // 只允许数字和小数点，限制小数点后两位
+                if (newVal.isEmpty() || newVal.matches(Regex("""^\d*\.?\d{0,2}$"""))) {
+                    onAmountChanged(newVal)
+                }
+            },
+            placeholder = {
+                Text(
+                    "0.00",
+                    fontSize = 36.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = amountColor.copy(alpha = 0.4f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            textStyle = androidx.compose.ui.text.TextStyle(
+                fontSize = 36.sp,
+                fontWeight = FontWeight.Bold,
                 color = amountColor,
-            )
-            if (amountText.contains(Regex("[+\\-*/]"))) {
-                Text("= ${amountFen.toYuanDisplay()}", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
+                textAlign = TextAlign.Center,
+            ),
+            prefix = {
+                Text(
+                    "¥",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = amountColor,
+                )
+            },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Decimal,
+                imeAction = ImeAction.Done,
+            ),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = amountColor,
+                unfocusedBorderColor = amountColor.copy(alpha = 0.3f),
+            ),
+        )
     }
 }
 
@@ -302,33 +329,6 @@ private fun TypeSelector(
     }
 }
 
-@Composable
-private fun CompactNoteRow(
-    description: String,
-    onDescriptionChanged: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // 备注输入（占满宽度）
-        OutlinedTextField(
-            value = description,
-            onValueChange = onDescriptionChanged,
-            placeholder = { Text("备注（选填）...", style = MaterialTheme.typography.bodyMedium) },
-            modifier = Modifier.weight(1f),
-            singleLine = true,
-            shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-            ),
-        )
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CompactTagRow(
@@ -345,7 +345,7 @@ private fun CompactTagRow(
         else availableTags.filter { it.contains(tagInput, ignoreCase = true) && it !in tags }.take(5)
     }
 
-    Column(modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
+    Column(modifier = modifier.fillMaxWidth()) {
         // 已选标签 + 输入框（单行紧凑）
         Row(
             modifier = Modifier.fillMaxWidth().height(44.dp),

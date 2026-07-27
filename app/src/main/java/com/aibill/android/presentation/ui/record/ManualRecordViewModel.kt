@@ -166,6 +166,16 @@ class ManualRecordViewModel @Inject constructor(
         loadCategories(type)
     }
 
+    /**
+     * 直接设置金额文本（用于系统键盘输入场景）。
+     * 接受已经过格式校验的纯数字+小数点字符串，转换为分。
+     */
+    fun onAmountTextChanged(text: String) {
+        val fen = if (text.isEmpty()) 0
+        else Math.round((text.toDoubleOrNull() ?: 0.0) * 100).toInt()
+        _uiState.update { it.copy(amountText = text, amountFen = fen) }
+    }
+
     fun onAmountInput(char: String) {
         val current = _uiState.value.amountText
         // 限制长度防止溢出
