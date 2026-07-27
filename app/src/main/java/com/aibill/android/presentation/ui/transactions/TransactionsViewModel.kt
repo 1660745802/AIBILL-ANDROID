@@ -38,7 +38,7 @@ class TransactionsViewModel @Inject constructor(
         /** 按分类筛选（从统计页点击分类跳转时使用） */
         val filterCategoryId: Int? = null,
         /** 标签筛选 */
-        val filterTag: String? = null,
+        val filterTags: List<String> = emptyList(),
         /** 可选标签列表 */
         val availableTags: List<String> = emptyList(),
         /** 可选分类列表（用于分类筛选下拉） */
@@ -88,7 +88,7 @@ class TransactionsViewModel @Inject constructor(
             // PR #27：透传 type 筛选给 Repository，后端按 type 过滤
             val typeFilter = _uiState.value.filterType.takeIf { it != "all" }
             val categoryFilter = _uiState.value.filterCategoryId
-            val tagFilter = _uiState.value.filterTag
+            val tagFilter = _uiState.value.filterTags.joinToString(",").ifEmpty { null }
             when (val result = transactionRepository.getTransactions(
                 page = currentPage,
                 pageSize = pageSize,
@@ -159,7 +159,15 @@ class TransactionsViewModel @Inject constructor(
     }
 
     fun setTagFilter(tag: String?) {
-        _uiState.update { it.copy(filterTag = tag) }
+        if (tag == null) {
+            _uiState.update { it.copy(filterTags = emptyList()) }
+        } else {
+            _uiState.update {
+                val current = it.filterTags
+                val newTags = if (tag in current) current - tag else current + tag
+                it.copy(filterTags = newTags)
+            }
+        }
         loadTransactions(refresh = true)
     }
 

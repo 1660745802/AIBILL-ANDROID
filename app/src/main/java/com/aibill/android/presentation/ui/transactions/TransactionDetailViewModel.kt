@@ -54,6 +54,7 @@ class TransactionDetailViewModel @Inject constructor(
         val date: String = "",
         val time: String = "",
         val tags: String = "",
+        val availableTags: List<String> = emptyList(),
         val categories: List<Category> = emptyList(),
         val accounts: List<com.aibill.android.domain.model.Account> = emptyList(),
         val error: String? = null,
@@ -73,6 +74,7 @@ class TransactionDetailViewModel @Inject constructor(
     init {
         loadTransaction()
         observeAccounts()
+        loadAvailableTags()
         viewModelScope.launch {
             // 当前 type 对应的分类列表，type 切换时重订阅
             _uiState.map { it.type }.distinctUntilChanged().collectLatest { type ->
@@ -185,6 +187,15 @@ class TransactionDetailViewModel @Inject constructor(
                     _uiEvent.send(UiEvent.ShowToast("删除失败: ${result.message}"))
                 }
                 is Result.Loading -> Unit
+            }
+        }
+    }
+
+    private fun loadAvailableTags() {
+        viewModelScope.launch {
+            when (val result = transactionRepository.getTags()) {
+                is com.aibill.android.domain.model.Result.Success -> _uiState.update { it.copy(availableTags = result.data) }
+                else -> Unit
             }
         }
     }

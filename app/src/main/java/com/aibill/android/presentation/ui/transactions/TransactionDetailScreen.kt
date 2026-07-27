@@ -214,6 +214,7 @@ fun TransactionDetailScreen(
                         TagEditSection(
                             tagsText = uiState.tags,
                             onTagsChanged = viewModel::onTagsChanged,
+                            availableTags = uiState.availableTags,
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -394,6 +395,7 @@ private fun AccountPickerRow(
 private fun TagEditSection(
     tagsText: String,
     onTagsChanged: (String) -> Unit,
+    availableTags: List<String> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     // Parse the comma-separated tags string into a list
@@ -447,6 +449,28 @@ private fun TagEditSection(
                     }
                 }),
             )
+        }
+        // 历史标签建议
+        val suggestions = remember(availableTags, tags) {
+            availableTags.filter { it !in tags }.take(5)
+        }
+        if (suggestions.isNotEmpty()) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                suggestions.forEach { suggestion ->
+                    SuggestionChip(
+                        onClick = {
+                            val newTags = tags + suggestion
+                            onTagsChanged(newTags.joinToString(", "))
+                        },
+                        label = { Text(suggestion) },
+                        modifier = Modifier.height(28.dp),
+                    )
+                }
+            }
         }
     }
 }

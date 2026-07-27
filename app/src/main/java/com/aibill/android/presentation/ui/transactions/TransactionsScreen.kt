@@ -178,9 +178,9 @@ fun TransactionsScreen(
                 ) {
                     uiState.availableTags.forEach { tag ->
                         FilterChip(
-                            selected = uiState.filterTag == tag,
+                            selected = tag in uiState.filterTags,
                             onClick = {
-                                viewModel.setTagFilter(if (uiState.filterTag == tag) null else tag)
+                                viewModel.setTagFilter(tag)
                             },
                             label = { Text("#$tag") },
                         )

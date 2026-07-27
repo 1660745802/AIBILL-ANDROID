@@ -157,7 +157,7 @@ fun TransactionEditDialog(
                         }),
                     )
                 }
-                if (showTagSuggestions && tagSuggestions.isNotEmpty()) {
+                if (tagSuggestions.isNotEmpty()) {
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
