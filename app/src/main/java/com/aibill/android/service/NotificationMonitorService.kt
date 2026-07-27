@@ -175,8 +175,11 @@ class NotificationMonitorService : NotificationListenerService() {
             "com.tencent.mm" -> {
                 // 微信：title 是"微信支付"直接放行
                 if (title == "微信支付" || title == "微信支付凭证" || title.contains("零钱")) return true
-                // 否则看全文有没有支付特征
-                PAYMENT_SIGNAL.containsMatchIn(fullText)
+                // 其他 title（联系人/群/服务号）：
+                // 只放行微信系统消息格式（[转账]/[微信红包]）或含金额符号 ¥/￥ 的
+                val text = fullText.substringAfter(title).trim()
+                text.startsWith("[转账]") || text.startsWith("[微信红包]") ||
+                    text.contains("¥") || text.contains("￥")
             }
             "com.eg.android.AlipayGphone" -> {
                 // 支付宝：只有明确的交易/账务 title 才放行（排除蚂蚁庄园/卡包优惠等）
