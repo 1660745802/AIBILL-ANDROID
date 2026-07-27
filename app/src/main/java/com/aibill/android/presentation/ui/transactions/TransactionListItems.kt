@@ -148,7 +148,7 @@ internal fun TransactionItem(
                 if (!transaction.description.isNullOrBlank()) {
                     Text(
                         text = transaction.description,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -179,8 +179,8 @@ internal fun TransactionItem(
                 transaction.time?.let { time ->
                     Text(
                         text = time,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

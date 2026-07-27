@@ -23,6 +23,7 @@ import javax.inject.Inject
 class TransactionsViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val transactionApi: com.aibill.android.data.remote.api.TransactionApi,
+    private val categoryRepository: com.aibill.android.domain.repository.CategoryRepository,
 ) : ViewModel() {
 
     data class TransactionsUiState(
@@ -40,6 +41,8 @@ class TransactionsViewModel @Inject constructor(
         val filterTag: String? = null,
         /** 可选标签列表 */
         val availableTags: List<String> = emptyList(),
+        /** 可选分类列表（用于分类筛选下拉） */
+        val categories: List<com.aibill.android.domain.model.Category> = emptyList(),
     )
 
     sealed class UiEvent {
@@ -63,6 +66,7 @@ class TransactionsViewModel @Inject constructor(
     init {
         loadTransactions(refresh = true)
         loadAvailableTags()
+        loadCategories()
     }
 
     fun loadTransactions(refresh: Boolean = false) {
@@ -164,6 +168,17 @@ class TransactionsViewModel @Inject constructor(
             when (val result = com.aibill.android.data.remote.safeApiCall { transactionApi.getTags() }) {
                 is com.aibill.android.domain.model.Result.Success -> {
                     _uiState.update { it.copy(availableTags = result.data.items) }
+                }
+                else -> Unit
+            }
+        }
+    }
+
+    private fun loadCategories() {
+        viewModelScope.launch {
+            when (val result = categoryRepository.getCategoriesOnce()) {
+                is Result.Success -> {
+                    _uiState.update { it.copy(categories = result.data) }
                 }
                 else -> Unit
             }

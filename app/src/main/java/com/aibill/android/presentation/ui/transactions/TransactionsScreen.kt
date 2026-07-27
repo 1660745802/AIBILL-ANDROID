@@ -2,6 +2,7 @@ package com.aibill.android.presentation.ui.transactions
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -21,6 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -37,7 +40,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -125,7 +130,7 @@ fun TransactionsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(start = 20.dp, top = 6.dp, end = 12.dp, bottom = 12.dp),
+                    .padding(start = 20.dp, top = 6.dp, end = 12.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 FilterChip(
@@ -145,11 +150,28 @@ fun TransactionsScreen(
                     onClick = { viewModel.onFilterTypeChanged("income") },
                     label = { Text("收入") },
                 )
-                // 标签筛选
-                if (uiState.availableTags.isNotEmpty()) {
+                // 分类筛选下拉
+                if (uiState.categories.isNotEmpty()) {
                     Spacer(modifier = Modifier.width(8.dp))
+                    CategoryFilterDropdown(
+                        categories = uiState.categories,
+                        selectedCategoryId = uiState.filterCategoryId,
+                        onCategorySelected = { viewModel.setCategoryFilter(it) },
+                    )
+                }
+            }
+
+            // 标签筛选行
+            if (uiState.availableTags.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(start = 20.dp, end = 12.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
                     uiState.availableTags.forEach { tag ->
-                        Spacer(modifier = Modifier.width(4.dp))
                         FilterChip(
                             selected = uiState.filterTag == tag,
                             onClick = {
@@ -320,6 +342,41 @@ private fun EmptyContent(modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
             )
+        }
+    }
+}
+
+@Composable
+private fun CategoryFilterDropdown(
+    categories: List<com.aibill.android.domain.model.Category>,
+    selectedCategoryId: Int?,
+    onCategorySelected: (Int?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedName = categories.firstOrNull { it.id == selectedCategoryId }
+        ?.let { "${it.icon} ${it.name}" } ?: "分类"
+
+    Box(modifier = modifier) {
+        FilterChip(
+            selected = selectedCategoryId != null,
+            onClick = { expanded = true },
+            label = { Text(selectedName) },
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("全部分类") },
+                onClick = { onCategorySelected(null); expanded = false },
+            )
+            categories.forEach { cat ->
+                DropdownMenuItem(
+                    text = { Text("${cat.icon} ${cat.name}") },
+                    onClick = { onCategorySelected(cat.id); expanded = false },
+                )
+            }
         }
     }
 }

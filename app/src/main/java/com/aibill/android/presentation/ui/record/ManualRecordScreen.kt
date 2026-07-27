@@ -356,7 +356,7 @@ private fun CompactTagRow(
                 InputChip(
                     selected = false,
                     onClick = { onTagRemoved(tag) },
-                    label = { Text(tag, style = MaterialTheme.typography.labelSmall) },
+                    label = { Text(tag) },
                     trailingIcon = {
                         Icon(
                             Icons.Default.Close,
@@ -406,7 +406,7 @@ private fun CompactTagRow(
                             tagInput = ""
                             showSuggestions = false
                         },
-                        label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
+                        label = { Text(suggestion) },
                         modifier = Modifier.height(26.dp),
                     )
                 }

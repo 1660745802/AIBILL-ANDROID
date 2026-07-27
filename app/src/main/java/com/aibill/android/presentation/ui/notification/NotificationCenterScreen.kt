@@ -235,7 +235,7 @@ private fun NotificationItem(
 
                 Text(
                     text = amountText,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Bold
                 )
 
@@ -243,7 +243,7 @@ private fun NotificationItem(
                 val desc = item.parsedDescription ?: item.content
                 Text(
                     text = desc,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -252,8 +252,8 @@ private fun NotificationItem(
                 // 时间
                 Text(
                     text = formatTime(item.receivedAt),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
@@ -514,7 +514,7 @@ private fun ConfirmedNotificationItem(item: NotificationRecordEntity) {
                 Text(
                     text = amountText,
                     style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     color = if (item.parsedType == "income") {
                         com.aibill.android.presentation.theme.IncomeColor
                     } else {

@@ -415,7 +415,7 @@ private fun TagEditSection(
                         val newTags = tags - tag
                         onTagsChanged(newTags.joinToString(", "))
                     },
-                    label = { Text(tag, style = MaterialTheme.typography.labelSmall) },
+                    label = { Text(tag) },
                     trailingIcon = {
                         Icon(
                             Icons.Default.Close,

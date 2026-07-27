@@ -375,7 +375,7 @@ private fun AiEditDialog(
                         androidx.compose.material3.InputChip(
                             selected = false,
                             onClick = { tags = tags - tag },
-                            label = { Text(tag, style = MaterialTheme.typography.labelSmall) },
+                            label = { Text(tag) },
                             trailingIcon = {
                                 Icon(
                                     Icons.Default.Close,
@@ -389,9 +389,10 @@ private fun AiEditDialog(
                 OutlinedTextField(
                     value = tagInput,
                     onValueChange = { tagInput = it },
-                    placeholder = { Text("添加标签") },
+                    placeholder = { Text("添加标签", style = MaterialTheme.typography.bodySmall) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall,
                     keyboardOptions = KeyboardOptions(
                         imeAction = ImeAction.Done,
                     ),
@@ -414,7 +415,7 @@ private fun AiEditDialog(
                                     tags = tags + suggestion
                                     tagInput = ""
                                 },
-                                label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
+                                label = { Text(suggestion) },
                             )
                         }
                     }

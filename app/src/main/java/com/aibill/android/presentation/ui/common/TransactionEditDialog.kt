@@ -119,7 +119,7 @@ fun TransactionEditDialog(
                         InputChip(
                             selected = false,
                             onClick = { tags = tags - tag },
-                            label = { Text(tag, style = MaterialTheme.typography.labelSmall) },
+                            label = { Text(tag) },
                             trailingIcon = {
                                 Icon(
                                     Icons.Default.Close,
@@ -136,10 +136,10 @@ fun TransactionEditDialog(
                             tagInput = value
                             showTagSuggestions = true
                         },
-                        placeholder = { Text("添加标签", style = MaterialTheme.typography.labelSmall) },
+                        placeholder = { Text("添加标签", style = MaterialTheme.typography.bodySmall) },
                         modifier = Modifier.weight(1f).heightIn(min = 44.dp),
                         singleLine = true,
-                        textStyle = MaterialTheme.typography.labelSmall,
+                        textStyle = MaterialTheme.typography.bodySmall,
                         shape = RoundedCornerShape(8.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
@@ -170,7 +170,7 @@ fun TransactionEditDialog(
                                     tagInput = ""
                                     showTagSuggestions = false
                                 },
-                                label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
+                                label = { Text(suggestion) },
                                 modifier = Modifier.height(26.dp),
                             )
                         }
