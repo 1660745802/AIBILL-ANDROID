@@ -58,10 +58,10 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override suspend fun getTransactions(
         page: Int, pageSize: Int, startDate: String?,
-        endDate: String?, type: String?, categoryId: Int?, accountId: Int?, keyword: String?,
+        endDate: String?, type: String?, categoryId: Int?, accountId: Int?, keyword: String?, tag: String?,
     ): Result<TransactionPage> {
         return safeApiCall {
-            transactionApi.getTransactions(page, pageSize, startDate, endDate, type, categoryId, accountId, keyword)
+            transactionApi.getTransactions(page, pageSize, startDate, endDate, type, categoryId, accountId, keyword, tag)
         }.map { paginated ->
             TransactionPage(
                 items = paginated.items.map { it.toDomain() },

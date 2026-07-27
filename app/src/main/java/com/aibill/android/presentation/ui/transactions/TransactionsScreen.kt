@@ -1,6 +1,7 @@
 package com.aibill.android.presentation.ui.transactions
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
@@ -122,6 +124,7 @@ fun TransactionsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
                     .padding(start = 20.dp, top = 6.dp, end = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -142,6 +145,20 @@ fun TransactionsScreen(
                     onClick = { viewModel.onFilterTypeChanged("income") },
                     label = { Text("收入") },
                 )
+                // 标签筛选
+                if (uiState.availableTags.isNotEmpty()) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    uiState.availableTags.forEach { tag ->
+                        Spacer(modifier = Modifier.width(4.dp))
+                        FilterChip(
+                            selected = uiState.filterTag == tag,
+                            onClick = {
+                                viewModel.setTagFilter(if (uiState.filterTag == tag) null else tag)
+                            },
+                            label = { Text("#$tag") },
+                        )
+                    }
+                }
             }
 
             PullToRefreshBox(

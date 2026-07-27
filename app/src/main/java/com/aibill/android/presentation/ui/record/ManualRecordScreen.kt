@@ -15,6 +15,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.imePadding
@@ -27,20 +29,25 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -57,6 +64,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -171,6 +179,13 @@ fun ManualRecordScreen(
                         CompactNoteRow(
                             description = state.description,
                             onDescriptionChanged = viewModel::onDescriptionChanged,
+                        )
+                        // 标签
+                        CompactTagRow(
+                            tags = state.tags,
+                            availableTags = state.availableTags,
+                            onTagAdded = viewModel::onTagAdded,
+                            onTagRemoved = viewModel::onTagRemoved,
                         )
                         // 数字键盘
                         NumericKeyboard(
@@ -310,6 +325,92 @@ private fun CompactNoteRow(
                 unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
             ),
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CompactTagRow(
+    tags: List<String>,
+    availableTags: List<String>,
+    onTagAdded: (String) -> Unit,
+    onTagRemoved: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var tagInput by remember { mutableStateOf("") }
+    var showSuggestions by remember { mutableStateOf(false) }
+    val suggestions = remember(tagInput, availableTags, tags) {
+        if (tagInput.isBlank()) emptyList()
+        else availableTags.filter { it.contains(tagInput, ignoreCase = true) && it !in tags }
+    }
+
+    Column(modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
+        // 已选标签 + 输入框
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            tags.forEach { tag ->
+                InputChip(
+                    selected = false,
+                    onClick = { onTagRemoved(tag) },
+                    label = { Text(tag, style = MaterialTheme.typography.labelSmall) },
+                    trailingIcon = {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "移除标签",
+                            modifier = Modifier.size(14.dp),
+                        )
+                    },
+                    modifier = Modifier.height(28.dp),
+                )
+            }
+            // 内联输入框
+            OutlinedTextField(
+                value = tagInput,
+                onValueChange = { value ->
+                    tagInput = value
+                    showSuggestions = value.isNotBlank()
+                },
+                placeholder = { Text("添加标签...", style = MaterialTheme.typography.labelSmall) },
+                modifier = Modifier.width(100.dp).height(36.dp),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.labelSmall,
+                shape = RoundedCornerShape(8.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                ),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = {
+                    if (tagInput.isNotBlank()) {
+                        onTagAdded(tagInput)
+                        tagInput = ""
+                        showSuggestions = false
+                    }
+                }),
+            )
+        }
+        // 下拉建议
+        if (showSuggestions && suggestions.isNotEmpty()) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                suggestions.take(5).forEach { suggestion ->
+                    SuggestionChip(
+                        onClick = {
+                            onTagAdded(suggestion)
+                            tagInput = ""
+                            showSuggestions = false
+                        },
+                        label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
+                        modifier = Modifier.height(26.dp),
+                    )
+                }
+            }
+        }
     }
 }
 

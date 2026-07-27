@@ -23,6 +23,7 @@ interface TransactionRepository {
         categoryId: Int? = null,
         accountId: Int? = null,
         keyword: String? = null,
+        tag: String? = null,
     ): Result<TransactionPage>
 
     suspend fun deleteTransaction(id: Int): Result<Unit>

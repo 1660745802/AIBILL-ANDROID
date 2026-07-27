@@ -22,6 +22,7 @@ import javax.inject.Inject
 @HiltViewModel
 class TransactionsViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
+    private val transactionApi: com.aibill.android.data.remote.api.TransactionApi,
 ) : ViewModel() {
 
     data class TransactionsUiState(
@@ -35,6 +36,10 @@ class TransactionsViewModel @Inject constructor(
         val filterType: String = "all",
         /** 按分类筛选（从统计页点击分类跳转时使用） */
         val filterCategoryId: Int? = null,
+        /** 标签筛选 */
+        val filterTag: String? = null,
+        /** 可选标签列表 */
+        val availableTags: List<String> = emptyList(),
     )
 
     sealed class UiEvent {
@@ -57,6 +62,7 @@ class TransactionsViewModel @Inject constructor(
 
     init {
         loadTransactions(refresh = true)
+        loadAvailableTags()
     }
 
     fun loadTransactions(refresh: Boolean = false) {
@@ -78,12 +84,14 @@ class TransactionsViewModel @Inject constructor(
             // PR #27：透传 type 筛选给 Repository，后端按 type 过滤
             val typeFilter = _uiState.value.filterType.takeIf { it != "all" }
             val categoryFilter = _uiState.value.filterCategoryId
+            val tagFilter = _uiState.value.filterTag
             when (val result = transactionRepository.getTransactions(
                 page = currentPage,
                 pageSize = pageSize,
                 type = typeFilter,
                 categoryId = categoryFilter,
                 keyword = keyword,
+                tag = tagFilter,
             )) {
                 is Result.Success -> {
                     val pageResult = result.data
@@ -141,6 +149,22 @@ class TransactionsViewModel @Inject constructor(
     fun setCategoryFilter(categoryId: Int?) {
         _uiState.update { it.copy(filterCategoryId = categoryId) }
         loadTransactions(refresh = true)
+    }
+
+    fun setTagFilter(tag: String?) {
+        _uiState.update { it.copy(filterTag = tag) }
+        loadTransactions(refresh = true)
+    }
+
+    private fun loadAvailableTags() {
+        viewModelScope.launch {
+            when (val result = com.aibill.android.data.remote.safeApiCall { transactionApi.getTags() }) {
+                is com.aibill.android.domain.model.Result.Success -> {
+                    _uiState.update { it.copy(availableTags = result.data.items) }
+                }
+                else -> Unit
+            }
+        }
     }
 
     fun onSearchChanged(keyword: String) {

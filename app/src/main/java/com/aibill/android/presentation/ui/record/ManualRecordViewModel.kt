@@ -32,6 +32,7 @@ class ManualRecordViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val accountRepository: com.aibill.android.domain.repository.AccountRepository,
     private val templateRepository: com.aibill.android.domain.repository.TemplateRepository,
+    private val transactionApi: com.aibill.android.data.remote.api.TransactionApi,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -48,6 +49,8 @@ class ManualRecordViewModel @Inject constructor(
         val date: String = LocalDate.now().toString(),
         val isSaving: Boolean = false,
         val isExpanded: Boolean = false,
+        val tags: List<String> = emptyList(),
+        val availableTags: List<String> = emptyList(),
     )
 
     sealed class UiEvent {
@@ -74,6 +77,7 @@ class ManualRecordViewModel @Inject constructor(
     init {
         loadCategories(_uiState.value.type)
         loadAccounts()
+        loadAvailableTags()
         // PR #28：如果从 TemplateScreen 跳过来，预填表单
         if (templateId != null) {
             applyTemplatePrefill(templateId)
@@ -124,6 +128,29 @@ class ManualRecordViewModel @Inject constructor(
                 _uiState.update { it.copy(accounts = accounts) }
             }
         }
+    }
+
+    private fun loadAvailableTags() {
+        viewModelScope.launch {
+            when (val result = com.aibill.android.data.remote.safeApiCall { transactionApi.getTags() }) {
+                is Result.Success -> {
+                    _uiState.update { it.copy(availableTags = result.data.items) }
+                }
+                else -> Unit // 静默失败，标签建议非核心功能
+            }
+        }
+    }
+
+    fun onTagAdded(tag: String) {
+        val trimmed = tag.trim()
+        if (trimmed.isBlank()) return
+        val current = _uiState.value.tags
+        if (trimmed in current) return
+        _uiState.update { it.copy(tags = current + trimmed) }
+    }
+
+    fun onTagRemoved(tag: String) {
+        _uiState.update { it.copy(tags = it.tags - tag) }
     }
 
     fun onAccountSelected(id: Int) {
@@ -227,6 +254,7 @@ class ManualRecordViewModel @Inject constructor(
                 date = state.date,
                 time = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                 source = TransactionSource.MANUAL,
+                tags = state.tags.ifEmpty { null },
             )
 
             val result = transactionRepository.createTransactions(listOf(transaction))
@@ -256,11 +284,13 @@ class ManualRecordViewModel @Inject constructor(
     private fun resetForm() {
         val type = _uiState.value.type
         val categories = _uiState.value.categories
+        val availableTags = _uiState.value.availableTags
         _uiState.update {
             RecordUiState(
                 type = type,
                 categories = categories,
                 date = LocalDate.now().toString(),
+                availableTags = availableTags,
             )
         }
     }

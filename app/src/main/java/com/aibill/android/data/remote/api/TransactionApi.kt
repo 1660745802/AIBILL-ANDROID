@@ -3,6 +3,7 @@ package com.aibill.android.data.remote.api
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.data.remote.dto.response.CreateTransactionResponse
 import com.aibill.android.data.remote.dto.response.PaginatedResponse
+import com.aibill.android.data.remote.dto.response.TagsResponse
 import com.aibill.android.data.remote.dto.response.TransactionDto
 import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
 import retrofit2.http.*
@@ -24,8 +25,12 @@ interface TransactionApi {
         @Query("type") type: String? = null,
         @Query("category_id") categoryId: Int? = null,
         @Query("account_id") accountId: Int? = null,
-        @Query("keyword") keyword: String? = null
+        @Query("keyword") keyword: String? = null,
+        @Query("tag") tag: String? = null
     ): ApiResponse<PaginatedResponse<TransactionDto>>
+
+    @GET("transactions/tags")
+    suspend fun getTags(): ApiResponse<TagsResponse>
 
     @GET("transactions/{id}")
     suspend fun getTransaction(@Path("id") id: Int): ApiResponse<TransactionDto>
