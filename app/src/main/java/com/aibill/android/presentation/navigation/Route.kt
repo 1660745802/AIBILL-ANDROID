@@ -15,7 +15,7 @@ sealed interface Route {
 
     // --- 主框架 (Bottom Nav) ---
     @Serializable data object Home : Route
-    @Serializable data object Transactions : Route
+    @Serializable data class Transactions(val categoryId: Int? = null) : Route
     @Serializable data object Statistics : Route
     @Serializable data object Profile : Route
 

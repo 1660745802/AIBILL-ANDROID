@@ -33,6 +33,8 @@ class TransactionsViewModel @Inject constructor(
         val isRefreshing: Boolean = false,
         /** PR #27：流水类型筛选 (all/expense/income)，按 PRD §5.2.2 多维度筛选 */
         val filterType: String = "all",
+        /** 按分类筛选（从统计页点击分类跳转时使用） */
+        val filterCategoryId: Int? = null,
     )
 
     sealed class UiEvent {
@@ -75,10 +77,12 @@ class TransactionsViewModel @Inject constructor(
             val keyword = _uiState.value.searchKeyword.ifBlank { null }
             // PR #27：透传 type 筛选给 Repository，后端按 type 过滤
             val typeFilter = _uiState.value.filterType.takeIf { it != "all" }
+            val categoryFilter = _uiState.value.filterCategoryId
             when (val result = transactionRepository.getTransactions(
                 page = currentPage,
                 pageSize = pageSize,
                 type = typeFilter,
+                categoryId = categoryFilter,
                 keyword = keyword,
             )) {
                 is Result.Success -> {
@@ -131,6 +135,11 @@ class TransactionsViewModel @Inject constructor(
     /** PR #27：切换类型筛选 */
     fun onFilterTypeChanged(type: String) {
         _uiState.update { it.copy(filterType = type) }
+        loadTransactions(refresh = true)
+    }
+
+    fun setCategoryFilter(categoryId: Int?) {
+        _uiState.update { it.copy(filterCategoryId = categoryId) }
         loadTransactions(refresh = true)
     }
 

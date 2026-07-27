@@ -21,6 +21,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import com.aibill.android.presentation.ui.auth.LoginScreen
 import com.aibill.android.presentation.ui.auth.RegisterScreen
 import com.aibill.android.presentation.ui.auth.ServerConfigScreen
@@ -167,15 +168,21 @@ fun AiBillNavHost(
                     onNavigateToDetail = { id -> navController.navigate(Route.TransactionDetail(id)) },
                 )
             }
-            composable<Route.Transactions> {
+            composable<Route.Transactions> { backStackEntry ->
+                val route = backStackEntry.toRoute<Route.Transactions>()
                 TransactionsScreen(
+                    initialCategoryId = route.categoryId,
                     onNavigateToDetail = { id ->
                         navController.navigate(Route.TransactionDetail(id))
                     }
                 )
             }
             composable<Route.Statistics> {
-                StatisticsScreen()
+                StatisticsScreen(
+                    onNavigateToCategoryTransactions = { categoryId ->
+                        navController.navigate(Route.Transactions(categoryId = categoryId))
+                    }
+                )
             }
             composable<Route.Profile> {
                 ProfileScreen(

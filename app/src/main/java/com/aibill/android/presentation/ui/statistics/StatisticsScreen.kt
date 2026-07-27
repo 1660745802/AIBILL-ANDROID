@@ -47,6 +47,7 @@ import com.aibill.android.presentation.theme.SecondaryButton
 
 @Composable
 fun StatisticsScreen(
+    onNavigateToCategoryTransactions: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: StatisticsViewModel = hiltViewModel(),
 ) {
@@ -188,12 +189,8 @@ fun StatisticsScreen(
                             category = category,
                             selectedTab = state.selectedTab,
                             onClick = {
-                                // PR #54：PRD §5.2.3 要求点击进入该分类流水
-                                android.widget.Toast.makeText(
-                                    context,
-                                    "已选择「${category.categoryName}」（流水筛选跳转待 Route 参数支持）",
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
+                                // 跳转到流水页按该分类筛选
+                                category.categoryId?.let { onNavigateToCategoryTransactions(it) }
                             },
                         )
                     }

@@ -48,10 +48,17 @@ import com.aibill.android.domain.model.Transaction
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransactionsScreen(
+    initialCategoryId: Int? = null,
     onNavigateToDetail: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: TransactionsViewModel = hiltViewModel(),
 ) {
+    // 如果有初始分类筛选，设置到 ViewModel
+    androidx.compose.runtime.LaunchedEffect(initialCategoryId) {
+        if (initialCategoryId != null) {
+            viewModel.setCategoryFilter(initialCategoryId)
+        }
+    }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }

@@ -23,7 +23,7 @@ data class BottomNavItem(
 
 private val bottomNavItems = listOf(
     BottomNavItem("首页", Icons.Default.Home, Route.Home),
-    BottomNavItem("流水", Icons.Default.List, Route.Transactions),
+    BottomNavItem("流水", Icons.Default.List, Route.Transactions()),
     BottomNavItem("统计", Icons.Default.PieChart, Route.Statistics),
     BottomNavItem("我的", Icons.Default.Person, Route.Profile),
 )
