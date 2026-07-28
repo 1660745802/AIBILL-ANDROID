@@ -145,6 +145,7 @@ class TransactionsViewModel @Inject constructor(
      */
     fun refreshOnResume() {
         loadTransactions(refresh = true)
+        loadAvailableTags()
     }
 
     /** PR #27：切换类型筛选 */

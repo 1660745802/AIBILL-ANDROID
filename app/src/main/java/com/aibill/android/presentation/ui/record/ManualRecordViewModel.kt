@@ -132,9 +132,9 @@ class ManualRecordViewModel @Inject constructor(
 
     private fun loadAvailableTags() {
         viewModelScope.launch {
-            when (val result = com.aibill.android.data.remote.safeApiCall { transactionApi.getTags() }) {
+            when (val result = transactionRepository.getTags()) {
                 is Result.Success -> {
-                    _uiState.update { it.copy(availableTags = result.data.items) }
+                    _uiState.update { it.copy(availableTags = result.data) }
                 }
                 else -> Unit // 静默失败，标签建议非核心功能
             }

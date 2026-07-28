@@ -135,6 +135,7 @@ class HomeViewModel @Inject constructor(
                     }
                 }
                 awaitAll(deferred1, deferred2, deferred3, deferred4)
+                loadAvailableTags()
             } finally {
                 _uiState.update { it.copy(isRefreshing = false) }
             }

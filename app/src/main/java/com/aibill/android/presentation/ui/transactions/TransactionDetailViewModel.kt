@@ -147,7 +147,7 @@ class TransactionDetailViewModel @Inject constructor(
                 if (state.categoryId != null) put("category_id", state.categoryId!!)
                 if (state.accountId != null) put("account_id", state.accountId!!)
                 val tagsList = state.tags.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                if (tagsList.isNotEmpty()) put("tags", tagsList)
+                put("tags", tagsList)
             }
             when (val result = transactionRepository.updateTransaction(transactionId, requestBody)) {
                 is Result.Success -> {

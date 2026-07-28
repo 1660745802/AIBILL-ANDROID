@@ -346,67 +346,70 @@ private fun CompactTagRow(
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        // 已选标签 + 输入框（单行紧凑）
-        Row(
-            modifier = Modifier.fillMaxWidth().height(44.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            tags.forEach { tag ->
-                InputChip(
-                    selected = false,
-                    onClick = { onTagRemoved(tag) },
-                    label = { Text(tag) },
-                    trailingIcon = {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "移除标签",
-                            modifier = Modifier.size(14.dp),
-                        )
-                    },
-                    modifier = Modifier.height(28.dp),
-                )
-            }
-            // 内联输入框
-            androidx.compose.foundation.layout.Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(36.dp)
-                    .background(
-                        MaterialTheme.colorScheme.surfaceContainerHigh,
-                        RoundedCornerShape(8.dp)
-                    )
-                    .padding(horizontal = 10.dp),
-                contentAlignment = androidx.compose.ui.Alignment.CenterStart,
+        // 已选标签（可换行）
+        if (tags.isNotEmpty()) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                if (tagInput.isEmpty()) {
-                    Text("添加标签", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                tags.forEach { tag ->
+                    InputChip(
+                        selected = false,
+                        onClick = { onTagRemoved(tag) },
+                        label = { Text(tag) },
+                        trailingIcon = {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "移除标签",
+                                modifier = Modifier.size(14.dp),
+                            )
+                        },
+                        modifier = Modifier.height(28.dp),
+                    )
                 }
-                androidx.compose.foundation.text.BasicTextField(
-                    value = tagInput,
-                    onValueChange = { value ->
-                        tagInput = value
-                        showSuggestions = true
-                    },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(
-                        color = MaterialTheme.colorScheme.onSurface
-                    ),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = {
-                        if (tagInput.isNotBlank()) {
-                            onTagAdded(tagInput)
-                            tagInput = ""
-                            showSuggestions = false
-                        }
-                    }),
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+        // 输入框独占一行
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(36.dp)
+                .background(
+                    MaterialTheme.colorScheme.surfaceContainerHigh,
+                    RoundedCornerShape(8.dp)
+                )
+                .padding(horizontal = 10.dp),
+            contentAlignment = androidx.compose.ui.Alignment.CenterStart,
+        ) {
+            if (tagInput.isEmpty()) {
+                Text("添加标签", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+            }
+            androidx.compose.foundation.text.BasicTextField(
+                value = tagInput,
+                onValueChange = { value ->
+                    tagInput = value
+                    showSuggestions = true
+                },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(
+                    color = MaterialTheme.colorScheme.onSurface
+                ),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = {
+                    if (tagInput.isNotBlank()) {
+                        onTagAdded(tagInput)
+                        tagInput = ""
+                        showSuggestions = false
+                    }
+                }),
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         // 标签建议（输入框获焦时显示）
-        if (showSuggestions && suggestions.isNotEmpty()) {
+        if (suggestions.isNotEmpty()) {
             FlowRow(
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
