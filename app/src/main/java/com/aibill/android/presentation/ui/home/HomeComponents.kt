@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import com.aibill.android.domain.model.AiParseResult
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.theme.PrimaryButton
@@ -558,6 +559,27 @@ internal fun TransactionItem(transaction: Transaction, onClick: () -> Unit = {})
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                // 时间 + 来源标记
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    transaction.time?.let { time ->
+                        Text(
+                            text = time,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                    if (transaction.source == TransactionSource.APP_NOTIFICATION) {
+                        if (transaction.time != null) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        Text(
+                            text = "⚡自动",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                        )
+                    }
                 }
             }
             Text(
