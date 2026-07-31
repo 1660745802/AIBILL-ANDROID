@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -171,6 +172,51 @@ internal fun SummaryCard(
 }
 
 @Composable
+internal fun IncomeExpenseCompareBar(
+    expense: Int,
+    income: Int,
+    modifier: Modifier = Modifier,
+) {
+    if (expense <= 0 && income <= 0) return
+    val total = (expense + income).coerceAtLeast(1)
+    val expenseRatio = expense.toFloat() / total
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("支出 ${expense.toYuanDisplay()}", style = MaterialTheme.typography.labelMedium, color = ExpenseColor)
+                Text("收入 ${income.toYuanDisplay()}", style = MaterialTheme.typography.labelMedium, color = IncomeColor)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            // Stacked bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(expenseRatio.coerceAtLeast(0.01f))
+                        .fillMaxHeight()
+                        .background(ExpenseColor),
+                )
+                Box(
+                    modifier = Modifier
+                        .weight((1f - expenseRatio).coerceAtLeast(0.01f))
+                        .fillMaxHeight()
+                        .background(IncomeColor),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 internal fun TrendChartPlaceholder(
     trendData: List<TrendPoint>,
     selectedTab: String,
@@ -255,6 +301,19 @@ internal fun TrendChartPlaceholder(
                     points.forEach { p ->
                         drawCircle(color = color, radius = 5f, center = p)
                         drawCircle(color = Color.White, radius = 2.5f, center = p)
+                    }
+
+                    // Average line
+                    if (trendData.isNotEmpty()) {
+                        val avgAmount = trendData.sumOf { it.amount }.toFloat() / trendData.size
+                        val avgY = h - (avgAmount / maxV) * h * 0.9f - h * 0.05f
+                        drawLine(
+                            color = color.copy(alpha = 0.4f),
+                            start = Offset(0f, avgY),
+                            end = Offset(w, avgY),
+                            strokeWidth = 2f,
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f)),
+                        )
                     }
                 }
 
@@ -413,10 +472,19 @@ internal fun CategoryDonutChart(
 internal fun CategoryStatItem(
     category: CategoryStat,
     selectedTab: String,
+    rank: Int = 0,
     onClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val progressColor = if (selectedTab == "expense") ExpenseColor else IncomeColor
+
+    // Replace the emoji icon with medal for top 3
+    val displayIcon = when (rank) {
+        1 -> "🥇"
+        2 -> "🥈"
+        3 -> "🥉"
+        else -> category.categoryIcon
+    }
 
     Card(
         modifier = modifier
@@ -444,7 +512,7 @@ internal fun CategoryStatItem(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
-                    Text(text = category.categoryIcon, fontSize = 18.sp)
+                    Text(text = displayIcon, fontSize = 18.sp)
                 }
             }
 

@@ -162,6 +162,12 @@ fun StatisticsScreen(
                             },
                         )
                     }
+                    item(key = "compare_bar") {
+                        IncomeExpenseCompareBar(
+                            expense = state.summary?.expense ?: 0,
+                            income = state.summary?.income ?: 0,
+                        )
+                    }
                     item(key = "trend") {
                         TrendChartPlaceholder(
                             trendData = state.trendData,
@@ -190,9 +196,11 @@ fun StatisticsScreen(
                         items = state.categoryStats,
                         key = { "${it.categoryId}:${it.categoryName}" },
                     ) { category ->
+                        val rank = state.categoryStats.indexOf(category) + 1
                         CategoryStatItem(
                             category = category,
                             selectedTab = state.selectedTab,
+                            rank = rank,
                             onClick = {
                                 // 跳转到流水页按该分类筛选
                                 category.categoryId?.let { onNavigateToCategoryTransactions(it, state.selectedTab) }

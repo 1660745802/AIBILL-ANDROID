@@ -186,15 +186,15 @@ fun ManualRecordScreen(
                         )
                     }
                 } else {
-                    // 分类Grid（LazyVerticalGrid，自带滚动，用weight占据主空间）
-                    RecordCategoryGrid(
-                        categories = state.categories,
-                        selectedId = state.selectedCategoryId,
-                        onSelect = viewModel::onCategorySelected,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                    )
+                    // 分类Grid（LazyVerticalGrid，需要有限高度约束）
+                    Box(modifier = Modifier.weight(1f)) {
+                        RecordCategoryGrid(
+                            categories = state.categories,
+                            selectedId = state.selectedCategoryId,
+                            onSelect = viewModel::onCategorySelected,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
 
                     // 标签 + 备注（固定在分类Grid和保存按钮之间）
                     Column(
