@@ -356,7 +356,7 @@ private fun CompactTagRow(
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        // 标签建议（一行横滑，在最上方）
+        // 标签建议（一行横滑，在最上方，primary色区分）
         if (suggestions.isNotEmpty() && tags.isNotEmpty()) {
             androidx.compose.foundation.lazy.LazyRow(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
@@ -372,6 +372,14 @@ private fun CompactTagRow(
                         },
                         label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
                         modifier = Modifier.height(28.dp),
+                        border = androidx.compose.material3.SuggestionChipDefaults.suggestionChipBorder(
+                            enabled = true,
+                            borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        ),
+                        colors = androidx.compose.material3.SuggestionChipDefaults.suggestionChipColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                            labelColor = MaterialTheme.colorScheme.primary,
+                        ),
                     )
                 }
             }

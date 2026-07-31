@@ -398,79 +398,91 @@ private fun TagEditSection(
     availableTags: List<String> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
-    // Parse the comma-separated tags string into a list
     val tags = remember(tagsText) {
         tagsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
     }
     var tagInput by remember { mutableStateOf("") }
+    val suggestions = remember(availableTags, tags) {
+        availableTags.filter { it !in tags }.take(5)
+    }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            tags.forEach { tag ->
-                InputChip(
-                    selected = false,
-                    onClick = {
-                        val newTags = tags - tag
-                        onTagsChanged(newTags.joinToString(", "))
-                    },
-                    label = { Text(tag) },
-                    trailingIcon = {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "移除标签",
-                            modifier = Modifier.size(14.dp),
-                        )
-                    },
-                    modifier = Modifier.height(28.dp),
-                )
-            }
-            OutlinedTextField(
-                value = tagInput,
-                onValueChange = { tagInput = it },
-                placeholder = { Text("添加标签", style = MaterialTheme.typography.bodySmall) },
-                modifier = Modifier.weight(1f).heightIn(min = 44.dp),
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodySmall,
-                shape = RoundedCornerShape(8.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                ),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = {
-                    if (tagInput.isNotBlank()) {
-                        val trimmed = tagInput.trim()
-                        val newTags = if (trimmed !in tags) tags + trimmed else tags
-                        onTagsChanged(newTags.joinToString(", "))
-                        tagInput = ""
-                    }
-                }),
-            )
-        }
-        // 历史标签建议
-        val suggestions = remember(availableTags, tags) {
-            availableTags.filter { it !in tags }.take(5)
-        }
-        if (suggestions.isNotEmpty()) {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+        // 建议标签（横滑，有已选标签时才显示，primary色区分）
+        if (suggestions.isNotEmpty() && tags.isNotEmpty()) {
+            androidx.compose.foundation.lazy.LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                suggestions.forEach { suggestion ->
+                items(suggestions.size) { index ->
+                    val suggestion = suggestions[index]
                     SuggestionChip(
                         onClick = {
                             val newTags = tags + suggestion
                             onTagsChanged(newTags.joinToString(", "))
                         },
-                        label = { Text(suggestion) },
+                        label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
                         modifier = Modifier.height(28.dp),
+                        border = androidx.compose.material3.SuggestionChipDefaults.suggestionChipBorder(
+                            enabled = true,
+                            borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        ),
+                        colors = androidx.compose.material3.SuggestionChipDefaults.suggestionChipColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                            labelColor = MaterialTheme.colorScheme.primary,
+                        ),
                     )
                 }
             }
         }
+        // 已选标签
+        if (tags.isNotEmpty()) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                tags.forEach { tag ->
+                    InputChip(
+                        selected = false,
+                        onClick = {
+                            val newTags = tags - tag
+                            onTagsChanged(newTags.joinToString(", "))
+                        },
+                        label = { Text(tag) },
+                        trailingIcon = {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "移除标签",
+                                modifier = Modifier.size(14.dp),
+                            )
+                        },
+                        modifier = Modifier.height(28.dp),
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+        // 输入框
+        OutlinedTextField(
+            value = tagInput,
+            onValueChange = { tagInput = it },
+            placeholder = { Text("添加标签", style = MaterialTheme.typography.bodySmall) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodySmall,
+            shape = RoundedCornerShape(8.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+            ),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = {
+                if (tagInput.isNotBlank()) {
+                    val trimmed = tagInput.trim()
+                    val newTags = if (trimmed !in tags) tags + trimmed else tags
+                    onTagsChanged(newTags.joinToString(", "))
+                    tagInput = ""
+                }
+            }),
+        )
     }
 }

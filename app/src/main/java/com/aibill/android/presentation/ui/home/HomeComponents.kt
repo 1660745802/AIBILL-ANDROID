@@ -367,26 +367,57 @@ private fun AiEditDialog(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                // 已选标签 + 输入
-                androidx.compose.foundation.layout.FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    tags.forEach { tag ->
-                        androidx.compose.material3.InputChip(
-                            selected = false,
-                            onClick = { tags = tags - tag },
-                            label = { Text(tag) },
-                            trailingIcon = {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "移除标签",
-                                    modifier = Modifier.size(14.dp),
-                                )
-                            },
-                        )
+                // 标签建议（横滑，有已选时才显示，用 outline 样式区分）
+                if (tagSuggestions.isNotEmpty() && tags.isNotEmpty()) {
+                    androidx.compose.foundation.lazy.LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        items(tagSuggestions.size) { index ->
+                            val suggestion = tagSuggestions[index]
+                            androidx.compose.material3.SuggestionChip(
+                                onClick = {
+                                    tags = tags + suggestion
+                                    tagInput = ""
+                                },
+                                label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
+                                modifier = Modifier.height(28.dp),
+                                border = androidx.compose.material3.SuggestionChipDefaults.suggestionChipBorder(
+                                    enabled = true,
+                                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                ),
+                                colors = androidx.compose.material3.SuggestionChipDefaults.suggestionChipColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                                    labelColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        }
                     }
+                    Spacer(modifier = Modifier.height(4.dp))
                 }
+                // 已选标签
+                if (tags.isNotEmpty()) {
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        tags.forEach { tag ->
+                            androidx.compose.material3.InputChip(
+                                selected = false,
+                                onClick = { tags = tags - tag },
+                                label = { Text(tag) },
+                                trailingIcon = {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "移除标签",
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                },
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+                // 输入框
                 OutlinedTextField(
                     value = tagInput,
                     onValueChange = { tagInput = it },
@@ -404,23 +435,6 @@ private fun AiEditDialog(
                         }
                     }),
                 )
-                // 标签建议
-                if (tagSuggestions.isNotEmpty()) {
-                    androidx.compose.foundation.layout.FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        tagSuggestions.forEach { suggestion ->
-                            androidx.compose.material3.SuggestionChip(
-                                onClick = {
-                                    tags = tags + suggestion
-                                    tagInput = ""
-                                },
-                                label = { Text(suggestion) },
-                            )
-                        }
-                    }
-                }
             }
         },
         confirmButton = {
