@@ -33,6 +33,7 @@ class ManualRecordViewModel @Inject constructor(
     private val accountRepository: com.aibill.android.domain.repository.AccountRepository,
     private val templateRepository: com.aibill.android.domain.repository.TemplateRepository,
     private val transactionApi: com.aibill.android.data.remote.api.TransactionApi,
+    private val streakTracker: com.aibill.android.domain.usecase.StreakTracker,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -272,6 +273,7 @@ class ManualRecordViewModel @Inject constructor(
                 is Result.Success -> {
                     _uiEvent.send(UiEvent.ShowToast("记录成功"))
                     _uiEvent.send(UiEvent.SaveSuccess)
+                    streakTracker.onTransactionRecorded()
                     resetForm()
                 }
                 is Result.Error -> {

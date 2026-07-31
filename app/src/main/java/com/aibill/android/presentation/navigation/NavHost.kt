@@ -167,6 +167,13 @@ fun AiBillNavHost(
                     onAiInputConsumed = onAiInputConsumed,
                     onNavigateToManualRecord = { navController.navigate(Route.ManualRecord()) },
                     onNavigateToNotification = { navController.navigate(Route.NotificationCenter) },
+                    onNavigateToStatistics = {
+                        navController.navigate(Route.Statistics) {
+                            popUpTo(Route.Home) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                     onNavigateToDetail = { id -> navController.navigate(Route.TransactionDetail(id)) },
                 )
             }

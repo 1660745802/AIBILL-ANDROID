@@ -285,6 +285,7 @@ class HomeViewModel @Inject constructor(
                         it.copy(aiParseResults = remaining?.ifEmpty { null })
                     }
                     _uiEvent.emit(UiEvent.ShowToast("已记录"))
+                    streakTracker.onTransactionRecorded()
                     refreshData()
                 }
                 is Result.Error -> {
@@ -347,6 +348,7 @@ class HomeViewModel @Inject constructor(
                         it.copy(aiParseResults = remaining?.ifEmpty { null })
                     }
                     _uiEvent.emit(UiEvent.ShowToast("已记录"))
+                    streakTracker.onTransactionRecorded()
                     refreshData()
                 }
                 is Result.Error -> {
@@ -366,6 +368,7 @@ class HomeViewModel @Inject constructor(
                 is Result.Success -> {
                     _uiState.update { it.copy(aiParseResults = null) }
                     _uiEvent.emit(UiEvent.ShowToast("已记录 ${items.size} 笔"))
+                    streakTracker.onTransactionRecorded()
                     refreshData()
                 }
                 is Result.Error -> {

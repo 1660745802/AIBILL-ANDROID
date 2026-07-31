@@ -46,9 +46,9 @@ private val GradientStart = Color(0xFF009688)
 private val GradientEnd = Color(0xFF4DB6AC)
 
 @Composable
-internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null) {
+internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null, modifier: Modifier = Modifier) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
     ) {
@@ -180,6 +180,12 @@ internal fun AiInputSection(
                     },
                     singleLine = true,
                     enabled = !isParsing,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Send,
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onSend = { if (inputText.isNotBlank()) onSend() },
+                    ),
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = MaterialTheme.colorScheme.primary,

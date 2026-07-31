@@ -1,5 +1,6 @@
 package com.aibill.android.presentation.ui.home
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,6 +54,7 @@ fun HomeScreen(
     onAiInputConsumed: () -> Unit = {},
     onNavigateToManualRecord: () -> Unit = {},
     onNavigateToNotification: () -> Unit = {},
+    onNavigateToStatistics: () -> Unit = {},
     onNavigateToDetail: (Int) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -174,12 +176,16 @@ fun HomeScreen(
                         MonthlyExpenseHeader(
                             amount = uiState.monthlyExpense,
                             budget = uiState.monthlyBudget,
+                            modifier = Modifier.clickable { onNavigateToStatistics() },
                         )
                     }
 
                     if (uiState.weeklyTrend.isNotEmpty()) {
                         item(key = "mini_trend") {
-                            MiniTrendChart(trendData = uiState.weeklyTrend)
+                            MiniTrendChart(
+                                trendData = uiState.weeklyTrend,
+                                modifier = Modifier.clickable { onNavigateToStatistics() },
+                            )
                         }
                     }
 

@@ -54,6 +54,7 @@ class NotificationProcessor @Inject constructor(
     private val pendingTransactionDao: PendingTransactionDao,
     private val userPreferences: UserPreferences,
     private val categoryLearningEngine: CategoryLearningEngine,
+    private val streakTracker: com.aibill.android.domain.usecase.StreakTracker,
     private val appLogger: AppLogger,
 ) {
 
@@ -363,6 +364,7 @@ class NotificationProcessor @Inject constructor(
         notificationRecordDao.updateStatus(recordId, "confirmed", clientId)
 
         SyncScheduler.scheduleSyncIfNeeded(context)
+        streakTracker.onTransactionRecorded()
 
         WidgetDataUpdater.notifyTransactionAdded(
             context = context,

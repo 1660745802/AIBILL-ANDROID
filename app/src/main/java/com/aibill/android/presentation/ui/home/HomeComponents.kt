@@ -76,16 +76,16 @@ internal fun EmptyTodayCard() {
                 .padding(vertical = 48.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(text = "📝", fontSize = 40.sp)
+            Text(text = "😌", fontSize = 40.sp)
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "今天还没有记录哦",
+                text = "今天还没有消费记录",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "试试输入「午餐 15」快速记一笔",
+                text = "通知监听运行中，支付后自动记录",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
             )
