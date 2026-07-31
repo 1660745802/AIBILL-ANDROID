@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -106,9 +107,9 @@ internal fun TransactionItem(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(0.dp)),
+            .height(androidx.compose.foundation.layout.IntrinsicSize.Min),
     ) {
-        // 右侧删除按钮（固定在最右边）
+        // 右侧删除按钮（固定在最右边，等高于内容）
         Box(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
