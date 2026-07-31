@@ -125,7 +125,6 @@ fun ManualRecordScreen(
         Box(modifier = Modifier
             .fillMaxSize()
             .padding(padding)
-            .imePadding()
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // AI 快捷输入条
@@ -150,6 +149,7 @@ fun ManualRecordScreen(
                 Column(
                     modifier = Modifier
                         .weight(1f)
+                        .imePadding()
                         .verticalScroll(rememberScrollState()),
                 ) {
                     if (state.type == "transfer") {
