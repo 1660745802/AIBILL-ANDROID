@@ -73,25 +73,55 @@ class PaymentAccessibilityService : AccessibilityService() {
         val rootNode = rootInActiveWindow ?: return
 
         try {
-            // ===== 全量页面日志（调试期间收集所有页面信息，后续针对性优化后可关闭） =====
+            // ===== 增强版全量页面日志 =====
+            val className = ev.className?.toString() ?: "?"
+            val shortClassName = className.substringAfterLast('.')
             val allTexts = mutableListOf<String>()
             collectAllNodeTexts(rootNode, allTexts)
-            val className = ev.className?.toString()?.substringAfterLast('.') ?: "?"
-            val pageSnapshot = allTexts.take(20).joinToString("|")
-            appLogger.debug("A11Y_PAGE", "[$packageName/$className] $pageSnapshot")
+
+            // 1. 基础页面快照（Activity类名 + 文本摘要）
+            val pageSnapshot = allTexts.take(30).joinToString("|")
+            appLogger.debug("A11Y_PAGE", "[$packageName/$shortClassName] $pageSnapshot")
+
+            // 2. 完整Activity类名（用于建立白名单/黑名单）
+            appLogger.debug("A11Y_META", "activity=$className pkg=$packageName texts=${allTexts.size} time=${System.currentTimeMillis()}")
+
+            // 3. 节点结构详情（带 viewId + contentDescription，仅在支付类页面记录）
+            val hasPayKeyword = allTexts.any { text -> SUCCESS_KEYWORDS.any { kw -> text.contains(kw) } }
+            val hasAmount = allTexts.any { AMOUNT_REGEX.containsMatchIn(it) }
+            if (hasPayKeyword || hasAmount) {
+                val nodeTree = buildNodeTree(rootNode, maxDepth = 5)
+                appLogger.debug("A11Y_TREE", "[$shortClassName] $nodeTree")
+            }
             // ===== 全量日志结束 =====
 
             // 条件1：有"支付成功"关键词
-            if (!hasAnyKeyword(rootNode, SUCCESS_KEYWORDS)) return
+            if (!hasAnyKeyword(rootNode, SUCCESS_KEYWORDS)) {
+                if (hasAmount) {
+                    // 有金额但没有成功关键词——可能是新的支付成功文案变体，记录以便分析
+                    appLogger.debug("A11Y_MISS", "有金额无成功词: [$shortClassName] ${allTexts.take(15).joinToString("|")}")
+                }
+                return
+            }
 
             // 条件2：不能有首页/聊天列表特征（排除误触发）
-            if (hasAnyKeyword(rootNode, EXCLUDE_KEYWORDS)) return
+            if (hasAnyKeyword(rootNode, EXCLUDE_KEYWORDS)) {
+                appLogger.debug("A11Y_SKIP", "排除词命中: [$shortClassName]")
+                return
+            }
 
             // 条件3：有金额文字
-            val amountText = findAmount(rootNode) ?: return
+            val amountText = findAmount(rootNode)
+            if (amountText == null) {
+                appLogger.debug("A11Y_SKIP", "有成功词无金额: [$shortClassName]")
+                return
+            }
 
             // 条件4：页面不能有历史日期（排除用户翻看历史账单）
-            if (!isRecentPayment(rootNode)) return
+            if (!isRecentPayment(rootNode)) {
+                appLogger.debug("A11Y_SKIP", "历史日期拦截: [$shortClassName] amount=$amountText")
+                return
+            }
 
             // 三重条件全部满足 → 构建简短摘要
             val merchant = findMerchant(rootNode)
@@ -250,6 +280,38 @@ class PaymentAccessibilityService : AccessibilityService() {
             collectAllNodeTexts(child, result)
             child.recycle()
         }
+    }
+
+    /**
+     * 构建节点树摘要字符串（用于日志分析页面结构）。
+     * 格式: "L0:viewId=text|L1:viewId=text|..."
+     * 记录有文本或有viewId的节点，带层级标记。
+     */
+    private fun buildNodeTree(node: AccessibilityNodeInfo, maxDepth: Int, depth: Int = 0): String {
+        if (depth > maxDepth) return ""
+        val sb = StringBuilder()
+        val viewId = node.viewIdResourceName?.substringAfterLast('/') ?: ""
+        val text = node.text?.toString()?.trim()?.take(30) ?: ""
+        val desc = node.contentDescription?.toString()?.trim()?.take(30) ?: ""
+        val cls = node.className?.toString()?.substringAfterLast('.') ?: ""
+
+        // 只记录有信息的节点
+        if (text.isNotBlank() || desc.isNotBlank() || viewId.isNotBlank()) {
+            sb.append("L$depth:")
+            if (viewId.isNotBlank()) sb.append("[$viewId]")
+            if (text.isNotBlank()) sb.append("\"$text\"")
+            if (desc.isNotBlank()) sb.append("{$desc}")
+            sb.append("($cls)")
+            sb.append("|")
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            sb.append(buildNodeTree(child, maxDepth, depth + 1))
+            child.recycle()
+        }
+        // 限制总长度防止爆日志
+        return if (sb.length > 500) sb.substring(0, 500) + "..." else sb.toString()
     }
 
     /** 递归查找匹配正则的节点文本 */
