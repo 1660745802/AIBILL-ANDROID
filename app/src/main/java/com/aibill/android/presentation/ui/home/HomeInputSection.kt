@@ -46,7 +46,11 @@ private val GradientStart = Color(0xFF009688)
 private val GradientEnd = Color(0xFF4DB6AC)
 
 @Composable
-internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null, modifier: Modifier = Modifier) {
+internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null, income: Int = 0, modifier: Modifier = Modifier) {
+    val today = LocalDate.now()
+    val daysLeft = today.lengthOfMonth() - today.dayOfMonth
+    val dailyAvg = if (today.dayOfMonth > 0) amount.toFloat() / today.dayOfMonth / 100f else 0f
+
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -65,17 +69,28 @@ internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null, modifier: Mo
                 )
                 .padding(24.dp),
         ) {
-            Text(
-                text = "本月支出",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.8f),
-            )
+            // 顶行：标题 + 剩余天数
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${today.monthValue}月支出",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.8f),
+                )
+                Text(
+                    text = "还剩 $daysLeft 天",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.6f),
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
+
+            // 金额行
             if (budget != null && budget > 0) {
-                // 有预算时显示: 支出金额 / 预算 xxx 元
-                Row(
-                    verticalAlignment = Alignment.Bottom,
-                ) {
+                Row(verticalAlignment = Alignment.Bottom) {
                     Text(
                         text = amount.toYuanDisplay(),
                         fontSize = 34.sp,
@@ -85,7 +100,7 @@ internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null, modifier: Mo
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "/ 预算 ${budget.toYuanDisplay()}",
+                        text = "/ ${budget.toYuanDisplay()}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.7f),
                     )
@@ -94,9 +109,9 @@ internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null, modifier: Mo
                 // 进度条
                 val progress = (amount.toFloat() / budget).coerceIn(0f, 1.5f)
                 val progressColor = when {
-                    progress > 1f -> Color(0xFFEF5350) // 红色：超支
-                    progress >= 0.8f -> Color(0xFFFFB74D) // 黄色：接近预算
-                    else -> Color.White.copy(alpha = 0.9f) // 白色：正常
+                    progress > 1f -> Color(0xFFEF5350)
+                    progress >= 0.8f -> Color(0xFFFFB74D)
+                    else -> Color.White.copy(alpha = 0.9f)
                 }
                 LinearProgressIndicator(
                     progress = { progress.coerceAtMost(1f) },
@@ -107,12 +122,21 @@ internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null, modifier: Mo
                     color = progressColor,
                     trackColor = Color.White.copy(alpha = 0.2f),
                 )
-                // 日均消费
-                if (amount > 0) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    val dailyAvg = amount.toFloat() / LocalDate.now().dayOfMonth / 100f
+                Spacer(modifier = Modifier.height(10.dp))
+                // 底行：日均 + 剩余可用
+                val remainBudget = (budget - amount).coerceAtLeast(0)
+                val dailyBudgetLeft = if (daysLeft > 0) remainBudget / daysLeft / 100.0 else 0.0
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
                     Text(
-                        text = "日均 ¥${"%.2f".format(dailyAvg)}",
+                        text = "日均 ¥${"%.0f".format(dailyAvg)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f),
+                    )
+                    Text(
+                        text = "日可用 ¥${"%.0f".format(dailyBudgetLeft)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.White.copy(alpha = 0.7f),
                     )
@@ -125,14 +149,50 @@ internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null, modifier: Mo
                     color = Color.White,
                     letterSpacing = (-0.5).sp,
                 )
-                // 日均消费
+                // 无预算时显示日均
                 if (amount > 0) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    val dailyAvg = amount.toFloat() / LocalDate.now().dayOfMonth / 100f
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = "日均 ¥${"%.0f".format(dailyAvg)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                        )
+                        val projected = (dailyAvg * today.lengthOfMonth()).toInt()
+                        Text(
+                            text = "预计全月 ¥$projected",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                        )
+                    }
+                }
+            }
+            // 收入 + 结余（有收入数据时显示）
+            if (income > 0) {
+                Spacer(modifier = Modifier.height(12.dp))
+                androidx.compose.material3.HorizontalDivider(
+                    color = Color.White.copy(alpha = 0.15f),
+                    thickness = 0.5.dp,
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
                     Text(
-                        text = "日均 ¥${"%.2f".format(dailyAvg)}",
+                        text = "收入 ¥${"%.0f".format(income / 100.0)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.White.copy(alpha = 0.7f),
+                    )
+                    val balance = income - amount
+                    Text(
+                        text = "结余 ¥${"%.0f".format(balance / 100.0)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (balance >= 0) Color.White.copy(alpha = 0.8f)
+                                else Color(0xFFFFCDD2).copy(alpha = 0.9f),
                     )
                 }
             }

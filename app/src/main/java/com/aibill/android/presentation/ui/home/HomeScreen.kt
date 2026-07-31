@@ -176,6 +176,7 @@ fun HomeScreen(
                         MonthlyExpenseHeader(
                             amount = uiState.monthlyExpense,
                             budget = uiState.monthlyBudget,
+                            income = uiState.monthlyIncome,
                             modifier = Modifier.clickable { onNavigateToStatistics() },
                         )
                     }

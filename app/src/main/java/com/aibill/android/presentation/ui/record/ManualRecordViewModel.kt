@@ -33,6 +33,7 @@ class ManualRecordViewModel @Inject constructor(
     private val accountRepository: com.aibill.android.domain.repository.AccountRepository,
     private val templateRepository: com.aibill.android.domain.repository.TemplateRepository,
     private val transactionApi: com.aibill.android.data.remote.api.TransactionApi,
+    private val aiRepository: com.aibill.android.domain.repository.AiRepository,
     private val streakTracker: com.aibill.android.domain.usecase.StreakTracker,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -52,6 +53,9 @@ class ManualRecordViewModel @Inject constructor(
         val isExpanded: Boolean = false,
         val tags: List<String> = emptyList(),
         val availableTags: List<String> = emptyList(),
+        /** AI 快捷输入 */
+        val aiInputText: String = "",
+        val isAiParsing: Boolean = false,
     )
 
     sealed class UiEvent {
@@ -224,6 +228,58 @@ class ManualRecordViewModel @Inject constructor(
 
     fun onCategorySelected(id: Int) {
         _uiState.update { it.copy(selectedCategoryId = id) }
+    }
+
+    fun onAiInputChanged(text: String) {
+        _uiState.update { it.copy(aiInputText = text) }
+    }
+
+    /**
+     * AI 快捷填充：输入自然语言后调用 AI 解析，自动填充金额/分类/备注。
+     */
+    fun onAiParse() {
+        val input = _uiState.value.aiInputText.trim()
+        if (input.isBlank()) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isAiParsing = true) }
+            when (val result = aiRepository.parseInput(input)) {
+                is Result.Success -> {
+                    val items = result.data
+                    if (items.isNotEmpty()) {
+                        val first = items.first()
+                        // 填充金额
+                        if (first.amount > 0) {
+                            val yuanText = "%.2f".format(first.amount / 100.0)
+                            _uiState.update { it.copy(amountText = yuanText, amountFen = first.amount) }
+                        }
+                        // 填充类型
+                        first.type?.let { type ->
+                            val typeStr = type.value // TransactionType enum → string
+                            onTypeChanged(typeStr)
+                        }
+                        // 填充分类
+                        first.categoryId?.let { catId ->
+                            _uiState.update { it.copy(selectedCategoryId = catId) }
+                        }
+                        // 填充备注
+                        first.description?.let { desc ->
+                            _uiState.update { it.copy(description = desc) }
+                        }
+                        _uiState.update { it.copy(isAiParsing = false, aiInputText = "") }
+                        _uiEvent.send(UiEvent.ShowToast("✨ AI 已填充"))
+                    } else {
+                        _uiState.update { it.copy(isAiParsing = false) }
+                        _uiEvent.send(UiEvent.ShowToast("未能识别，请手动输入"))
+                    }
+                }
+                is Result.Error -> {
+                    _uiState.update { it.copy(isAiParsing = false) }
+                    _uiEvent.send(UiEvent.ShowToast("AI 解析失败: ${result.message}"))
+                }
+                is Result.Loading -> Unit
+            }
+        }
     }
 
     fun onDescriptionChanged(text: String) {

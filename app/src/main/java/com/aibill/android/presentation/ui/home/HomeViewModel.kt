@@ -67,6 +67,7 @@ class HomeViewModel @Inject constructor(
         val isLoading: Boolean = false,
         val isRefreshing: Boolean = false,
         val monthlyExpense: Int = 0,
+        val monthlyIncome: Int = 0,
         val monthlyBudget: Int? = null,
         val inputText: String = "",
         val isParsing: Boolean = false,
@@ -472,7 +473,7 @@ class HomeViewModel @Inject constructor(
         val now = LocalDate.now()
         when (val result = statsRepository.getSummary(now.year, now.monthValue)) {
             is Result.Success -> {
-                _uiState.update { it.copy(monthlyExpense = result.data.expense) }
+                _uiState.update { it.copy(monthlyExpense = result.data.expense, monthlyIncome = result.data.income) }
                 WidgetDataUpdater.updateMonthlySummary(
                     context = application,
                     expenseCents = result.data.expense,

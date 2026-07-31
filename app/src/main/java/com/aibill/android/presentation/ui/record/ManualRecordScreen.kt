@@ -128,6 +128,14 @@ fun ManualRecordScreen(
             .imePadding()
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                // AI 快捷输入条
+                AiQuickInput(
+                    inputText = state.aiInputText,
+                    isParsing = state.isAiParsing,
+                    onInputChanged = viewModel::onAiInputChanged,
+                    onParse = viewModel::onAiParse,
+                )
+
                 // 类型切换（固定顶部）
                 TypeSelector(selectedType = state.type, onTypeSelected = viewModel::onTypeChanged)
 
@@ -497,6 +505,65 @@ private fun TransferAccountSection(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * AI 快捷填充输入条：输入自然语言，AI 自动填充表单字段。
+ */
+@Composable
+private fun AiQuickInput(
+    inputText: String,
+    isParsing: Boolean,
+    onInputChanged: (String) -> Unit,
+    onParse: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        OutlinedTextField(
+            value = inputText,
+            onValueChange = onInputChanged,
+            modifier = Modifier.weight(1f),
+            placeholder = {
+                Text(
+                    "✨ 说一句话快速填充…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                )
+            },
+            singleLine = true,
+            enabled = !isParsing,
+            textStyle = MaterialTheme.typography.bodySmall,
+            shape = RoundedCornerShape(14.dp),
+            keyboardOptions = KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
+            keyboardActions = KeyboardActions(onSend = { if (inputText.isNotBlank()) onParse() }),
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+            ),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        if (isParsing) {
+            androidx.compose.material3.CircularProgressIndicator(
+                modifier = Modifier.size(32.dp),
+                strokeWidth = 2.5.dp,
+            )
+        } else {
+            androidx.compose.material3.FilledTonalButton(
+                onClick = onParse,
+                enabled = inputText.isNotBlank(),
+                modifier = Modifier.height(36.dp),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+            ) {
+                Text("AI填充", style = MaterialTheme.typography.labelMedium)
             }
         }
     }
