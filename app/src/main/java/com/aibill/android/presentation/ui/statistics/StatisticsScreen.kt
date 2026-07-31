@@ -199,6 +199,19 @@ fun StatisticsScreen(
                             },
                         )
                     }
+
+                    // 月度洞察卡片
+                    if (state.summary != null && state.categoryStats.isNotEmpty()) {
+                        item(key = "insight") {
+                            MonthInsightCard(
+                                summary = state.summary!!,
+                                topCategory = state.categoryStats.firstOrNull(),
+                                selectedTab = state.selectedTab,
+                                trendData = state.trendData,
+                            )
+                        }
+                    }
+
                     item { Spacer(modifier = Modifier.height(80.dp)) }
                 }
             }
