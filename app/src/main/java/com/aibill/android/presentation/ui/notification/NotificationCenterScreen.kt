@@ -1,7 +1,6 @@
 package com.aibill.android.presentation.ui.notification
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,7 +17,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Notifications
@@ -28,7 +26,6 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -93,11 +90,13 @@ fun NotificationCenterScreen(
             initialDescription = item.parsedDescription,
             categoriesByType = categoriesByType,
             availableTags = availableTags,
-            accounts = emptyList(), // TODO: 注入账户列表
+            accounts = emptyList(),
             onDismiss = { editItem = null },
             onConfirm = { amount, type, categoryId, desc, accountId, targetAccountId, tags ->
                 viewModel.confirmWithEdit(item.id, type, amount, desc, categoryId, tags)
-                editItem = null
+                // 自动跳到下一条待确认（连续处理模式）
+                val nextItem = pendingItems.firstOrNull { it.id != item.id }
+                editItem = nextItem
             }
         )
     }
@@ -149,19 +148,6 @@ fun NotificationCenterScreen(
                 }
             )
         },
-        bottomBar = {
-            if (pendingItems.isNotEmpty()) {
-                PrimaryButton(
-                    text = if (isConfirming) "确认中..." else "全部确认",
-                    onClick = { viewModel.confirmAll() },
-                    enabled = !isConfirming,
-                    loading = isConfirming,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                )
-            }
-        }
     ) { paddingValues ->
         val nlsConnected by viewModel.nlsConnected.collectAsStateWithLifecycle()
         val allItems by viewModel.allNotifications.collectAsStateWithLifecycle()
@@ -195,8 +181,7 @@ fun NotificationCenterScreen(
                     items(pendingList, key = { it.id }) { item ->
                         NotificationItem(
                             item = item,
-                            onQuickConfirm = { viewModel.confirmItem(item.id) },
-                            onEdit = { editItem = item },
+                            onConfirm = { editItem = item },
                             onIgnore = { ignoreConfirmId = item.id }
                         )
                     }
@@ -227,8 +212,7 @@ fun NotificationCenterScreen(
 @Composable
 private fun NotificationItem(
     item: NotificationRecordEntity,
-    onQuickConfirm: () -> Unit,
-    onEdit: () -> Unit,
+    onConfirm: () -> Unit,
     onIgnore: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -275,9 +259,9 @@ private fun NotificationItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                // 时间
+                // 时间 + 来源
                 Text(
-                    text = formatTime(item.receivedAt),
+                    text = "${com.aibill.android.util.NotificationSourceMapping.friendlyName(item.packageName)} · ${formatTime(item.receivedAt)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -285,28 +269,14 @@ private fun NotificationItem(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // 操作按钮 - 三个紧凑操作
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // 快速确认 - 填充图标按钮
-                FilledIconButton(
-                    onClick = onQuickConfirm,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = "快速确认",
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                // 编辑按钮
-                AppTextButton(
-                    text = "编辑",
-                    onClick = onEdit,
+            // 操作按钮：确认（弹编辑）+ 忽略
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                PrimaryButton(
+                    text = "确认",
+                    onClick = onConfirm,
+                    tall = false,
                 )
-                // 忽略按钮
+                Spacer(modifier = Modifier.height(4.dp))
                 AppTextButton(
                     text = "忽略",
                     onClick = onIgnore,
