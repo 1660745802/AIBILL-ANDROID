@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aibill.android.presentation.utils.toYuanDisplay
+import java.time.LocalDate
 
 private val GradientStart = Color(0xFF009688)
 private val GradientEnd = Color(0xFF4DB6AC)
@@ -106,6 +107,16 @@ internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null) {
                     color = progressColor,
                     trackColor = Color.White.copy(alpha = 0.2f),
                 )
+                // 日均消费
+                if (amount > 0) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val dailyAvg = amount.toFloat() / LocalDate.now().dayOfMonth / 100f
+                    Text(
+                        text = "日均 ¥${"%.2f".format(dailyAvg)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f),
+                    )
+                }
             } else {
                 Text(
                     text = amount.toYuanDisplay(),
@@ -114,6 +125,16 @@ internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null) {
                     color = Color.White,
                     letterSpacing = (-0.5).sp,
                 )
+                // 日均消费
+                if (amount > 0) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val dailyAvg = amount.toFloat() / LocalDate.now().dayOfMonth / 100f
+                    Text(
+                        text = "日均 ¥${"%.2f".format(dailyAvg)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f),
+                    )
+                }
             }
         }
     }

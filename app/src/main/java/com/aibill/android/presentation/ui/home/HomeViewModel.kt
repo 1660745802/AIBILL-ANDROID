@@ -70,6 +70,8 @@ class HomeViewModel @Inject constructor(
         val aiParseResults: List<AiParseResult>? = null,
         val todayTransactions: List<Transaction> = emptyList(),
         val pendingNotificationCount: Int = 0,
+        val pendingSyncCount: Int = 0,
+        val isSyncing: Boolean = false,
         /** AI 编辑弹窗/手动记账等需要的可选分类列表（按 type 过滤） */
         val categoriesByType: Map<String, List<Category>> = emptyMap(),
         val availableTags: List<String> = emptyList(),
@@ -99,6 +101,7 @@ class HomeViewModel @Inject constructor(
     init {
         refresh()
         observePendingNotifications()
+        observePendingSyncCount()
         observeCategories()
         loadAvailableTags()
         loadQuickPhrases()
@@ -128,6 +131,32 @@ class HomeViewModel @Inject constructor(
             notificationRecordDao.observePendingCount().collect { count ->
                 _uiState.update { it.copy(pendingNotificationCount = count) }
             }
+        }
+    }
+
+    private fun observePendingSyncCount() {
+        viewModelScope.launch {
+            transactionRepository.observePendingCount().collect { count ->
+                _uiState.update { it.copy(pendingSyncCount = count) }
+            }
+        }
+    }
+
+    fun triggerSync() {
+        if (_uiState.value.isSyncing) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSyncing = true) }
+            when (val result = transactionRepository.syncPending()) {
+                is Result.Success -> {
+                    _uiEvent.emit(UiEvent.ShowToast("同步完成"))
+                    refreshData()
+                }
+                is Result.Error -> {
+                    _uiEvent.emit(UiEvent.ShowError("同步失败: ${result.message}"))
+                }
+                is Result.Loading -> Unit
+            }
+            _uiState.update { it.copy(isSyncing = false) }
         }
     }
 

@@ -155,6 +155,11 @@ fun StatisticsScreen(
                         SummaryCard(
                             summary = state.summary,
                             selectedTab = state.selectedTab,
+                            daysInPeriod = if (state.year == java.time.LocalDate.now().year && state.month == java.time.LocalDate.now().monthValue) {
+                                java.time.LocalDate.now().dayOfMonth
+                            } else {
+                                java.time.YearMonth.of(state.year, state.month).lengthOfMonth()
+                            },
                         )
                     }
                     item(key = "trend") {

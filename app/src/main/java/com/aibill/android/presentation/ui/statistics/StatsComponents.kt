@@ -61,6 +61,7 @@ private val IncomeGradient = listOf(Color(0xFF009688), Color(0xFF4DB6AC))
 internal fun SummaryCard(
     summary: StatsSummary?,
     selectedTab: String,
+    daysInPeriod: Int = 1,
     modifier: Modifier = Modifier,
 ) {
     val displayAmount = when (selectedTab) {
@@ -127,6 +128,16 @@ internal fun SummaryCard(
                     color = Color.White.copy(alpha = 0.85f),
                 )
             }
+            // 日均消费
+            if (daysInPeriod > 0 && displayAmount > 0) {
+                Spacer(modifier = Modifier.height(6.dp))
+                val dailyAvg = displayAmount.toFloat() / daysInPeriod / 100f
+                Text(
+                    text = "日均 ¥${"%.2f".format(dailyAvg)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.7f),
+                )
+            }
         }
     }
 }
@@ -149,12 +160,13 @@ internal fun TrendChartPlaceholder(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp)
                 .padding(16.dp),
         ) {
             if (trendData.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -215,6 +227,32 @@ internal fun TrendChartPlaceholder(
                     points.forEach { p ->
                         drawCircle(color = color, radius = 5f, center = p)
                         drawCircle(color = Color.White, radius = 2.5f, center = p)
+                    }
+                }
+
+                // Max/Min annotations
+                if (trendData.isNotEmpty()) {
+                    val maxPoint = trendData.maxByOrNull { it.amount }
+                    val minPoint = trendData.filter { it.amount > 0 }.minByOrNull { it.amount }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        maxPoint?.let {
+                            Text(
+                                text = "↑ 最高 ${it.amount.toYuanDisplay()} (${it.date.takeLast(2)}日)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = ExpenseColor,
+                            )
+                        }
+                        minPoint?.let {
+                            Text(
+                                text = "↓ 最低 ${it.amount.toYuanDisplay()} (${it.date.takeLast(2)}日)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }

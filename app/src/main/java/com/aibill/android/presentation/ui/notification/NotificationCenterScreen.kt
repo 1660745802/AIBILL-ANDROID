@@ -1,5 +1,7 @@
 package com.aibill.android.presentation.ui.notification
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -23,6 +28,7 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,7 +51,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.data.local.entity.NotificationRecordEntity
-import com.aibill.android.presentation.theme.AppOutlinedButton
 import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.PrimaryButton
 import java.text.SimpleDateFormat
@@ -65,6 +70,7 @@ fun NotificationCenterScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var ignoreConfirmId by remember { mutableStateOf<Long?>(null) }
     var editItem by remember { mutableStateOf<NotificationRecordEntity?>(null) }
+    var expandedConfirmed by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.uiEvent.collect { event ->
@@ -179,19 +185,36 @@ fun NotificationCenterScreen(
                     Spacer(modifier = Modifier.height(4.dp))
                 }
                 // 按时间混排：已入库和待确认在一个列表
-                if (allItems.isEmpty() && !pendingItems.isNotEmpty()) {
+                val pendingList = allItems.filter { it.status in listOf("raw", "parsed") }
+                val confirmedList = allItems.filter { it.status !in listOf("raw", "parsed") }
+
+                if (pendingList.isEmpty() && confirmedList.isEmpty()) {
                     item(key = "empty") { EmptyState() }
                 } else {
-                    items(allItems, key = { it.id }) { item ->
-                        val isPending = item.status in listOf("raw", "parsed")
-                        if (isPending) {
-                            NotificationItem(
-                                item = item,
-                                onConfirm = { editItem = item },
-                                onIgnore = { ignoreConfirmId = item.id }
+                    // Render pending items
+                    items(pendingList, key = { it.id }) { item ->
+                        NotificationItem(
+                            item = item,
+                            onQuickConfirm = { viewModel.confirmItem(item.id) },
+                            onEdit = { editItem = item },
+                            onIgnore = { ignoreConfirmId = item.id }
+                        )
+                    }
+
+                    // Render confirmed summary (collapsible)
+                    if (confirmedList.isNotEmpty()) {
+                        item(key = "confirmed_summary") {
+                            ConfirmedSummaryCard(
+                                count = confirmedList.size,
+                                totalAmount = confirmedList.sumOf { it.parsedAmount ?: 0 },
+                                expanded = expandedConfirmed,
+                                onToggle = { expandedConfirmed = !expandedConfirmed }
                             )
-                        } else {
-                            ConfirmedNotificationItem(item = item)
+                        }
+                        if (expandedConfirmed) {
+                            items(confirmedList, key = { "confirmed_${it.id}" }) { item ->
+                                ConfirmedNotificationItem(item = item)
+                            }
                         }
                     }
                 }
@@ -204,7 +227,8 @@ fun NotificationCenterScreen(
 @Composable
 private fun NotificationItem(
     item: NotificationRecordEntity,
-    onConfirm: () -> Unit,
+    onQuickConfirm: () -> Unit,
+    onEdit: () -> Unit,
     onIgnore: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -261,14 +285,29 @@ private fun NotificationItem(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // 操作按钮
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                PrimaryButton(
-                    text = "确认",
-                    onClick = onConfirm,
+            // 操作按钮 - 三个紧凑操作
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 快速确认 - 填充图标按钮
+                FilledIconButton(
+                    onClick = onQuickConfirm,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "快速确认",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                // 编辑按钮
+                AppTextButton(
+                    text = "编辑",
+                    onClick = onEdit,
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                AppOutlinedButton(
+                // 忽略按钮
+                AppTextButton(
                     text = "忽略",
                     onClick = onIgnore,
                 )
@@ -474,6 +513,53 @@ private fun NlsHealthCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ConfirmedSummaryCard(
+    count: Int,
+    totalAmount: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val amountText = "¥${"%.2f".format(totalAmount / 100.0)}"
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "✓ 已记录 $count 笔",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "支出 $amountText",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = if (expanded) "收起" else "展开",
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

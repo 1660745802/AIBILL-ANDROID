@@ -41,6 +41,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.presentation.utils.toYuanDisplay
 import kotlinx.coroutines.flow.collectLatest
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -175,6 +177,16 @@ fun HomeScreen(
                         )
                     }
 
+                    if (uiState.pendingSyncCount > 0) {
+                        item(key = "pending_sync") {
+                            PendingSyncChip(
+                                count = uiState.pendingSyncCount,
+                                isSyncing = uiState.isSyncing,
+                                onSyncClick = viewModel::triggerSync,
+                            )
+                        }
+                    }
+
                     item(key = "ai_input") {
                         AiInputSection(
                             inputText = uiState.inputText,
@@ -211,6 +223,9 @@ fun HomeScreen(
                         val autoCount = uiState.todayTransactions.count {
                             it.source == com.aibill.android.domain.model.TransactionSource.APP_NOTIFICATION
                         }
+                        val todayExpenseTotal = uiState.todayTransactions
+                            .filter { it.type == TransactionType.EXPENSE }
+                            .sumOf { it.amount }
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -229,6 +244,12 @@ fun HomeScreen(
                                     color = MaterialTheme.colorScheme.primary,
                                 )
                             }
+                            Spacer(modifier = Modifier.weight(1f))
+                            Text(
+                                text = "今日支出 ${todayExpenseTotal.toYuanDisplay()}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
 
@@ -249,4 +270,51 @@ fun HomeScreen(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PendingSyncChip(
+    count: Int,
+    isSyncing: Boolean,
+    onSyncClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val amberColor = Color(0xFFF59E0B)
+
+    androidx.compose.material3.SuggestionChip(
+        onClick = onSyncClick,
+        label = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isSyncing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = amberColor,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "同步中…",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = amberColor,
+                    )
+                } else {
+                    Text(
+                        text = "⚠\uFE0F ${count}笔待同步",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = amberColor,
+                    )
+                }
+            }
+        },
+        modifier = modifier,
+        enabled = !isSyncing,
+        border = androidx.compose.material3.SuggestionChipDefaults.suggestionChipBorder(
+            enabled = true,
+            borderColor = amberColor.copy(alpha = 0.5f),
+        ),
+        colors = androidx.compose.material3.SuggestionChipDefaults.suggestionChipColors(
+            containerColor = amberColor.copy(alpha = 0.1f),
+        ),
+    )
 }
