@@ -36,6 +36,7 @@ class NotificationCenterViewModel @Inject constructor(
     private val pendingTransactionDao: PendingTransactionDao,
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
+    private val categoryLearningEngine: com.aibill.android.domain.usecase.CategoryLearningEngine,
     private val appLogger: com.aibill.android.util.AppLogger,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
@@ -167,6 +168,11 @@ class NotificationCenterViewModel @Inject constructor(
                 categoryId = categoryId,
                 tags = tags,
             )
+            // 分类学习：用户选了分类就学习映射
+            val learnDesc = description.ifBlank { record.parsedDescription }
+            if (categoryId != null && !learnDesc.isNullOrBlank()) {
+                categoryLearningEngine.learnFromCorrection(learnDesc.trim(), categoryId)
+            }
             _uiEvent.send(UiEvent.ShowToast("已记账 ✓"))
         }
     }

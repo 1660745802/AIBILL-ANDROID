@@ -163,6 +163,7 @@ object NotificationHelper {
             .setAutoCancel(true)
             .setContentIntent(contentPending)
             .addAction(0, "✓ 确认记账", confirmPending)
+            .addAction(buildReplyAction(context, recordId, notificationId))
             .addAction(0, "忽略", ignorePending)
             .setVisibility(
                 if (privacyMode) NotificationCompat.VISIBILITY_SECRET
@@ -181,6 +182,34 @@ object NotificationHelper {
 
     private val pendingCancels = java.util.concurrent.ConcurrentHashMap<Int, Runnable>()
     private val cancelHandler = Handler(Looper.getMainLooper())
+
+    /** RemoteInput key，NotificationActionReceiver 中读取回复文本用 */
+    const val REMOTE_INPUT_KEY = "remote_input_note"
+
+    /**
+     * 构建"备注"回复 Action：用户可在通知栏直接输入备注后确认记账。
+     */
+    private fun buildReplyAction(context: Context, recordId: Long, notificationId: Int): NotificationCompat.Action {
+        val remoteInput = androidx.core.app.RemoteInput.Builder(REMOTE_INPUT_KEY)
+            .setLabel("输入备注后确认")
+            .build()
+
+        val replyIntent = Intent(context, NotificationActionReceiver::class.java).apply {
+            action = NotificationActionReceiver.ACTION_CONFIRM_WITH_NOTE
+            putExtra(NotificationActionReceiver.EXTRA_RECORD_ID, recordId)
+            putExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_ID, notificationId)
+        }
+        val replyPending = PendingIntent.getBroadcast(
+            context,
+            recordId.toInt() + 30000,
+            replyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE // MUTABLE required for RemoteInput
+        )
+
+        return NotificationCompat.Action.Builder(0, "✏️ 备注", replyPending)
+            .addRemoteInput(remoteInput)
+            .build()
+    }
 
     private fun scheduleAutoCancel(
         manager: NotificationManager,
@@ -233,6 +262,32 @@ object NotificationHelper {
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(-1, notification)
+    }
+
+    /**
+     * 显示无障碍服务断连提醒通知
+     * 当心跳检测发现无障碍服务被系统关闭时调用
+     */
+    fun showA11yDisconnectedNotification(context: Context) {
+        createNotificationChannel(context)
+
+        val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        val pendingIntent = PendingIntent.getActivity(
+            context, 30001, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("⚠️ 无障碍记账已断开")
+            .setContentText("支付页面自动识别已停止，点击前往设置重新开启")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(-2, notification)
     }
 
     /**

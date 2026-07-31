@@ -28,19 +28,11 @@ class InsightWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         return try {
-            val now = LocalDate.now()
-            val response = statsApi.getSummary(now.year, now.monthValue)
-            if (response.code != 0 || response.data == null) {
-                return Result.retry()
-            }
-
-            val expenseChange = response.data.expenseChange
-            if (expenseChange != null && expenseChange > THRESHOLD_PERCENT) {
-                val changeText = expenseChange.toString()
-                sendNotification(
-                    title = "💡 消费洞察",
-                    content = "本月支出比上月多 $changeText%，注意控制哦"
-                )
+            val today = LocalDate.now()
+            if (today.dayOfMonth in 1..3) {
+                sendMonthlyReport(today)
+            } else {
+                sendWeeklyInsight(today)
             }
             Result.success()
         } catch (e: Exception) {
@@ -49,12 +41,66 @@ class InsightWorker @AssistedInject constructor(
         }
     }
 
+    /**
+     * 周中推送：本月进度 + 日均 + 环比
+     */
+    private suspend fun sendWeeklyInsight(today: LocalDate) {
+        val response = statsApi.getSummary(today.year, today.monthValue)
+        if (response.code != 0 || response.data == null) return
+
+        val data = response.data
+        val daysElapsed = today.dayOfMonth
+        val dailyAvg = if (daysElapsed > 0) data.expense / daysElapsed / 100.0 else 0.0
+        val projectedYuan = (dailyAvg * today.lengthOfMonth()).toInt()
+
+        val title = "📊 本周消费小结"
+        val content = buildString {
+            append("本月已支出 ¥${"%.0f".format(data.expense / 100.0)}")
+            append("，日均 ¥${"%.0f".format(dailyAvg)}")
+            data.expenseChange?.let { change ->
+                if (change > 0) append("\n比上月同期多 ${change}%")
+                else if (change < 0) append("\n比上月同期少 ${-change}%")
+            }
+            append("\n按当前节奏，本月预计支出 ¥$projectedYuan")
+        }
+        sendNotification(title, content)
+    }
+
+    /**
+     * 月初推送：上月完整总结
+     */
+    private suspend fun sendMonthlyReport(today: LocalDate) {
+        val lastMonth = today.minusMonths(1)
+        val response = statsApi.getSummary(lastMonth.year, lastMonth.monthValue)
+        if (response.code != 0 || response.data == null) return
+
+        val data = response.data
+        val title = "📝 ${lastMonth.monthValue}月账单总结"
+        val content = buildString {
+            append("支出 ¥${"%.0f".format(data.expense / 100.0)}")
+            append(" | 收入 ¥${"%.0f".format(data.income / 100.0)}")
+            append(" | 结余 ¥${"%.0f".format(data.balance / 100.0)}")
+            data.expenseChange?.let { change ->
+                append("\n")
+                when {
+                    change > 0 -> append("比${if (lastMonth.monthValue > 1) "${lastMonth.monthValue - 1}月" else "上月"}多花了 ${change}%")
+                    change < 0 -> append("比${if (lastMonth.monthValue > 1) "${lastMonth.monthValue - 1}月" else "上月"}省了 ${-change}% 👍")
+                    else -> append("与上月持平")
+                }
+            }
+            val dailyAvg = data.expense / lastMonth.lengthOfMonth() / 100.0
+            append("\n日均 ¥${"%.0f".format(dailyAvg)}")
+        }
+        sendNotification(title, content)
+    }
+
     private fun sendNotification(title: String, content: String) {
         ensureChannel()
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
-            .setContentText(content)
+            .setContentText(content.lines().first())
+            .setStyle(NotificationCompat.BigTextStyle().bigText(content))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .build()
@@ -82,7 +128,6 @@ class InsightWorker @AssistedInject constructor(
         private const val CHANNEL_ID = "aibill_insight"
         private const val CHANNEL_NAME = "消费洞察"
         private const val NOTIFICATION_ID = 60001
-        private const val THRESHOLD_PERCENT = 30
 
         fun schedule(context: Context) {
             val request = PeriodicWorkRequestBuilder<InsightWorker>(

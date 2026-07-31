@@ -36,6 +36,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_CONFIRM = "com.aibill.android.ACTION_CONFIRM_RECORD"
         const val ACTION_IGNORE = "com.aibill.android.ACTION_IGNORE_RECORD"
+        const val ACTION_CONFIRM_WITH_NOTE = "com.aibill.android.ACTION_CONFIRM_WITH_NOTE"
         const val EXTRA_RECORD_ID = "extra_record_id"
         const val EXTRA_NOTIFICATION_ID = "extra_notification_id"
     }
@@ -54,6 +55,16 @@ class NotificationActionReceiver : BroadcastReceiver() {
             ACTION_CONFIRM -> receiverScope.launch {
                 try {
                     handleConfirm(context, recordId)
+                } finally {
+                    pendingResult.finish()
+                }
+            }
+            ACTION_CONFIRM_WITH_NOTE -> receiverScope.launch {
+                try {
+                    val note = androidx.core.app.RemoteInput.getResultsFromIntent(intent)
+                        ?.getCharSequence(com.aibill.android.util.NotificationHelper.REMOTE_INPUT_KEY)
+                        ?.toString()
+                    handleConfirmWithNote(context, recordId, note)
                 } finally {
                     pendingResult.finish()
                 }
@@ -135,5 +146,63 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
     private suspend fun handleIgnore(recordId: Long) {
         notificationRecordDao.updateStatus(recordId, "ignored")
+    }
+
+    /**
+     * 用户通过 RemoteInput 输入备注后确认记账。
+     * 流程与 handleConfirm 相同，但用用户输入的 note 覆盖 parsedDescription。
+     */
+    private suspend fun handleConfirmWithNote(context: Context, recordId: Long, note: String?) {
+        val record = notificationRecordDao.findById(recordId) ?: return
+
+        val clientId = UUID.randomUUID().toString()
+        val now = Date()
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+        val description = note?.takeIf { it.isNotBlank() } ?: record.parsedDescription
+        val predictedCategoryId = if (!description.isNullOrBlank()) {
+            categoryLearningEngine.matchCategory(description)
+        } else null
+
+        val pendingTransaction = PendingTransactionEntity(
+            clientId = clientId,
+            type = record.parsedType ?: "expense",
+            amount = record.parsedAmount ?: 0,
+            categoryId = predictedCategoryId,
+            description = description,
+            date = dateFormat.format(now),
+            time = timeFormat.format(now),
+            source = "app_notification",
+            sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
+            clientCreatedAt = now.toInstant().toString()
+        )
+
+        pendingTransactionDao.insert(pendingTransaction)
+        notificationRecordDao.updateStatus(recordId, "confirmed", clientId)
+        SyncScheduler.scheduleSyncIfNeeded(context)
+
+        WidgetDataUpdater.notifyTransactionAdded(
+            context = context,
+            type = TransactionType.fromValue(record.parsedType ?: "expense") ?: TransactionType.EXPENSE,
+            amountCents = record.parsedAmount ?: 0,
+            date = pendingTransaction.date,
+        )
+
+        // 学习分类映射
+        if (predictedCategoryId != null && !description.isNullOrBlank()) {
+            categoryLearningEngine.learnFromCorrection(description.trim(), predictedCategoryId)
+        }
+
+        // 轻反馈通知
+        NotificationHelper.showAutoRecordedNotification(
+            context = context,
+            recordId = recordId + 100000,
+            amount = record.parsedAmount ?: 0,
+            description = description,
+            source = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
+            type = record.parsedType ?: "expense",
+            autoDismissMs = 3000L,
+        )
     }
 }
