@@ -247,3 +247,93 @@ internal fun QuickPhraseRow(
         }
     }
 }
+
+@Composable
+internal fun MiniTrendChart(
+    trendData: List<Pair<String, Int>>,
+    modifier: Modifier = Modifier,
+) {
+    if (trendData.isEmpty()) return
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "📈 近 ${trendData.size} 天支出",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                val maxAmount = trendData.maxOf { it.second }.coerceAtLeast(1)
+                trendData.forEach { (day, amount) ->
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        val barHeight = (amount.toFloat() / maxAmount * 36).coerceAtLeast(2f)
+                        androidx.compose.foundation.layout.Box(
+                            modifier = Modifier
+                                .width(14.dp)
+                                .height(barHeight.dp)
+                                .background(
+                                    color = MaterialTheme.colorScheme.primary.copy(
+                                        alpha = if (amount == maxAmount) 1f else 0.6f
+                                    ),
+                                    shape = RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp),
+                                ),
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = day,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 9.sp,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun StreakChip(
+    currentStreak: Int,
+    totalCount: Int,
+    modifier: Modifier = Modifier,
+) {
+    if (currentStreak <= 0 && totalCount <= 0) return
+
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (currentStreak > 0) {
+            Text(
+                text = "🔥 连续 $currentStreak 天",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        if (totalCount > 0) {
+            Text(
+                text = "📝 共 $totalCount 笔",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}

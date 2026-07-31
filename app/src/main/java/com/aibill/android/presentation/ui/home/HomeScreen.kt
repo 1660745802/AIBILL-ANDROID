@@ -177,44 +177,27 @@ fun HomeScreen(
                         )
                     }
 
+                    if (uiState.weeklyTrend.isNotEmpty()) {
+                        item(key = "mini_trend") {
+                            MiniTrendChart(trendData = uiState.weeklyTrend)
+                        }
+                    }
+
+                    if (uiState.streakInfo.currentStreak > 0 || uiState.streakInfo.totalCount > 0) {
+                        item(key = "streak") {
+                            StreakChip(
+                                currentStreak = uiState.streakInfo.currentStreak,
+                                totalCount = uiState.streakInfo.totalCount,
+                            )
+                        }
+                    }
+
                     if (uiState.pendingSyncCount > 0) {
                         item(key = "pending_sync") {
                             PendingSyncChip(
                                 count = uiState.pendingSyncCount,
                                 isSyncing = uiState.isSyncing,
                                 onSyncClick = viewModel::triggerSync,
-                            )
-                        }
-                    }
-
-                    item(key = "ai_input") {
-                        AiInputSection(
-                            inputText = uiState.inputText,
-                            isParsing = uiState.isParsing,
-                            onInputChanged = viewModel::onInputChanged,
-                            onSend = viewModel::onParseInput,
-                        )
-                    }
-
-                    item(key = "quick_phrases") {
-                        QuickPhraseRow(
-                            phrases = uiState.quickPhrases,
-                            onPhraseClick = { viewModel.onInputChanged(it) },
-                        )
-                    }
-
-                    if (uiState.aiParseResults != null) {
-                        item(key = "ai_results") {
-                            AiResultsCard(
-                                results = uiState.aiParseResults.orEmpty(),
-                                categoriesByType = uiState.categoriesByType,
-                                availableTags = uiState.availableTags,
-                                onConfirmItem = viewModel::onConfirmItem,
-                                onConfirmAll = viewModel::onConfirmAll,
-                                onDismiss = viewModel::onDismissResults,
-                                onConfirmEdited = { original, amount, type, categoryId, desc, accId, targetAccId, tags ->
-                                    viewModel.onConfirmEditedItem(original, amount, type, categoryId, desc, accId, targetAccId, tags)
-                                },
                             )
                         }
                     }
@@ -263,6 +246,38 @@ fun HomeScreen(
                             TransactionItem(
                                 transaction = transaction,
                                 onClick = { transaction.id?.let { onNavigateToDetail(it) } },
+                            )
+                        }
+                    }
+
+                    item(key = "ai_input") {
+                        AiInputSection(
+                            inputText = uiState.inputText,
+                            isParsing = uiState.isParsing,
+                            onInputChanged = viewModel::onInputChanged,
+                            onSend = viewModel::onParseInput,
+                        )
+                    }
+
+                    item(key = "quick_phrases") {
+                        QuickPhraseRow(
+                            phrases = uiState.quickPhrases,
+                            onPhraseClick = { viewModel.onInputChanged(it) },
+                        )
+                    }
+
+                    if (uiState.aiParseResults != null) {
+                        item(key = "ai_results") {
+                            AiResultsCard(
+                                results = uiState.aiParseResults.orEmpty(),
+                                categoriesByType = uiState.categoriesByType,
+                                availableTags = uiState.availableTags,
+                                onConfirmItem = viewModel::onConfirmItem,
+                                onConfirmAll = viewModel::onConfirmAll,
+                                onDismiss = viewModel::onDismissResults,
+                                onConfirmEdited = { original, amount, type, categoryId, desc, accId, targetAccId, tags ->
+                                    viewModel.onConfirmEditedItem(original, amount, type, categoryId, desc, accId, targetAccId, tags)
+                                },
                             )
                         }
                     }

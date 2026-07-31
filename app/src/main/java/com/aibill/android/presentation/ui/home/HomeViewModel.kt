@@ -15,6 +15,8 @@ import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.domain.usecase.CategoryLearningEngine
+import com.aibill.android.domain.usecase.StreakInfo
+import com.aibill.android.domain.usecase.StreakTracker
 import android.app.Application
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.async
@@ -46,6 +48,7 @@ class HomeViewModel @Inject constructor(
     private val budgetRepository: BudgetRepository,
     private val notificationRecordDao: com.aibill.android.data.local.dao.NotificationRecordDao,
     private val categoryLearningEngine: CategoryLearningEngine,
+    private val streakTracker: StreakTracker,
     private val appLogger: com.aibill.android.util.AppLogger,
 ) : ViewModel() {
 
@@ -76,6 +79,10 @@ class HomeViewModel @Inject constructor(
         val categoriesByType: Map<String, List<Category>> = emptyMap(),
         val availableTags: List<String> = emptyList(),
         val quickPhrases: List<Pair<String, String>> = DEFAULT_QUICK_PHRASES,
+        /** 最近7天日支出趋势 (dayLabel, amountCents) */
+        val weeklyTrend: List<Pair<String, Int>> = emptyList(),
+        /** 连续记账天数 */
+        val streakInfo: StreakInfo = StreakInfo(),
         val error: String? = null,
     )
 
@@ -103,8 +110,35 @@ class HomeViewModel @Inject constructor(
         observePendingNotifications()
         observePendingSyncCount()
         observeCategories()
+        observeStreak()
         loadAvailableTags()
         loadQuickPhrases()
+    }
+
+    private fun observeStreak() {
+        viewModelScope.launch {
+            streakTracker.checkAndResetIfNeeded()
+            streakTracker.streakInfo.collect { info ->
+                _uiState.update { it.copy(streakInfo = info) }
+            }
+        }
+    }
+
+    private fun loadWeeklyTrend() {
+        viewModelScope.launch {
+            val now = LocalDate.now()
+            when (val result = statsRepository.getTrend(now.year, now.monthValue, "day", "expense")) {
+                is Result.Success -> {
+                    // 取最近7天
+                    val last7 = result.data.takeLast(7).map { point ->
+                        val dayLabel = point.date.takeLast(2) // "2026-07-28" -> "28"
+                        dayLabel to point.amount
+                    }
+                    _uiState.update { it.copy(weeklyTrend = last7) }
+                }
+                else -> Unit
+            }
+        }
     }
 
     private fun observeCategories() {
@@ -183,6 +217,7 @@ class HomeViewModel @Inject constructor(
                 awaitAll(deferred1, deferred2, deferred3, deferred4, deferred5)
                 loadAvailableTags()
                 loadQuickPhrases()
+                loadWeeklyTrend()
             } finally {
                 _uiState.update { it.copy(isRefreshing = false) }
             }
