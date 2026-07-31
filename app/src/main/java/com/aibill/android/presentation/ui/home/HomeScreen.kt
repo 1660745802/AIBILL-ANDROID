@@ -50,9 +50,6 @@ import kotlinx.coroutines.flow.collectLatest
 @Composable
 fun HomeScreen(
     modifier: Modifier = Modifier,
-    aiInputPrefill: String? = null,
-    onAiInputConsumed: () -> Unit = {},
-    onNavigateToManualRecord: () -> Unit = {},
     onNavigateToNotification: () -> Unit = {},
     onNavigateToStatistics: () -> Unit = {},
     onNavigateToDetail: (Int) -> Unit = {},
@@ -70,26 +67,7 @@ fun HomeScreen(
                 is HomeViewModel.UiEvent.ShowError -> {
                     snackbarHostState.showSnackbar(event.message)
                 }
-                is HomeViewModel.UiEvent.AiFallbackToManual -> {
-                    // PRD §4.1：AI 解析失败时给"去手动记账"动作
-                    val result = snackbarHostState.showSnackbar(
-                        message = "AI 暂时无法理解，请手动记账",
-                        actionLabel = "去手动记账",
-                        withDismissAction = true,
-                    )
-                    if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                        onNavigateToManualRecord()
-                    }
-                }
             }
-        }
-    }
-
-    // 外部 Intent（Tasker / AI_PARSE）传入的预填文本 → 自动填入 AI 输入框
-    LaunchedEffect(aiInputPrefill) {
-        if (!aiInputPrefill.isNullOrBlank()) {
-            viewModel.onInputChanged(aiInputPrefill)
-            onAiInputConsumed()
         }
     }
 

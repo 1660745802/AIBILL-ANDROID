@@ -4,17 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.domain.repository.BudgetRepository
 import com.aibill.android.domain.repository.StatsRepository
-import com.aibill.android.domain.model.AiParseResult
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
-import com.aibill.android.domain.model.TransactionSource
-import com.aibill.android.domain.model.TransactionType
-import com.aibill.android.domain.repository.AiRepository
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository
-import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakInfo
 import com.aibill.android.domain.usecase.StreakTracker
 import android.app.Application
@@ -32,36 +27,21 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import java.util.UUID
 import javax.inject.Inject
 import com.aibill.android.service.WidgetDataUpdater
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val application: Application,
-    private val aiRepository: AiRepository,
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
     private val accountRepository: AccountRepository,
-    // PR M8：statsApi → StatsRepository
     private val statsRepository: StatsRepository,
     private val budgetRepository: BudgetRepository,
     private val notificationRecordDao: com.aibill.android.data.local.dao.NotificationRecordDao,
-    private val categoryLearningEngine: CategoryLearningEngine,
     private val streakTracker: StreakTracker,
     private val appLogger: com.aibill.android.util.AppLogger,
 ) : ViewModel() {
-
-    companion object {
-        val DEFAULT_QUICK_PHRASES: List<Pair<String, String>> = listOf(
-            "咖啡 30" to "☕",
-            "午餐 25" to "🍜",
-            "地铁 3" to "🚇",
-            "早餐 10" to "🍳",
-            "晚餐 35" to "🍽️",
-            "超市 80" to "🛒",
-        )
-    }
 
     data class HomeUiState(
         val isLoading: Boolean = false,
@@ -69,17 +49,13 @@ class HomeViewModel @Inject constructor(
         val monthlyExpense: Int = 0,
         val monthlyIncome: Int = 0,
         val monthlyBudget: Int? = null,
-        val inputText: String = "",
-        val isParsing: Boolean = false,
-        val aiParseResults: List<AiParseResult>? = null,
+        val inputText: String = "", // 保留：外部 Intent 预填用
         val todayTransactions: List<Transaction> = emptyList(),
         val pendingNotificationCount: Int = 0,
         val pendingSyncCount: Int = 0,
         val isSyncing: Boolean = false,
-        /** AI 编辑弹窗/手动记账等需要的可选分类列表（按 type 过滤） */
         val categoriesByType: Map<String, List<Category>> = emptyMap(),
         val availableTags: List<String> = emptyList(),
-        val quickPhrases: List<Pair<String, String>> = DEFAULT_QUICK_PHRASES,
         /** 最近7天日支出趋势 (dayLabel, amountCents) */
         val weeklyTrend: List<Pair<String, Int>> = emptyList(),
         /** 连续记账天数 */
@@ -90,11 +66,6 @@ class HomeViewModel @Inject constructor(
     sealed class UiEvent {
         data class ShowToast(val message: String) : UiEvent()
         data class ShowError(val message: String) : UiEvent()
-        /**
-         * AI 解析失败（PRD §4.1 5001）时提示用户切换手动记账。
-         * prefillInput 是用户原本输入的文本，手动记账页可预填。
-         */
-        data class AiFallbackToManual(val prefillInput: String) : UiEvent()
     }
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -113,7 +84,6 @@ class HomeViewModel @Inject constructor(
         observeCategories()
         observeStreak()
         loadAvailableTags()
-        loadQuickPhrases()
     }
 
     private fun observeStreak() {
@@ -217,7 +187,6 @@ class HomeViewModel @Inject constructor(
                 val deferred5 = async { loadMonthlyBudget() }
                 awaitAll(deferred1, deferred2, deferred3, deferred4, deferred5)
                 loadAvailableTags()
-                loadQuickPhrases()
                 loadWeeklyTrend()
             } finally {
                 _uiState.update { it.copy(isRefreshing = false) }
@@ -227,163 +196,6 @@ class HomeViewModel @Inject constructor(
 
     fun onInputChanged(text: String) {
         _uiState.update { it.copy(inputText = text) }
-    }
-
-    fun onParseInput() {
-        val input = _uiState.value.inputText.trim()
-        if (input.isBlank()) return
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(isParsing = true, error = null) }
-            appLogger.info("HOME", "AI解析请求: input=${input.take(50)}")
-            when (val result = aiRepository.parseInput(input)) {
-                is Result.Success -> {
-                    val data = result.data
-                    if (data.isEmpty()) {
-                        appLogger.info("HOME", "AI解析成功但结果为空")
-                        _uiState.update { it.copy(isParsing = false) }
-                        _uiEvent.emit(UiEvent.ShowToast("未能识别有效的记账信息"))
-                    } else {
-                        appLogger.info("HOME", "AI解析成功: ${data.size}条结果")
-                        _uiState.update {
-                            it.copy(
-                                isParsing = false,
-                                aiParseResults = data,
-                                inputText = "",
-                            )
-                        }
-                    }
-                }
-                is Result.Error -> {
-                    appLogger.error("HOME", "AI解析失败: code=${result.code} msg=${result.message}")
-                    Timber.e("AI 解析失败: ${result.message}")
-                    _uiState.update {
-                        it.copy(isParsing = false, error = result.message)
-                    }
-                    // PRD §4.1：AI 解析失败（5001）应提示用户切换手动记账
-                    // PRD 错误码表：5001 = AI 解析失败，5002 = AI 服务不可用
-                    if (result.code == 5001 || result.code == 5002) {
-                        _uiEvent.emit(UiEvent.AiFallbackToManual(input))
-                    } else {
-                        _uiEvent.emit(UiEvent.ShowError(result.message))
-                    }
-                }
-                is Result.Loading -> Unit
-            }
-        }
-    }
-
-    fun onConfirmItem(item: AiParseResult) {
-        viewModelScope.launch {
-            appLogger.info("HOME", "onConfirmItem: amount=${item.amount} type=${item.type}")
-            val transaction = item.toTransaction()
-            when (val result =
-                transactionRepository.createTransactions(listOf(transaction))) {
-                is Result.Success -> {
-                    val remaining =
-                        _uiState.value.aiParseResults?.filter { it !== item }
-                    _uiState.update {
-                        it.copy(aiParseResults = remaining?.ifEmpty { null })
-                    }
-                    _uiEvent.emit(UiEvent.ShowToast("已记录"))
-                    streakTracker.onTransactionRecorded()
-                    refreshData()
-                }
-                is Result.Error -> {
-                    _uiEvent.emit(
-                        UiEvent.ShowError("保存失败: ${result.message}")
-                    )
-                }
-                is Result.Loading -> Unit
-            }
-        }
-    }
-
-    /**
-     * 用户在确认前编辑了金额/类型/分类/备注后再保存
-     */
-    fun onConfirmEditedItem(
-        original: AiParseResult,
-        amount: Int,
-        type: TransactionType,
-        categoryId: Int,
-        description: String,
-        accountId: Int? = null,
-        targetAccountId: Int? = null,
-        tags: List<String> = emptyList(),
-    ) {
-        viewModelScope.launch {
-            appLogger.info("HOME", "onConfirmEditedItem: amount=$amount type=$type catId=$categoryId")
-            if (amount <= 0) {
-                _uiEvent.emit(UiEvent.ShowError("金额必须大于0"))
-                return@launch
-            }
-            // 根据新分类 id 找到对应的 name/icon（保持列表展示一致）
-            val categoryList = _uiState.value.categoriesByType[
-                if (type == TransactionType.EXPENSE) "expense" else "income"
-            ].orEmpty()
-            val newCategory = categoryList.firstOrNull { it.id == categoryId }
-            val edited = original.copy(
-                amount = amount,
-                type = type,
-                categoryId = if (type == TransactionType.TRANSFER) null else categoryId,
-                categoryName = newCategory?.name ?: original.categoryName,
-                categoryIcon = newCategory?.icon ?: original.categoryIcon,
-                description = description.ifBlank { null },
-                accountId = accountId,
-                targetAccountId = targetAccountId,
-            )
-            // 若用户修改了分类，学习新规则
-            if (newCategory != null && categoryId != original.categoryId) {
-                val desc = edited.description
-                if (!desc.isNullOrBlank()) {
-                    categoryLearningEngine.learnFromCorrection(desc, categoryId)
-                }
-            }
-            when (val result =
-                transactionRepository.createTransactions(listOf(edited.toTransaction(tags)))) {
-                is Result.Success -> {
-                    val remaining =
-                        _uiState.value.aiParseResults?.filter { it !== original }
-                    _uiState.update {
-                        it.copy(aiParseResults = remaining?.ifEmpty { null })
-                    }
-                    _uiEvent.emit(UiEvent.ShowToast("已记录"))
-                    streakTracker.onTransactionRecorded()
-                    refreshData()
-                }
-                is Result.Error -> {
-                    _uiEvent.emit(UiEvent.ShowError("保存失败: ${result.message}"))
-                }
-                is Result.Loading -> Unit
-            }
-        }
-    }
-
-    fun onConfirmAll() {
-        val items = _uiState.value.aiParseResults ?: return
-        viewModelScope.launch {
-            val transactions = items.map { it.toTransaction() }
-            when (val result =
-                transactionRepository.createTransactions(transactions)) {
-                is Result.Success -> {
-                    _uiState.update { it.copy(aiParseResults = null) }
-                    _uiEvent.emit(UiEvent.ShowToast("已记录 ${items.size} 笔"))
-                    streakTracker.onTransactionRecorded()
-                    refreshData()
-                }
-                is Result.Error -> {
-                    _uiEvent.emit(
-                        UiEvent.ShowError("保存失败: ${result.message}")
-                    )
-                }
-                is Result.Loading -> Unit
-            }
-        }
-    }
-
-    fun onDismissResults() {
-        _uiState.update { it.copy(aiParseResults = null) }
     }
 
     private suspend fun loadTodayTransactions(): Boolean {
@@ -414,51 +226,6 @@ class HomeViewModel @Inject constructor(
             when (val result = transactionRepository.getTags()) {
                 is Result.Success -> _uiState.update { it.copy(availableTags = result.data) }
                 else -> Unit
-            }
-        }
-    }
-
-    private fun loadQuickPhrases() {
-        viewModelScope.launch {
-            val thirtyDaysAgo = LocalDate.now().minusDays(30)
-                .format(DateTimeFormatter.ISO_LOCAL_DATE)
-            val todayStr = today
-            when (val result = transactionRepository.getTransactions(
-                page = 1,
-                pageSize = 200,
-                startDate = thirtyDaysAgo,
-                endDate = todayStr,
-            )) {
-                is Result.Success -> {
-                    val phrases = result.data.items
-                        .filter { !it.description.isNullOrBlank() }
-                        .groupBy { Triple(it.description, it.amount, it.categoryIcon) }
-                        .entries
-                        .sortedByDescending { it.value.size }
-                        .take(6)
-                        .map { (key, _) ->
-                            val (description, amount, icon) = key
-                            val yuanAmount = amount / 100
-                            val remainder = amount % 100
-                            val amountStr = if (remainder == 0) {
-                                "$yuanAmount"
-                            } else {
-                                "%.2f".format(amount / 100.0)
-                            }
-                            val text = "$description $amountStr"
-                            val emoji = icon ?: "📝"
-                            text to emoji
-                        }
-                    if (phrases.isNotEmpty()) {
-                        _uiState.update { it.copy(quickPhrases = phrases) }
-                    }
-                    // If no valid phrases found, keep the default fallback
-                }
-                is Result.Error -> {
-                    Timber.e("加载快捷短语失败: ${result.message}")
-                    // Keep fallback phrases
-                }
-                is Result.Loading -> Unit
             }
         }
     }
@@ -514,22 +281,4 @@ class HomeViewModel @Inject constructor(
             launch { loadMonthlyBudget() }
         }
     }
-
-    private fun AiParseResult.toTransaction(extraTags: List<String> = emptyList()): Transaction = Transaction(
-        clientId = UUID.randomUUID().toString(),
-        type = type,
-        amount = amount,
-        categoryId = categoryId,
-        categoryName = categoryName,
-        categoryIcon = categoryIcon,
-        accountId = accountId,
-        accountName = accountName,
-        targetAccountId = targetAccountId,
-        targetAccountName = targetAccountName,
-        description = description,
-        date = date,
-        time = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
-        source = TransactionSource.AI,
-        tags = extraTags.ifEmpty { null },
-    )
 }

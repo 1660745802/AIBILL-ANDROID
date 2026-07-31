@@ -163,9 +163,6 @@ fun AiBillNavHost(
             // --- 主 Tab 页面 ---
             composable<Route.Home> {
                 HomeScreen(
-                    aiInputPrefill = aiInputPrefill,
-                    onAiInputConsumed = onAiInputConsumed,
-                    onNavigateToManualRecord = { navController.navigate(Route.ManualRecord()) },
                     onNavigateToNotification = { navController.navigate(Route.NotificationCenter) },
                     onNavigateToStatistics = {
                         navController.navigate(Route.Statistics) {
