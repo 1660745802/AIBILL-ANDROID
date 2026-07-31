@@ -1,38 +1,45 @@
 package com.aibill.android.presentation.ui.transactions
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionType
+import kotlinx.coroutines.launch
 import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.utils.toYuanDisplay
@@ -83,7 +90,6 @@ internal fun DateHeader(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun TransactionItem(
     transaction: Transaction,
@@ -91,53 +97,74 @@ internal fun TransactionItem(
     onClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            // 允许停留在 EndToStart 展开状态（显示删除按钮）
-            value == SwipeToDismissBoxValue.EndToStart
-        },
-    )
+    val revealWidth = 72.dp
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val revealWidthPx = with(density) { revealWidth.toPx() }
+    val offsetX = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
 
-    SwipeToDismissBox(
-        state = dismissState,
-        backgroundContent = {
-            // Red delete action revealed on left-swipe (EndToStart)
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xFFE53935))
-                    .clickable {
-                        transaction.id?.let { onDelete(it) }
-                    }
-                    .padding(horizontal = 24.dp),
-                contentAlignment = Alignment.CenterEnd,
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Delete,
-                        contentDescription = "删除",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp),
-                    )
-                    Text(
-                        text = "删除",
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-            }
-        },
-        enableDismissFromStartToEnd = false,
-        modifier = modifier,
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(0.dp)),
     ) {
+        // 右侧删除按钮（固定在最右边）
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .width(revealWidth)
+                .fillMaxHeight()
+                .background(Color(0xFFE53935))
+                .clickable { transaction.id?.let { onDelete(it) } },
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = Icons.Outlined.Delete,
+                    contentDescription = "删除",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
+                Text(
+                    text = "删除",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+
+        // 前景内容（可左右拖动）
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onClick() },
+                .offset { IntOffset(offsetX.value.toInt(), 0) }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            scope.launch {
+                                if (offsetX.value < -revealWidthPx * 0.4f) {
+                                    offsetX.animateTo(-revealWidthPx)
+                                } else {
+                                    offsetX.animateTo(0f)
+                                }
+                            }
+                        },
+                        onHorizontalDrag = { _, dragAmount ->
+                            scope.launch {
+                                val newOffset = (offsetX.value + dragAmount)
+                                    .coerceIn(-revealWidthPx, 0f)
+                                offsetX.snapTo(newOffset)
+                            }
+                        },
+                    )
+                }
+                .clickable {
+                    if (offsetX.value < -10f) {
+                        scope.launch { offsetX.animateTo(0f) }
+                    } else {
+                        onClick()
+                    }
+                },
             color = MaterialTheme.colorScheme.surface,
         ) {
             Row(
