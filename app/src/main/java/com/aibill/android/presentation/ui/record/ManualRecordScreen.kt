@@ -146,12 +146,16 @@ fun ManualRecordScreen(
                     type = state.type,
                 )
 
-                // 分类网格 / 转账账户（中部主区域，占据最大空间）
-                Box(modifier = Modifier.weight(1f).heightIn(min = 120.dp)) {
+                // 中部主区域（可滑动：分类 + 标签 + 备注）
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                ) {
                     if (state.type == "transfer") {
                         Column(
-                            modifier = Modifier.fillMaxSize()
-                                .verticalScroll(rememberScrollState())
+                            modifier = Modifier
+                                .fillMaxWidth()
                                 .padding(horizontal = 20.dp, vertical = 12.dp)
                         ) {
                             TransferAccountSection(
@@ -167,47 +171,48 @@ fun ManualRecordScreen(
                             categories = state.categories,
                             selectedId = state.selectedCategoryId,
                             onSelect = viewModel::onCategorySelected,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+
+                    // 标签行（在分类下方，可滑动区域内）
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CompactTagRow(
+                            tags = state.tags,
+                            availableTags = state.availableTags,
+                            onTagAdded = viewModel::onTagAdded,
+                            onTagRemoved = viewModel::onTagRemoved,
+                        )
+
+                        // 备注输入
+                        OutlinedTextField(
+                            value = state.description,
+                            onValueChange = viewModel::onDescriptionChanged,
+                            placeholder = { Text("备注（选填）...", style = MaterialTheme.typography.bodyMedium) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                            ),
                         )
                     }
                 }
 
-                // 底部固定区域：标签行 + 备注 + 保存按钮
-                Column(
+                // 保存按钮（固定底部）
+                PrimaryButton(
+                    text = if (state.isSaving) "保存中..." else "保存",
+                    onClick = viewModel::onSave,
+                    enabled = !state.isSaving,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    // 标签行
-                    CompactTagRow(
-                        tags = state.tags,
-                        availableTags = state.availableTags,
-                        onTagAdded = viewModel::onTagAdded,
-                        onTagRemoved = viewModel::onTagRemoved,
-                    )
-
-                    // 备注输入
-                    OutlinedTextField(
-                        value = state.description,
-                        onValueChange = viewModel::onDescriptionChanged,
-                        placeholder = { Text("备注（选填）...", style = MaterialTheme.typography.bodyMedium) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                        ),
-                    )
-
-                    // 保存按钮
-                    PrimaryButton(
-                        text = if (state.isSaving) "保存中..." else "保存",
-                        onClick = viewModel::onSave,
-                        enabled = !state.isSaving,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+                )
             }
             AnimatedVisibility(
                 visible = showSuccessIndicator, enter = scaleIn() + fadeIn(),
@@ -552,18 +557,18 @@ private fun AiQuickInput(
         Spacer(modifier = Modifier.width(8.dp))
         if (isParsing) {
             androidx.compose.material3.CircularProgressIndicator(
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(48.dp),
                 strokeWidth = 2.5.dp,
             )
         } else {
             androidx.compose.material3.FilledTonalButton(
                 onClick = onParse,
                 enabled = inputText.isNotBlank(),
-                modifier = Modifier.height(36.dp),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+                modifier = Modifier.height(56.dp),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
             ) {
-                Text("AI填充", style = MaterialTheme.typography.labelMedium)
+                Text("AI填充", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
