@@ -127,7 +127,7 @@ fun ManualRecordScreen(
             .padding(padding)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // AI 快捷输入条
+                // AI 快捷输入条（紧凑）
                 AiQuickInput(
                     inputText = state.aiInputText,
                     isParsing = state.isAiParsing,
@@ -135,22 +135,21 @@ fun ManualRecordScreen(
                     onParse = viewModel::onAiParse,
                 )
 
-                // 类型切换（固定顶部）
-                TypeSelector(selectedType = state.type, onTypeSelected = viewModel::onTypeChanged)
-
-                // 金额输入框（大字号，居中，使用系统键盘）
+                // 金额输入（大字，视觉焦点）
                 AmountInputField(
                     amountText = state.amountText,
                     onAmountChanged = viewModel::onAmountTextChanged,
                     type = state.type,
                 )
 
-                // 中部主区域：分类Grid自带滚动，标签+备注在下方
+                // 类型切换
+                TypeSelector(selectedType = state.type, onTypeSelected = viewModel::onTypeChanged)
+
+                // 中部主区域
                 if (state.type == "transfer") {
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .imePadding()
                             .verticalScroll(rememberScrollState())
                             .padding(horizontal = 20.dp, vertical = 12.dp)
                     ) {
@@ -161,32 +160,9 @@ fun ManualRecordScreen(
                             onAccountSelected = viewModel::onAccountSelected,
                             onTargetAccountSelected = viewModel::onTargetAccountSelected,
                         )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        CompactTagRow(
-                            tags = state.tags,
-                            availableTags = state.availableTags,
-                            onTagAdded = viewModel::onTagAdded,
-                            onTagRemoved = viewModel::onTagRemoved,
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        OutlinedTextField(
-                            value = state.description,
-                            onValueChange = viewModel::onDescriptionChanged,
-                            placeholder = { Text("备注（选填）...", style = MaterialTheme.typography.bodyMedium) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                            ),
-                        )
                     }
                 } else {
-                    // 分类Grid（LazyVerticalGrid，需要有限高度约束）
+                    // 分类Grid（占据剩余空间，内部可滚动）
                     Box(modifier = Modifier.weight(1f)) {
                         RecordCategoryGrid(
                             categories = state.categories,
@@ -195,45 +171,46 @@ fun ManualRecordScreen(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-
-                    // 标签 + 备注（固定在分类Grid和保存按钮之间）
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .imePadding()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        CompactTagRow(
-                            tags = state.tags,
-                            availableTags = state.availableTags,
-                            onTagAdded = viewModel::onTagAdded,
-                            onTagRemoved = viewModel::onTagRemoved,
-                        )
-
-                        OutlinedTextField(
-                            value = state.description,
-                            onValueChange = viewModel::onDescriptionChanged,
-                            placeholder = { Text("备注（选填）...", style = MaterialTheme.typography.bodyMedium) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                            ),
-                        )
-                    }
                 }
 
-                // 保存按钮（固定底部）
-                PrimaryButton(
-                    text = if (state.isSaving) "保存中..." else "保存",
-                    onClick = viewModel::onSave,
-                    enabled = !state.isSaving,
+                // 底部操作区：备注+标签+保存
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .imePadding()
                         .padding(horizontal = 12.dp, vertical = 8.dp),
-                )
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    // 标签（紧凑）
+                    CompactTagRow(
+                        tags = state.tags,
+                        availableTags = state.availableTags,
+                        onTagAdded = viewModel::onTagAdded,
+                        onTagRemoved = viewModel::onTagRemoved,
+                    )
+
+                    // 备注
+                    OutlinedTextField(
+                        value = state.description,
+                        onValueChange = viewModel::onDescriptionChanged,
+                        placeholder = { Text("备注（选填）", style = MaterialTheme.typography.bodySmall) },
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                        ),
+                    )
+
+                    // 保存按钮
+                    PrimaryButton(
+                        text = if (state.isSaving) "保存中..." else "保存",
+                        onClick = viewModel::onSave,
+                        enabled = !state.isSaving,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
             AnimatedVisibility(
                 visible = showSuccessIndicator, enter = scaleIn() + fadeIn(),
@@ -442,22 +419,22 @@ private fun CompactTagRow(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        // 标签建议（输入框获焦时显示）
+        // 标签建议（一行横滑）
         if (suggestions.isNotEmpty()) {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+            androidx.compose.foundation.lazy.LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                suggestions.forEach { suggestion ->
+                items(suggestions.size) { index ->
+                    val suggestion = suggestions[index]
                     SuggestionChip(
                         onClick = {
                             onTagAdded(suggestion)
                             tagInput = ""
                             showSuggestions = false
                         },
-                        label = { Text(suggestion) },
-                        modifier = Modifier.height(26.dp),
+                        label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
+                        modifier = Modifier.height(28.dp),
                     )
                 }
             }
