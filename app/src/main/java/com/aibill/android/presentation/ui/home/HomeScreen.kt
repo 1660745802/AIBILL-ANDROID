@@ -168,15 +168,6 @@ fun HomeScreen(
                         }
                     }
 
-                    if (uiState.streakInfo.currentStreak > 0 || uiState.streakInfo.totalCount > 0) {
-                        item(key = "streak") {
-                            StreakChip(
-                                currentStreak = uiState.streakInfo.currentStreak,
-                                totalCount = uiState.streakInfo.totalCount,
-                            )
-                        }
-                    }
-
                     if (uiState.pendingSyncCount > 0) {
                         item(key = "pending_sync") {
                             PendingSyncChip(

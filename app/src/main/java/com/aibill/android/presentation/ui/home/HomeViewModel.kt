@@ -10,8 +10,6 @@ import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository
-import com.aibill.android.domain.usecase.StreakInfo
-import com.aibill.android.domain.usecase.StreakTracker
 import android.app.Application
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.async
@@ -39,7 +37,6 @@ class HomeViewModel @Inject constructor(
     private val statsRepository: StatsRepository,
     private val budgetRepository: BudgetRepository,
     private val notificationRecordDao: com.aibill.android.data.local.dao.NotificationRecordDao,
-    private val streakTracker: StreakTracker,
     private val appLogger: com.aibill.android.util.AppLogger,
 ) : ViewModel() {
 
@@ -58,8 +55,6 @@ class HomeViewModel @Inject constructor(
         val availableTags: List<String> = emptyList(),
         /** 最近7天日支出趋势 (dayLabel, amountCents) */
         val weeklyTrend: List<Pair<String, Int>> = emptyList(),
-        /** 连续记账天数 */
-        val streakInfo: StreakInfo = StreakInfo(),
         val error: String? = null,
     )
 
@@ -82,17 +77,7 @@ class HomeViewModel @Inject constructor(
         observePendingNotifications()
         observePendingSyncCount()
         observeCategories()
-        observeStreak()
         loadAvailableTags()
-    }
-
-    private fun observeStreak() {
-        viewModelScope.launch {
-            streakTracker.checkAndResetIfNeeded()
-            streakTracker.streakInfo.collect { info ->
-                _uiState.update { it.copy(streakInfo = info) }
-            }
-        }
     }
 
     private fun loadWeeklyTrend() {

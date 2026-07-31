@@ -20,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
@@ -91,7 +92,10 @@ internal fun TransactionItem(
     modifier: Modifier = Modifier,
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { false }, // Never fully dismiss — just reveal background
+        confirmValueChange = { value ->
+            // 允许停留在 EndToStart 展开状态（显示删除按钮）
+            value == SwipeToDismissBoxValue.EndToStart
+        },
     )
 
     SwipeToDismissBox(
@@ -102,7 +106,9 @@ internal fun TransactionItem(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color(0xFFE53935))
-                    .clickable { transaction.id?.let { onDelete(it) } }
+                    .clickable {
+                        transaction.id?.let { onDelete(it) }
+                    }
                     .padding(horizontal = 24.dp),
                 contentAlignment = Alignment.CenterEnd,
             ) {

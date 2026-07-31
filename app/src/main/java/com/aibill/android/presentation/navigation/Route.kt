@@ -30,7 +30,6 @@ sealed interface Route {
     @Serializable data object PermissionGuide : Route
     @Serializable data object Recurring : Route
     @Serializable data object Template : Route
-    @Serializable data object AutoRules : Route
     @Serializable data object CategoryManage : Route
     @Serializable data object AccountManage : Route
     @Serializable data object Trash : Route
