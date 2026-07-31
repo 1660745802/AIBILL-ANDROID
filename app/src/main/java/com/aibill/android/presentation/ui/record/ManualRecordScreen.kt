@@ -173,11 +173,10 @@ fun ManualRecordScreen(
                     }
                 }
 
-                // 底部操作区：备注+标签+保存
+                // 底部操作区：标签+备注+保存（不跟随键盘）
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .imePadding()
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -194,7 +193,7 @@ fun ManualRecordScreen(
                         value = state.description,
                         onValueChange = viewModel::onDescriptionChanged,
                         placeholder = { Text("备注（选填）", style = MaterialTheme.typography.bodySmall) },
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodySmall,
                         shape = RoundedCornerShape(12.dp),
