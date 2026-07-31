@@ -356,7 +356,27 @@ private fun CompactTagRow(
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        // 已选标签（可换行）
+        // 标签建议（一行横滑，在最上方）
+        if (suggestions.isNotEmpty() && tags.isNotEmpty()) {
+            androidx.compose.foundation.lazy.LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(suggestions.size) { index ->
+                    val suggestion = suggestions[index]
+                    SuggestionChip(
+                        onClick = {
+                            onTagAdded(suggestion)
+                            tagInput = ""
+                            showSuggestions = false
+                        },
+                        label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
+                        modifier = Modifier.height(28.dp),
+                    )
+                }
+            }
+        }
+        // 已选标签
         if (tags.isNotEmpty()) {
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -381,7 +401,7 @@ private fun CompactTagRow(
             }
             Spacer(modifier = Modifier.height(4.dp))
         }
-        // 输入框独占一行
+        // 输入框（最下方）
         androidx.compose.foundation.layout.Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -417,26 +437,6 @@ private fun CompactTagRow(
                 }),
                 modifier = Modifier.fillMaxWidth(),
             )
-        }
-        // 标签建议（一行横滑）
-        if (suggestions.isNotEmpty()) {
-            androidx.compose.foundation.lazy.LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                items(suggestions.size) { index ->
-                    val suggestion = suggestions[index]
-                    SuggestionChip(
-                        onClick = {
-                            onTagAdded(suggestion)
-                            tagInput = ""
-                            showSuggestions = false
-                        },
-                        label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
-                        modifier = Modifier.height(28.dp),
-                    )
-                }
-            }
         }
     }
 }
