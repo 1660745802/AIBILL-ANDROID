@@ -119,6 +119,18 @@ class NotificationActionReceiver : BroadcastReceiver() {
             amountCents = record.parsedAmount ?: 0,
             date = pendingTransaction.date,
         )
+
+        // 轻量反馈通知：'✓ 已记录'，3秒后自动消失
+        NotificationHelper.showAutoRecordedNotification(
+            context = context,
+            recordId = recordId + 100000, // 使用不同 id 避免与原确认通知冲突
+            amount = record.parsedAmount ?: 0,
+            description = record.parsedDescription,
+            source = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
+            type = record.parsedType ?: "expense",
+            privacyMode = false,
+            autoDismissMs = 3000L,
+        )
     }
 
     private suspend fun handleIgnore(recordId: Long) {

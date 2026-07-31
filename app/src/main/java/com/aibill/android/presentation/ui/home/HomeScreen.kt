@@ -169,7 +169,10 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     item(key = "header") {
-                        MonthlyExpenseHeader(amount = uiState.monthlyExpense)
+                        MonthlyExpenseHeader(
+                            amount = uiState.monthlyExpense,
+                            budget = uiState.monthlyBudget,
+                        )
                     }
 
                     item(key = "ai_input") {
@@ -183,6 +186,7 @@ fun HomeScreen(
 
                     item(key = "quick_phrases") {
                         QuickPhraseRow(
+                            phrases = uiState.quickPhrases,
                             onPhraseClick = { viewModel.onInputChanged(it) },
                         )
                     }

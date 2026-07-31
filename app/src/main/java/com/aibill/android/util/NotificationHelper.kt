@@ -174,11 +174,9 @@ object NotificationHelper {
             as NotificationManager
         manager.notify(notificationId, notification)
 
-        // PR #40 + M3：10 秒自动收起（PRD §4.3）。
-        // 之前多个 Notification 同时间 post 时只有一个 Handler 引用被持有，
-        // GC 可能在 cancel 触发前回收 Runnable。
-        // 改为把 Runnable 存到静态 Map 强引用，确保 10s 后真的 cancel。
-        scheduleAutoCancel(manager, notificationId, AUTO_DISMISS_DELAY_MS)
+        // Heads-up 弹窗由系统自动在几秒后收起到通知栏，无需手动 cancel。
+        // 之前的 scheduleAutoCancel 会在 10s 后把通知栏里的也删掉，
+        // 导致用户来不及操作就丢失通知。现在保留通知直到用户主动处理。
     }
 
     private val pendingCancels = java.util.concurrent.ConcurrentHashMap<Int, Runnable>()
@@ -238,9 +236,11 @@ object NotificationHelper {
     }
 
     /**
-     * v3 轻通知：AI 入库成功后展示，无按钮，5s 自动消失。
+     * v3 轻通知：AI 入库成功后展示，无按钮。
      * 用户看一眼就知道"账记了"，无需任何操作。
      * 点击 → 进通知中心页可修改/删除。
+     *
+     * @param autoDismissMs 非 null 时在指定毫秒后自动取消通知；null 则保留直到用户划掉。
      */
     fun showAutoRecordedNotification(
         context: Context,
@@ -250,6 +250,7 @@ object NotificationHelper {
         source: String,
         type: String = "expense",
         privacyMode: Boolean = false,
+        autoDismissMs: Long? = null,
     ) {
         createNotificationChannel(context)
 
@@ -287,6 +288,9 @@ object NotificationHelper {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(notificationId, notification)
 
-        // 普通通知，不自动消失，用户手动划掉
+        // 如果指定了 autoDismissMs，则在延迟后自动取消通知
+        if (autoDismissMs != null) {
+            scheduleAutoCancel(manager, notificationId, autoDismissMs)
+        }
     }
 }

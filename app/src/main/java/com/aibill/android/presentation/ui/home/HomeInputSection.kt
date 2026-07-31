@@ -22,6 +22,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -31,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -43,7 +45,7 @@ private val GradientStart = Color(0xFF009688)
 private val GradientEnd = Color(0xFF4DB6AC)
 
 @Composable
-internal fun MonthlyExpenseHeader(amount: Int) {
+internal fun MonthlyExpenseHeader(amount: Int, budget: Int? = null) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -68,13 +70,51 @@ internal fun MonthlyExpenseHeader(amount: Int) {
                 color = Color.White.copy(alpha = 0.8f),
             )
             Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = amount.toYuanDisplay(),
-                fontSize = 34.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                letterSpacing = (-0.5).sp,
-            )
+            if (budget != null && budget > 0) {
+                // 有预算时显示: 支出金额 / 预算 xxx 元
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    Text(
+                        text = amount.toYuanDisplay(),
+                        fontSize = 34.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        letterSpacing = (-0.5).sp,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "/ 预算 ${budget.toYuanDisplay()}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.7f),
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                // 进度条
+                val progress = (amount.toFloat() / budget).coerceIn(0f, 1.5f)
+                val progressColor = when {
+                    progress > 1f -> Color(0xFFEF5350) // 红色：超支
+                    progress >= 0.8f -> Color(0xFFFFB74D) // 黄色：接近预算
+                    else -> Color.White.copy(alpha = 0.9f) // 白色：正常
+                }
+                LinearProgressIndicator(
+                    progress = { progress.coerceAtMost(1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = progressColor,
+                    trackColor = Color.White.copy(alpha = 0.2f),
+                )
+            } else {
+                Text(
+                    text = amount.toYuanDisplay(),
+                    fontSize = 34.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    letterSpacing = (-0.5).sp,
+                )
+            }
         }
     }
 }
@@ -162,17 +202,10 @@ internal fun AiInputSection(
 }
 
 @Composable
-internal fun QuickPhraseRow(onPhraseClick: (String) -> Unit) {
-    // PR #34：快捷短语带默认金额（PRD §5.2.1 一键短语 + 常见金额模板）
-    // 用户点击后直接拿到"咖啡 30"这样的可解析文本，AI 能一次返回结果
-    val phrases = listOf(
-        "咖啡 30" to "☕",
-        "午餐 25" to "🍜",
-        "地铁 3" to "🚇",
-        "早餐 10" to "🍳",
-        "晚餐 35" to "🍽️",
-        "超市 80" to "🛒",
-    )
+internal fun QuickPhraseRow(
+    phrases: List<Pair<String, String>>,
+    onPhraseClick: (String) -> Unit,
+) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(phrases) { (text, icon) ->
             SuggestionChip(

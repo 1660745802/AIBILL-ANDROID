@@ -2,6 +2,7 @@ package com.aibill.android.presentation.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aibill.android.domain.repository.BudgetRepository
 import com.aibill.android.domain.repository.StatsRepository
 import com.aibill.android.domain.model.AiParseResult
 import com.aibill.android.domain.model.Category
@@ -42,15 +43,28 @@ class HomeViewModel @Inject constructor(
     private val accountRepository: AccountRepository,
     // PR M8：statsApi → StatsRepository
     private val statsRepository: StatsRepository,
+    private val budgetRepository: BudgetRepository,
     private val notificationRecordDao: com.aibill.android.data.local.dao.NotificationRecordDao,
     private val categoryLearningEngine: CategoryLearningEngine,
     private val appLogger: com.aibill.android.util.AppLogger,
 ) : ViewModel() {
 
+    companion object {
+        val DEFAULT_QUICK_PHRASES: List<Pair<String, String>> = listOf(
+            "咖啡 30" to "☕",
+            "午餐 25" to "🍜",
+            "地铁 3" to "🚇",
+            "早餐 10" to "🍳",
+            "晚餐 35" to "🍽️",
+            "超市 80" to "🛒",
+        )
+    }
+
     data class HomeUiState(
         val isLoading: Boolean = false,
         val isRefreshing: Boolean = false,
         val monthlyExpense: Int = 0,
+        val monthlyBudget: Int? = null,
         val inputText: String = "",
         val isParsing: Boolean = false,
         val aiParseResults: List<AiParseResult>? = null,
@@ -59,6 +73,7 @@ class HomeViewModel @Inject constructor(
         /** AI 编辑弹窗/手动记账等需要的可选分类列表（按 type 过滤） */
         val categoriesByType: Map<String, List<Category>> = emptyMap(),
         val availableTags: List<String> = emptyList(),
+        val quickPhrases: List<Pair<String, String>> = DEFAULT_QUICK_PHRASES,
         val error: String? = null,
     )
 
@@ -86,6 +101,7 @@ class HomeViewModel @Inject constructor(
         observePendingNotifications()
         observeCategories()
         loadAvailableTags()
+        loadQuickPhrases()
     }
 
     private fun observeCategories() {
@@ -134,8 +150,10 @@ class HomeViewModel @Inject constructor(
                         _uiEvent.emit(UiEvent.ShowError("加载今日流水失败，请检查网络"))
                     }
                 }
-                awaitAll(deferred1, deferred2, deferred3, deferred4)
+                val deferred5 = async { loadMonthlyBudget() }
+                awaitAll(deferred1, deferred2, deferred3, deferred4, deferred5)
                 loadAvailableTags()
+                loadQuickPhrases()
             } finally {
                 _uiState.update { it.copy(isRefreshing = false) }
             }
@@ -332,6 +350,51 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    private fun loadQuickPhrases() {
+        viewModelScope.launch {
+            val thirtyDaysAgo = LocalDate.now().minusDays(30)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE)
+            val todayStr = today
+            when (val result = transactionRepository.getTransactions(
+                page = 1,
+                pageSize = 200,
+                startDate = thirtyDaysAgo,
+                endDate = todayStr,
+            )) {
+                is Result.Success -> {
+                    val phrases = result.data.items
+                        .filter { !it.description.isNullOrBlank() }
+                        .groupBy { Triple(it.description, it.amount, it.categoryIcon) }
+                        .entries
+                        .sortedByDescending { it.value.size }
+                        .take(6)
+                        .map { (key, _) ->
+                            val (description, amount, icon) = key
+                            val yuanAmount = amount / 100
+                            val remainder = amount % 100
+                            val amountStr = if (remainder == 0) {
+                                "$yuanAmount"
+                            } else {
+                                "%.2f".format(amount / 100.0)
+                            }
+                            val text = "$description $amountStr"
+                            val emoji = icon ?: "📝"
+                            text to emoji
+                        }
+                    if (phrases.isNotEmpty()) {
+                        _uiState.update { it.copy(quickPhrases = phrases) }
+                    }
+                    // If no valid phrases found, keep the default fallback
+                }
+                is Result.Error -> {
+                    Timber.e("加载快捷短语失败: ${result.message}")
+                    // Keep fallback phrases
+                }
+                is Result.Loading -> Unit
+            }
+        }
+    }
+
     /**
      * 直接调用 StatsApi.getSummary 获取月度支出，避免拉取全部流水
      * 同时更新 Widget 数据
@@ -357,10 +420,30 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 加载月度总预算（categoryId == 0 表示总预算）
+     * 用于首页展示"支出 / 预算 xxx 元"进度
+     */
+    private suspend fun loadMonthlyBudget() {
+        val now = LocalDate.now()
+        when (val result = budgetRepository.getBudgets(now.year, now.monthValue)) {
+            is Result.Success -> {
+                val totalBudget = result.data.firstOrNull { it.categoryId == 0 }
+                _uiState.update { it.copy(monthlyBudget = totalBudget?.amount) }
+            }
+            is Result.Error -> {
+                Timber.e("加载月度预算失败: ${result.message}")
+                // 预算加载失败不影响主流程，静默处理
+            }
+            is Result.Loading -> Unit
+        }
+    }
+
     private fun refreshData() {
         viewModelScope.launch {
             launch { loadTodayTransactions() }
             launch { loadMonthlyExpense() }
+            launch { loadMonthlyBudget() }
         }
     }
 

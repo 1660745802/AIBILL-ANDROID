@@ -73,6 +73,14 @@ class PaymentAccessibilityService : AccessibilityService() {
         val rootNode = rootInActiveWindow ?: return
 
         try {
+            // ===== 全量页面日志（调试期间收集所有页面信息，后续针对性优化后可关闭） =====
+            val allTexts = mutableListOf<String>()
+            collectAllNodeTexts(rootNode, allTexts)
+            val className = ev.className?.toString()?.substringAfterLast('.') ?: "?"
+            val pageSnapshot = allTexts.take(20).joinToString("|")
+            appLogger.debug("A11Y_PAGE", "[$packageName/$className] $pageSnapshot")
+            // ===== 全量日志结束 =====
+
             // 条件1：有"支付成功"关键词
             if (!hasAnyKeyword(rootNode, SUCCESS_KEYWORDS)) return
 
