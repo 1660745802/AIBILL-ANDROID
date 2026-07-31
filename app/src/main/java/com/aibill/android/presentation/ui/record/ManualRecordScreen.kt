@@ -145,40 +145,62 @@ fun ManualRecordScreen(
                     type = state.type,
                 )
 
-                // 中部主区域（可滑动：分类 + 标签 + 备注）
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .imePadding()
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    if (state.type == "transfer") {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 12.dp)
-                        ) {
-                            TransferAccountSection(
-                                accounts = state.accounts,
-                                selectedAccountId = state.accountId,
-                                selectedTargetAccountId = state.targetAccountId,
-                                onAccountSelected = viewModel::onAccountSelected,
-                                onTargetAccountSelected = viewModel::onTargetAccountSelected,
-                            )
-                        }
-                    } else {
-                        RecordCategoryGrid(
-                            categories = state.categories,
-                            selectedId = state.selectedCategoryId,
-                            onSelect = viewModel::onCategorySelected,
+                // 中部主区域：分类Grid自带滚动，标签+备注在下方
+                if (state.type == "transfer") {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .imePadding()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 20.dp, vertical = 12.dp)
+                    ) {
+                        TransferAccountSection(
+                            accounts = state.accounts,
+                            selectedAccountId = state.accountId,
+                            selectedTargetAccountId = state.targetAccountId,
+                            onAccountSelected = viewModel::onAccountSelected,
+                            onTargetAccountSelected = viewModel::onTargetAccountSelected,
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        CompactTagRow(
+                            tags = state.tags,
+                            availableTags = state.availableTags,
+                            onTagAdded = viewModel::onTagAdded,
+                            onTagRemoved = viewModel::onTagRemoved,
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = state.description,
+                            onValueChange = viewModel::onDescriptionChanged,
+                            placeholder = { Text("备注（选填）...", style = MaterialTheme.typography.bodyMedium) },
                             modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                            ),
                         )
                     }
+                } else {
+                    // 分类Grid（LazyVerticalGrid，自带滚动，用weight占据主空间）
+                    RecordCategoryGrid(
+                        categories = state.categories,
+                        selectedId = state.selectedCategoryId,
+                        onSelect = viewModel::onCategorySelected,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                    )
 
-                    // 标签行（在分类下方，可滑动区域内）
+                    // 标签 + 备注（固定在分类Grid和保存按钮之间）
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .imePadding()
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
@@ -189,7 +211,6 @@ fun ManualRecordScreen(
                             onTagRemoved = viewModel::onTagRemoved,
                         )
 
-                        // 备注输入
                         OutlinedTextField(
                             value = state.description,
                             onValueChange = viewModel::onDescriptionChanged,
