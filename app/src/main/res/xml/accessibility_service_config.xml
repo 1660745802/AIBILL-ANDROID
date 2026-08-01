@@ -5,6 +5,6 @@
     android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="1000"
-    android:packageNames="com.tencent.mm,com.eg.android.AlipayGphone"
+    android:packageNames="com.tencent.mm,com.eg.android.AlipayGphone,me.ele,com.sankuai.meituan,com.dianping.v1,com.taobao.taobao,com.tmall.wireless,com.xunmeng.pinduoduo,cn.damai,com.taobao.idlefish,com.autonavi.minimap"
     android:description="@string/accessibility_service_description"
     android:settingsActivity="com.aibill.android.presentation.MainActivity" />

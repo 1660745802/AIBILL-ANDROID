@@ -39,15 +39,42 @@ class PaymentAccessibilityService : AccessibilityService() {
         private const val DEBOUNCE_MS = 10_000L
         private const val PACKAGE_WECHAT = "com.tencent.mm"
         private const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
-        private val PAYMENT_APPS = setOf(PACKAGE_WECHAT, PACKAGE_ALIPAY)
 
-        /** 支付成功关键词（必须精确匹配这些完整词组，不是子串） */
+        /** 内嵌支付宝的第三方 App（支付流程在其内部完成） */
+        private val EMBEDDED_PAYMENT_APPS = setOf(
+            "me.ele",                          // 饿了么
+            "com.sankuai.meituan",             // 美团
+            "com.dianping.v1",                 // 大众点评
+            "com.taobao.taobao",               // 淘宝
+            "com.tmall.wireless",              // 天猫
+            "com.xunmeng.pinduoduo",           // 拼多多
+            "cn.damai",                        // 大麦
+            "com.taobao.idlefish",             // 闲鱼
+            "com.autonavi.minimap",            // 高德地图
+        )
+
+        /** 所有需要监听的 App */
+        private val PAYMENT_APPS = setOf(PACKAGE_WECHAT, PACKAGE_ALIPAY) + EMBEDDED_PAYMENT_APPS
+
+        /** 支付成功关键词（微信/支付宝原生支付结果页） */
         private val SUCCESS_KEYWORDS = listOf("支付成功", "付款成功", "交易成功", "支付完成")
 
-        /** 首页/聊天列表特征词——有这些说明不是支付结果页 */
-        private val EXCLUDE_KEYWORDS = listOf(
+        /** 内嵌支付场景的成功关键词（订单结果页/支付确认页） */
+        private val EMBEDDED_SUCCESS_KEYWORDS = listOf(
+            "已付款", "订单支付成功", "支付金额", "付款金额",
+            "等待商家接单", "订单已提交", "支付方式",
+            "已支付", "实付",
+        )
+
+        /** 首页/聊天列表特征词——仅用于微信/支付宝（排除误触发） */
+        private val WECHAT_ALIPAY_EXCLUDE_KEYWORDS = listOf(
             "朋友圈", "通讯录", "发现", "搜索小程序", "扫一扫",
             "视频号", "看一看", "摇一摇", "附近", "小程序面板",
+        )
+
+        /** 通用排除词——所有 App 共用（明确不是支付结果的页面） */
+        private val COMMON_EXCLUDE_KEYWORDS = listOf(
+            "购物车", "加入购物车", "立即购买", "去支付", "确认订单",
         )
 
         /** 金额正则 */
@@ -86,27 +113,34 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 2. 完整Activity类名（用于建立白名单/黑名单）
             appLogger.debug("A11Y_META", "activity=$className pkg=$packageName texts=${allTexts.size} time=${System.currentTimeMillis()}")
 
-            // 3. 节点结构详情（带 viewId + contentDescription，仅在支付类页面记录）
-            val hasPayKeyword = allTexts.any { text -> SUCCESS_KEYWORDS.any { kw -> text.contains(kw) } }
-            val hasAmount = allTexts.any { AMOUNT_REGEX.containsMatchIn(it) }
-            if (hasPayKeyword || hasAmount) {
-                val nodeTree = buildNodeTree(rootNode, maxDepth = 5)
-                appLogger.debug("A11Y_TREE", "[$shortClassName] $nodeTree")
-            }
+            // 3. 节点结构详情（无条件记录，便于排查页面结构变化导致的漏识别）
+            val nodeTree = buildNodeTree(rootNode, maxDepth = 5)
+            appLogger.debug("A11Y_TREE", "[$shortClassName] $nodeTree")
             // ===== 全量日志结束 =====
 
-            // 条件1：有"支付成功"关键词
-            if (!hasAnyKeyword(rootNode, SUCCESS_KEYWORDS)) {
+            val hasPayKeyword = allTexts.any { text -> SUCCESS_KEYWORDS.any { kw -> text.contains(kw) } }
+            val hasAmount = allTexts.any { AMOUNT_REGEX.containsMatchIn(it) }
+
+            // 判断是否为内嵌支付 App
+            val isEmbeddedApp = packageName in EMBEDDED_PAYMENT_APPS
+
+            // 条件1：有支付成功关键词
+            // 内嵌 App 用更宽泛的关键词集合（它们的结果页文案不同于原生支付宝）
+            val activeKeywords = if (isEmbeddedApp) SUCCESS_KEYWORDS + EMBEDDED_SUCCESS_KEYWORDS else SUCCESS_KEYWORDS
+            val hasSuccessKeyword = hasAnyKeyword(rootNode, activeKeywords)
+
+            if (!hasSuccessKeyword) {
                 if (hasAmount) {
-                    // 有金额但没有成功关键词——可能是新的支付成功文案变体，记录以便分析
                     appLogger.debug("A11Y_MISS", "有金额无成功词: [$shortClassName] ${allTexts.take(15).joinToString("|")}")
                 }
                 return
             }
 
-            // 条件2：不能有首页/聊天列表特征（排除误触发）
-            if (hasAnyKeyword(rootNode, EXCLUDE_KEYWORDS)) {
-                appLogger.debug("A11Y_SKIP", "排除词命中: [$shortClassName]")
+            // 条件2：排除非支付结果页
+            // 微信/支付宝用完整排除词；内嵌 App 只用通用排除词（它们没有朋友圈等特征）
+            val activeExcludeKeywords = if (isEmbeddedApp) COMMON_EXCLUDE_KEYWORDS else WECHAT_ALIPAY_EXCLUDE_KEYWORDS + COMMON_EXCLUDE_KEYWORDS
+            if (hasAnyKeyword(rootNode, activeExcludeKeywords)) {
+                appLogger.debug("A11Y_SKIP", "排除词命中: [$shortClassName] pkg=$packageName")
                 return
             }
 
@@ -136,13 +170,19 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 防抖
             val hash = summary.hashCode()
             val now = System.currentTimeMillis()
-            if (hash == lastHash && (now - lastTime) < DEBOUNCE_MS) return
+            if (hash == lastHash && (now - lastTime) < DEBOUNCE_MS) {
+                appLogger.debug("A11Y_SKIP", "防抖拦截(${DEBOUNCE_MS/1000}s内重复): $amountText")
+                return
+            }
             lastHash = hash
             lastTime = now
 
             // cooldown：同金额 5 分钟内只触发一次
             val lastAmountTime = recentAmounts[amountText]
-            if (lastAmountTime != null && (now - lastAmountTime) < COOLDOWN_MS) return
+            if (lastAmountTime != null && (now - lastAmountTime) < COOLDOWN_MS) {
+                appLogger.debug("A11Y_SKIP", "cooldown拦截(${COOLDOWN_MS/1000/60}min内同金额): $amountText")
+                return
+            }
             recentAmounts[amountText] = now
             // 清理过期
             recentAmounts.entries.removeIf { now - it.value > COOLDOWN_MS }
@@ -195,8 +235,13 @@ class PaymentAccessibilityService : AccessibilityService() {
 
     /** 查找商家名：找"收款方/商户/付款给"附近的文字 */
     private fun findMerchant(root: AccessibilityNodeInfo): String? {
-        val labels = listOf("收款方", "商户", "商家", "付款给")
-        for (label in labels) {
+        // 原生支付宝/微信标签
+        val nativeLabels = listOf("收款方", "商户", "商家", "付款给")
+        // 内嵌支付 App 订单页标签（饿了么/美团/淘宝等）
+        val orderLabels = listOf("店铺", "商家名", "卖家", "店名", "商品")
+
+        val allLabels = nativeLabels + orderLabels
+        for (label in allLabels) {
             val nodes = root.findAccessibilityNodeInfosByText(label)
             if (nodes.isNullOrEmpty()) continue
             for (node in nodes) {
