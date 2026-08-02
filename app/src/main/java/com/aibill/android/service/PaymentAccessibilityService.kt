@@ -77,8 +77,8 @@ class PaymentAccessibilityService : AccessibilityService() {
             "购物车", "加入购物车", "立即购买", "去支付", "确认订单",
         )
 
-        /** 金额正则 */
-        private val AMOUNT_REGEX = Regex("""[¥￥]\s*(\d+\.?\d{0,2})""")
+        /** 金额正则：匹配 ¥xx.xx / ￥xx.xx / xx.xx元 / xx元 */
+        private val AMOUNT_REGEX = Regex("""[¥￥]\s*(\d+\.?\d{0,2})|(\d+\.?\d{0,2})元""")
     }
 
     override fun onServiceConnected() {
