@@ -61,8 +61,8 @@ class PaymentAccessibilityService : AccessibilityService() {
 
         /** 内嵌支付场景的成功关键词（订单结果页/支付确认页） */
         private val EMBEDDED_SUCCESS_KEYWORDS = listOf(
-            "已付款", "订单支付成功", "支付金额", "付款金额",
-            "等待商家接单", "订单已提交", "支付方式",
+            "已付款", "订单支付成功",
+            "等待商家接单", "订单已提交",
             "已支付", "实付",
         )
 
@@ -75,6 +75,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         /** 通用排除词——所有 App 共用（明确不是支付结果的页面） */
         private val COMMON_EXCLUDE_KEYWORDS = listOf(
             "购物车", "加入购物车", "立即购买", "去支付", "确认订单",
+            "极速付款", "立即付款", "确认付款", "更改付款方式",
         )
 
         /** 金额正则：匹配 ¥xx.xx / ￥xx.xx / xx.xx元 / xx元 */

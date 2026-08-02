@@ -94,9 +94,7 @@ fun NotificationCenterScreen(
             onDismiss = { editItem = null },
             onConfirm = { amount, type, categoryId, desc, accountId, targetAccountId, tags ->
                 viewModel.confirmWithEdit(item.id, type, amount, desc, categoryId, tags)
-                // 自动跳到下一条待确认（连续处理模式）
-                val nextItem = pendingItems.firstOrNull { it.id != item.id }
-                editItem = nextItem
+                editItem = null
             }
         )
     }
