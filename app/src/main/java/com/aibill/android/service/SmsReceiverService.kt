@@ -25,6 +25,7 @@ class SmsReceiverService : BroadcastReceiver() {
     @Inject lateinit var notificationProcessor: NotificationProcessor
     @Inject lateinit var notificationParser: NotificationParser
     @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
+    @Inject lateinit var rulesManager: NotificationRulesManager
 
     private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -56,8 +57,14 @@ class SmsReceiverService : BroadcastReceiver() {
     }
 
     private suspend fun handleSms(sender: String, text: String) {
-        // 支付特征预筛
-        if (!NotificationMonitorService.PAYMENT_SIGNAL.containsMatchIn(text)) {
+        // 支付特征预筛：优先用云控规则，fallback 到静态 PAYMENT_SIGNAL
+        val paymentRegex = try {
+            Regex(rulesManager.getRules().nls.paymentSignalRegex)
+        } catch (e: Exception) {
+            NotificationMonitorService.PAYMENT_SIGNAL
+        }
+
+        if (!paymentRegex.containsMatchIn(text)) {
             appLogger.debug("SMS", "预筛不通过: sender=$sender")
             return
         }

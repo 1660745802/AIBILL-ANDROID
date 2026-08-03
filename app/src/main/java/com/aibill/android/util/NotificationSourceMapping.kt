@@ -1,10 +1,14 @@
 package com.aibill.android.util
 
+import com.aibill.android.service.NotificationRulesManager
+
 /**
  * 通知来源包名 → 友好名称 统一映射
  *
  * 阶段 2.1：扩展到 30+ 家银行/三方支付平台。
  * 添加新包名只需在此处添加一行，WHITELIST_PACKAGES 引用此 map 的 keys。
+ *
+ * 支持云控：优先从 NotificationRulesManager 读取 sourceMapping，fallback 到硬编码 map。
  */
 object NotificationSourceMapping {
     private val SOURCE_NAMES = mapOf(
@@ -92,4 +96,15 @@ object NotificationSourceMapping {
 
     fun friendlyName(packageName: String): String =
         SOURCE_NAMES[packageName] ?: packageName
+
+    /**
+     * 云控版本：优先从云控规则中查找，fallback 到硬编码 map。
+     */
+    fun friendlyName(packageName: String, rulesManager: NotificationRulesManager): String {
+        val cloudMapping = rulesManager.getRules().sourceMapping
+        if (cloudMapping.isNotEmpty()) {
+            cloudMapping[packageName]?.let { return it }
+        }
+        return SOURCE_NAMES[packageName] ?: packageName
+    }
 }

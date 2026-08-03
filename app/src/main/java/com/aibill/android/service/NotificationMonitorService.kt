@@ -8,13 +8,15 @@ import com.aibill.android.util.AppLogger
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationParser
 import com.aibill.android.util.NotificationSourceMapping
-import dagger.hilt.android.AndroidEntryPoint
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
 /**
  * 通知监听服务 v4
@@ -26,15 +28,37 @@ import javax.inject.Inject
  * - 砍掉 NotificationBuffer 长窗口去重（移到 NotificationProcessor 里按金额后置去重）
  * - 每条通知直接调 AI，短文本（≤ 200 字）通过率 100%
  */
-@AndroidEntryPoint
 class NotificationMonitorService : NotificationListenerService() {
 
-    @Inject lateinit var notificationParser: NotificationParser
-    @Inject lateinit var notificationRecordDao: NotificationRecordDao
-    @Inject lateinit var notificationProcessor: NotificationProcessor
-    @Inject lateinit var appLogger: AppLogger
+    @EntryPoint
+    @InstallIn(SingletonComponent::class)
+    interface NlsEntryPoint {
+        fun notificationParser(): NotificationParser
+        fun notificationRecordDao(): NotificationRecordDao
+        fun notificationProcessor(): NotificationProcessor
+        fun appLogger(): AppLogger
+        fun rulesManager(): NotificationRulesManager
+    }
+
+    private lateinit var notificationParser: NotificationParser
+    private lateinit var notificationRecordDao: NotificationRecordDao
+    private lateinit var notificationProcessor: NotificationProcessor
+    private lateinit var appLogger: AppLogger
+    private lateinit var rulesManager: NotificationRulesManager
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // ═══════════════════════════════════════════════════════════════
+    // 从云控规则读取
+    // ═══════════════════════════════════════════════════════════════
+    private var paymentSignalRegex: Regex = Regex("")
+    private var wechatDirectPassTitles: List<String> = emptyList()
+    private var wechatDirectPassTitleContains: List<String> = emptyList()
+    private var wechatMessagePrefixes: List<String> = emptyList()
+    private var wechatAmountSymbols: List<String> = emptyList()
+    private var alipayAllowedTitleKeywords: List<String> = emptyList()
+    private var bankPackagePatterns: List<String> = emptyList()
+    private var smsSpamKeywords: List<String> = emptyList()
 
     companion object {
         private const val DEDUP_WINDOW_MS = 1000L
@@ -43,8 +67,8 @@ class NotificationMonitorService : NotificationListenerService() {
         private val WHITELIST_PACKAGES: Set<String> = NotificationSourceMapping.KNOWN_PACKAGES
 
         /**
-         * 支付特征关键词，用于排除层判断微信/支付宝通知是否可能是账务。
-         * 银行App/短信App 不需要此判断（全部放行）。
+         * 支付特征关键词正则（向后兼容：SmsReceiverService 引用此字段）。
+         * 运行时会被 rulesManager 覆盖，这里保留作为 static fallback。
          */
         val PAYMENT_SIGNAL = Regex(
             "[¥￥$]|RMB|CNY|人民币|元|支付|已付|付款|实付|付出|刷卡|收款|收入|到账|入账|" +
@@ -61,6 +85,31 @@ class NotificationMonitorService : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         NotificationHelper.createNotificationChannel(this)
+
+        val entryPoint = EntryPointAccessors.fromApplication(applicationContext, NlsEntryPoint::class.java)
+        notificationParser = entryPoint.notificationParser()
+        notificationRecordDao = entryPoint.notificationRecordDao()
+        notificationProcessor = entryPoint.notificationProcessor()
+        appLogger = entryPoint.appLogger()
+        rulesManager = entryPoint.rulesManager()
+
+        loadRules()
+    }
+
+    private fun loadRules() {
+        val rules = rulesManager.getRules()
+        paymentSignalRegex = try {
+            Regex(rules.nls.paymentSignalRegex)
+        } catch (e: Exception) {
+            PAYMENT_SIGNAL // fallback to hardcoded
+        }
+        wechatDirectPassTitles = rules.nls.wechat.directPassTitles
+        wechatDirectPassTitleContains = rules.nls.wechat.directPassTitleContains
+        wechatMessagePrefixes = rules.nls.wechat.messagePrefixes
+        wechatAmountSymbols = rules.nls.wechat.amountSymbols
+        alipayAllowedTitleKeywords = rules.nls.alipay.allowedTitleKeywords
+        bankPackagePatterns = rules.nls.bankPackagePatterns
+        smsSpamKeywords = rules.sms.spamKeywords
     }
 
     override fun onListenerConnected() {
@@ -73,7 +122,6 @@ class NotificationMonitorService : NotificationListenerService() {
         super.onListenerDisconnected()
         isConnected = false
         appLogger.warn("NLS", "通知监听服务断开，尝试自动恢复")
-        // 自动请求系统重新绑定（Android 7+）
         try {
             requestRebind(android.content.ComponentName(this, NotificationMonitorService::class.java))
             appLogger.info("NLS", "已请求 requestRebind")
@@ -173,42 +221,32 @@ class NotificationMonitorService : NotificationListenerService() {
     private fun isLikelyFinancial(packageName: String, title: String, fullText: String): Boolean {
         return when (packageName) {
             "com.tencent.mm" -> {
-                // 微信：title 是"微信支付"直接放行
-                if (title == "微信支付" || title == "微信支付凭证" || title.contains("零钱")) return true
+                // 微信：title 是直接放行列表 → 直接放行
+                if (wechatDirectPassTitles.any { title == it }) return true
+                if (wechatDirectPassTitleContains.any { title.contains(it) }) return true
                 // 其他 title（联系人/群/服务号）：
-                // 只放行微信系统消息格式（[转账]/[微信红包]）或含金额符号 ¥/￥ 的
-                val text = fullText.substringAfter(title).trim()
-                text.startsWith("[转账]") || text.startsWith("[微信红包]") ||
-                    text.contains("¥") || text.contains("￥")
+                // 只放行微信系统消息格式（前缀列表）或含金额符号的
+                val textAfterTitle = fullText.substringAfter(title).trim()
+                if (wechatMessagePrefixes.any { textAfterTitle.startsWith(it) }) return true
+                wechatAmountSymbols.any { textAfterTitle.contains(it) }
             }
             "com.eg.android.AlipayGphone" -> {
-                // 支付宝：只有明确的交易/账务 title 才放行（排除蚂蚁庄园/卡包优惠等）
-                title.contains("交易提醒") || title.contains("支付") ||
-                    title.contains("账单") || title.contains("花呗") ||
-                    title.contains("余额") || title.contains("到账") ||
-                    title.contains("收款") || title.contains("退款")
+                // 支付宝：只有明确的交易/账务 title 才放行
+                alipayAllowedTitleKeywords.any { title.contains(it) }
             }
             else -> {
                 // 银行 App：包名含 bank/银行号段 → 全部放行
-                if (packageName.contains("bank") || packageName.startsWith("cmb") ||
-                    packageName.contains("icbc") || packageName.contains("ccb") ||
-                    packageName.contains("boc") || packageName.contains("abchina")) return true
+                if (bankPackagePatterns.any { packageName.contains(it) || packageName.startsWith(it) }) return true
                 // 其他：用 PAYMENT_SIGNAL 过滤营销
-                PAYMENT_SIGNAL.containsMatchIn(fullText)
+                paymentSignalRegex.containsMatchIn(fullText)
             }
         }
     }
 
     /**
      * 判断短信是否是营销/广告/订购类（含金额关键词但不是真实账务）。
-     * 真实银行扣款短信不会包含"退订/回复/办理"等互动词。
      */
     private fun isLikelySpamSms(text: String): Boolean {
-        val spamKeywords = listOf(
-            "订购", "退订", "办理", "开通", "激活", "贷款", "借款",
-            "提额", "申请", "审批", "邀请", "回复R", "回复TD",
-            "免费领", "中奖", "恭喜", "点击链接",
-        )
-        return spamKeywords.any { text.contains(it) }
+        return smsSpamKeywords.any { text.contains(it) }
     }
 }

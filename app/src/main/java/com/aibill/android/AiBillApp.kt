@@ -7,9 +7,13 @@ import com.aibill.android.service.BudgetCheckWorker
 import com.aibill.android.service.InsightWorker
 import com.aibill.android.service.NlsHealthCheckWorker
 import com.aibill.android.service.A11yHealthCheckWorker
+import com.aibill.android.service.NotificationRulesManager
 import com.aibill.android.service.RecurringWorker
 import com.aibill.android.util.NetworkMonitor
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -22,11 +26,15 @@ class AiBillApp : Application(), Configuration.Provider {
     @Inject
     lateinit var networkMonitor: NetworkMonitor
 
+    @Inject
+    lateinit var notificationRulesManager: NotificationRulesManager
+
     override fun onCreate() {
         super.onCreate()
         initTimber()
         networkMonitor.isOnline
         scheduleWorkers()
+        fetchNotificationRules()
     }
 
     private fun initTimber() {
@@ -41,6 +49,12 @@ class AiBillApp : Application(), Configuration.Provider {
         RecurringWorker.schedule(this)
         NlsHealthCheckWorker.schedule(this)
         A11yHealthCheckWorker.schedule(this)
+    }
+
+    private fun fetchNotificationRules() {
+        CoroutineScope(Dispatchers.IO).launch {
+            notificationRulesManager.fetchRules()
+        }
     }
 
     override val workManagerConfiguration: Configuration

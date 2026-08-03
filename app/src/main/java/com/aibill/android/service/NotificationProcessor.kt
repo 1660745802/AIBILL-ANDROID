@@ -56,6 +56,7 @@ class NotificationProcessor @Inject constructor(
     private val categoryLearningEngine: CategoryLearningEngine,
     private val streakTracker: com.aibill.android.domain.usecase.StreakTracker,
     private val appLogger: AppLogger,
+    private val rulesManager: NotificationRulesManager,
 ) {
 
     /** 来源渠道 */
@@ -71,11 +72,17 @@ class NotificationProcessor @Inject constructor(
     )
 
     companion object {
-        /** 后置去重窗口：同 amount + 60s 内视为同一笔（跨渠道冗余通知） */
-        private const val DEDUP_WINDOW_MS = 60_000L
-        /** 评分窗口：10s 内同金额的 AI 结果比较 score，取最优入库 */
-        private const val SCORE_WINDOW_MS = 10_000L
+        /** 后置去重窗口：同 amount + N秒 内视为同一笔（跨渠道冗余通知） */
+        private const val DEFAULT_DEDUP_WINDOW_MS = 60_000L
+        /** 评分窗口：N秒 内同金额的 AI 结果比较 score，取最优入库 */
+        private const val DEFAULT_SCORE_WINDOW_MS = 10_000L
     }
+
+    private val dedupWindowMs: Long
+        get() = rulesManager.getRules().processor.dedupWindowSeconds * 1000L
+
+    private val scoreWindowMs: Long
+        get() = rulesManager.getRules().processor.scoringWindowSeconds * 1000L
 
     /** 入库路径串行化：dedup-check + insert 必须原子，否则会双写 */
     private val insertMutex = Mutex()
@@ -109,13 +116,13 @@ class NotificationProcessor @Inject constructor(
      */
     private fun isDuplicateAcrossChannels(amount: Int, channel: Channel, packageName: String, now: Long): Boolean {
         // 先清过期
-        val cutoff = now - DEDUP_WINDOW_MS
+        val cutoff = now - dedupWindowMs
         recentProcessed.removeIf { it.time < cutoff }
-        // 查重：不同渠道 或 不同包名（同金额60s内）
+        // 查重：不同渠道 或 不同包名（同金额N秒内）
         return recentProcessed.any {
             it.amount == amount &&
             (it.channel != channel || it.packageName != packageName) &&
-            (now - it.time) <= DEDUP_WINDOW_MS
+            (now - it.time) <= dedupWindowMs
         }
     }
 
@@ -216,8 +223,8 @@ class NotificationProcessor @Inject constructor(
         val key = candidate.amount
         val existing = scoringPool[key]
 
-        if (existing != null && (candidate.receivedAt - existing.receivedAt) <= SCORE_WINDOW_MS) {
-            // 10s 内同金额：比较 score，保留更好的
+        if (existing != null && (candidate.receivedAt - existing.receivedAt) <= scoreWindowMs) {
+            // N秒 内同金额：比较 score，保留更好的
             if (candidate.score > existing.score) {
                 scoringPool[key] = candidate
                 appLogger.debug("NLS", "评分替换: amount=$key newScore=${candidate.score} > oldScore=${existing.score}")
@@ -225,12 +232,12 @@ class NotificationProcessor @Inject constructor(
                 appLogger.debug("NLS", "评分丢弃: amount=$key score=${candidate.score} ≤ existing=${existing.score}")
             }
         } else {
-            // 首条或超过 10s 的新交易
+            // 首条或超过评分窗口的新交易
             scoringPool[key] = candidate
             scoringJobs[key]?.cancel()
             appLogger.debug("NLS", "评分窗口启动: amount=$key score=${candidate.score} isComplete=${candidate.isComplete} channel=${candidate.item.channel}")
             scoringJobs[key] = processorScope.launch {
-                delay(SCORE_WINDOW_MS)
+                delay(scoreWindowMs)
                 val best = scoringPool.remove(key) ?: run {
                     appLogger.warn("NLS", "评分窗口到期但池中无数据: amount=$key")
                     return@launch
@@ -254,7 +261,7 @@ class NotificationProcessor @Inject constructor(
             }
             // 跨渠道去重（DB 兜底）
             val dbDuplicate = notificationRecordDao.findRecentConfirmedFromOtherChannel(
-                candidate.amount, candidate.receivedAt - DEDUP_WINDOW_MS, candidate.item.packageName
+                candidate.amount, candidate.receivedAt - dedupWindowMs, candidate.item.packageName
             )
             if (dbDuplicate != null) {
                 appLogger.debug("NLS", "去重(DB): amount=${candidate.amount}")
@@ -293,11 +300,8 @@ class NotificationProcessor @Inject constructor(
      * 截掉"点击"之后的所有内容。
      */
     private fun cleanMarketingSuffix(text: String): String {
-        // 1. 直接截断的营销前缀
-        val cutoffs = listOf(
-            "点击领取", "点击查看", "点击开启", "戳我领", "立即领取",
-            "去领", "快来领", "可领取", "赶紧领",
-        )
+        // 1. 直接截断的营销前缀（从云控规则读取）
+        val cutoffs = rulesManager.getRules().processor.marketingSuffixCutoffs
         for (cutoff in cutoffs) {
             val idx = text.indexOf(cutoff)
             if (idx > 0) return text.substring(0, idx).trim()
@@ -391,7 +395,7 @@ class NotificationProcessor @Inject constructor(
             date = now,
             time = time,
             source = "app_notification",
-            sourceDetail = NotificationSourceMapping.friendlyName(item.packageName),
+            sourceDetail = NotificationSourceMapping.friendlyName(item.packageName, rulesManager),
             syncStatus = "pending",
             clientCreatedAt = Instant.now().toString(),
         )
@@ -415,7 +419,7 @@ class NotificationProcessor @Inject constructor(
             recordId = recordId,
             amount = amount,
             description = description,
-            source = NotificationSourceMapping.friendlyName(item.packageName),
+            source = NotificationSourceMapping.friendlyName(item.packageName, rulesManager),
             type = type,
             privacyMode = privacyMode,
         )
@@ -457,7 +461,7 @@ class NotificationProcessor @Inject constructor(
             recordId = recordId,
             amount = amount.takeIf { it > 0 } ?: 0,
             description = description ?: categoryName,
-            source = NotificationSourceMapping.friendlyName(item.packageName),
+            source = NotificationSourceMapping.friendlyName(item.packageName, rulesManager),
             privacyMode = privacyMode,
             type = type,
         )
