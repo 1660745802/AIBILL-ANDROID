@@ -161,6 +161,8 @@ tasks.register<Copy>("syncDefaultRules") {
     into(layout.projectDirectory.dir("src/main/assets"))
     rename { "default_rules.json" }
 }
-tasks.matching { it.name.startsWith("merge") && it.name.contains("Assets") }.configureEach {
-    dependsOn("syncDefaultRules")
+tasks.configureEach {
+    if (name.contains("Assets") || name.contains("Lint") || name.contains("lint")) {
+        dependsOn("syncDefaultRules")
+    }
 }
