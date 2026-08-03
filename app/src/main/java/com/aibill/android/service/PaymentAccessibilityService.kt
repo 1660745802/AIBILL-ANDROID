@@ -96,6 +96,9 @@ class PaymentAccessibilityService : AccessibilityService() {
         val ev = event ?: return
         val packageName = ev.packageName?.toString() ?: return
 
+        // 每次事件实时读取最新规则（getRules()读内存缓存，无性能问题）
+        loadRules()
+
         if (packageName !in paymentApps) return
 
         // 只在页面切换时触发（参考iCost/AutoAccounting做法）
