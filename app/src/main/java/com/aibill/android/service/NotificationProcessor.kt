@@ -190,7 +190,7 @@ class NotificationProcessor @Inject constructor(
                 categoryId = finalCategoryId,
                 categoryName = aiItem.categoryName,
                 categoryIcon = aiItem.categoryIcon,
-                description = aiItem.description ?: aiItem.categoryName,
+                description = sanitizeEcommerceDescription(aiItem.description ?: aiItem.categoryName ?: ""),
                 source = if (learnedCategoryId != null) "learning+ai" else "ai",
                 score = aiItemScore(aiItem),
                 isComplete = isComplete,
@@ -311,6 +311,30 @@ class NotificationProcessor @Inject constructor(
             return text.substring(0, commaIdx).trim()
         }
         return text
+    }
+
+    /**
+     * 电商平台购物描述脱敏：将包含商品详情的描述简化为"XX购物"。
+     * 避免具体购买商品名暴露在记账记录中。
+     */
+    private fun sanitizeEcommerceDescription(description: String): String {
+        val ecommerceMap = mapOf(
+            "拼多多" to "拼多多购物",
+            "淘宝" to "淘宝购物",
+            "天猫" to "天猫购物",
+            "京东" to "京东购物",
+            "闲鱼" to "闲鱼购物",
+            "唯品会" to "唯品会购物",
+            "得物" to "得物购物",
+            "抖音商城" to "抖音购物",
+            "抖音电商" to "抖音购物",
+        )
+        for ((keyword, replacement) in ecommerceMap) {
+            if (description.contains(keyword)) {
+                return replacement
+            }
+        }
+        return description
     }
 
     /**
