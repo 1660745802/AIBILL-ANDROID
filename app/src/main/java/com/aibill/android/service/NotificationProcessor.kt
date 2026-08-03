@@ -190,7 +190,7 @@ class NotificationProcessor @Inject constructor(
                 categoryId = finalCategoryId,
                 categoryName = aiItem.categoryName,
                 categoryIcon = aiItem.categoryIcon,
-                description = sanitizeEcommerceDescription(aiItem.description ?: aiItem.categoryName ?: ""),
+                description = aiItem.description ?: aiItem.categoryName,
                 source = if (learnedCategoryId != null) "learning+ai" else "ai",
                 score = aiItemScore(aiItem),
                 isComplete = isComplete,
