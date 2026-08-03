@@ -136,6 +136,10 @@ class NotificationCenterViewModel @Inject constructor(
     fun confirmItem(id: Long) {
         viewModelScope.launch {
             val record = notificationRecordDao.findById(id) ?: return@launch
+            if (record.status == "confirmed") {
+                appLogger.warn("NOTIFY", "重复确认拦截: id=$id")
+                return@launch
+            }
             appLogger.info("NOTIFY", "confirmItem: id=$id amount=${record.parsedAmount}")
             insertTransaction(
                 recordId = id,
@@ -159,6 +163,12 @@ class NotificationCenterViewModel @Inject constructor(
                 return@launch
             }
             val record = notificationRecordDao.findById(id) ?: return@launch
+            // 防重复：已确认的不再入库
+            if (record.status == "confirmed") {
+                appLogger.warn("NOTIFY", "重复确认拦截: id=$id 已是confirmed状态")
+                _uiEvent.send(UiEvent.ShowToast("该笔已确认，请勿重复操作"))
+                return@launch
+            }
             insertTransaction(
                 recordId = id,
                 type = type,
