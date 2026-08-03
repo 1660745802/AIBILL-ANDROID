@@ -131,7 +131,8 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 条件1：有支付成功关键词
             // 内嵌 App 用更宽泛的关键词集合（它们的结果页文案不同于原生支付宝）
             val activeKeywords = if (isEmbeddedApp) successKeywords + embeddedSuccessKeywords else successKeywords
-            val hasSuccessKeyword = hasAnyKeyword(rootNode, activeKeywords)
+            val matchedKeyword = findMatchedKeyword(rootNode, activeKeywords)
+            val hasSuccessKeyword = matchedKeyword != null
 
             if (!hasSuccessKeyword) {
                 if (hasAmount) {
@@ -189,7 +190,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 清理过期
             recentAmounts.entries.removeIf { now - it.value > cooldownMs }
 
-            appLogger.info("A11Y", "✓识别支付页: $summary pkg=$packageName")
+            appLogger.info("A11Y", "✓识别支付页: $summary pkg=$packageName keyword=$matchedKeyword")
 
             // 交给 Processor（和通知渠道统一处理）
             serviceScope.launch {
@@ -220,14 +221,18 @@ class PaymentAccessibilityService : AccessibilityService() {
     // ═══════════════════════════════════════════════════════════════
 
     private fun hasAnyKeyword(root: AccessibilityNodeInfo, keywords: List<String>): Boolean {
+        return findMatchedKeyword(root, keywords) != null
+    }
+
+    private fun findMatchedKeyword(root: AccessibilityNodeInfo, keywords: List<String>): String? {
         for (kw in keywords) {
             val nodes = root.findAccessibilityNodeInfosByText(kw)
             if (!nodes.isNullOrEmpty()) {
                 nodes.forEach { it.recycle() }
-                return true
+                return kw
             }
         }
-        return false
+        return null
     }
 
     /** 在节点树中找第一个匹配金额格式的文本 */

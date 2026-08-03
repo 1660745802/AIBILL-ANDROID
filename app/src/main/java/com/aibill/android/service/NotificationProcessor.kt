@@ -280,7 +280,7 @@ class NotificationProcessor @Inject constructor(
                     description = candidate.description,
                     source = candidate.source,
                 )
-                appLogger.info("NLS", "✓入库: ¥${"%.2f".format(candidate.amount/100.0)} ${candidate.description} type=${candidate.type} score=${candidate.score}")
+                appLogger.info("NLS", "✓入库: ¥${"%.2f".format(candidate.amount/100.0)} ${candidate.description} type=${candidate.type} score=${candidate.score} channel=${candidate.item.channel}")
                 // 触发学习
                 val learnKey = candidate.description?.trim()
                 if (!learnKey.isNullOrBlank() && candidate.categoryId != null) {
