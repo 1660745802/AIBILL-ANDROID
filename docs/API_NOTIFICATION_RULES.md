@@ -27,27 +27,43 @@ GET /api/config/notification-rules
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| version | int | 否 | 客户端当前规则版本号，服务端版本相同则返回 304 |
 | app_version | string | 否 | 客户端 App 版本号（便于灰度下发） |
 | device_brand | string | 否 | 设备品牌（部分规则可能品牌相关） |
 
+**请求头**
+
+| Header | 说明 |
+|--------|------|
+| X-App-Key | 固定 App 密钥（防随意爬取，非用户级认证） |
+| If-None-Match | 客户端当前规则版本号，如 `"15"` |
+
 **响应**
 
-```json
+- **200 OK**：规则有更新，返回完整规则 + `ETag` 响应头
+- **304 Not Modified**：版本未变，空 body（客户端继续用本地缓存）
+
+```
+-- 请求示例 --
+GET /api/config/notification-rules HTTP/1.1
+X-App-Key: aibill_android_2026
+If-None-Match: "15"
+
+-- 响应（有更新）--
+HTTP/1.1 200 OK
+ETag: "16"
+Content-Type: application/json
+
 {
   "code": 0,
   "data": {
-    "version": 15,
+    "version": 16,
     "updated_at": "2026-08-01T10:00:00Z",
-    "rules": {
-      "nls": { ... },
-      "a11y": { ... },
-      "sms": { ... },
-      "source_mapping": { ... },
-      "processor": { ... }
-    }
+    "rules": { ... }
   }
 }
+
+-- 响应（无更新）--
+HTTP/1.1 304 Not Modified
 ```
 
 ### 3.2 规则结构详细定义
@@ -210,9 +226,21 @@ GET /api/config/notification-rules
 
 ## 5. 安全
 
-- 接口需要认证（Bearer Token），防止规则被非法读取/篡改
+### 5.1 认证分级
+
+| 接口 | 认证方式 | 说明 |
+|------|---------|------|
+| `GET /api/config/notification-rules` | X-App-Key（固定密钥） | 规则是公共配置，不含用户隐私；不做用户级认证是因为 NLS/A11Y 服务启动时可能尚未登录 |
+| `POST /api/admin/notification-rules` | Admin Bearer Token | 强认证，仅管理员可写入 |
+| `PUT /api/admin/notification-rules/:id/activate` | Admin Bearer Token | 强认证 |
+
+### 5.2 安全措施
+
 - 仅通过 HTTPS 传输
+- X-App-Key 硬编码在 App 中（混淆保护），防止随意爬取
+- 读取接口可走 CDN 缓存（不含用户信息，所有客户端共享一份）
 - 客户端对规则做基本校验（如正则语法验证），异常规则不启用
+- 管理接口加操作日志审计
 
 ## 6. 扩展性
 
