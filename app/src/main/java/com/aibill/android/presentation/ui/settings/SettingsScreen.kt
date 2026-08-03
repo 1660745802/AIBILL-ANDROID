@@ -203,6 +203,23 @@ fun SettingsScreen(
                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+
+                    // 同步规则
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.syncRules() }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("同步规则", style = MaterialTheme.typography.bodyMedium)
+                            Text("从服务端拉取最新通知记账规则", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }

@@ -3,6 +3,7 @@ package com.aibill.android.service
 import android.app.Application
 import com.aibill.android.data.remote.api.NotificationRulesApi
 import com.aibill.android.data.remote.dto.response.NotificationRulesDto
+import com.aibill.android.data.remote.dto.response.NotificationRulesData
 import com.squareup.moshi.Moshi
 import timber.log.Timber
 import javax.inject.Inject
@@ -83,46 +84,46 @@ class NotificationRulesManager @Inject constructor(
             }
         }
 
-        return DEFAULT_RULES
+        return defaultRules
     }
 
     private fun mapDtoToRules(dto: NotificationRulesDto): NotificationRules {
         return NotificationRules(
             nls = NlsRules(
-                paymentSignalRegex = dto.nls?.paymentSignalRegex ?: DEFAULT_RULES.nls.paymentSignalRegex,
+                paymentSignalRegex = dto.nls?.paymentSignalRegex ?: defaultRules.nls.paymentSignalRegex,
                 wechat = WechatRules(
-                    packageName = dto.nls?.wechat?.packageName ?: DEFAULT_RULES.nls.wechat.packageName,
-                    directPassTitles = dto.nls?.wechat?.directPassTitles ?: DEFAULT_RULES.nls.wechat.directPassTitles,
-                    directPassTitleContains = dto.nls?.wechat?.directPassTitleContains ?: DEFAULT_RULES.nls.wechat.directPassTitleContains,
-                    messagePrefixes = dto.nls?.wechat?.messagePrefixes ?: DEFAULT_RULES.nls.wechat.messagePrefixes,
-                    amountSymbols = dto.nls?.wechat?.amountSymbols ?: DEFAULT_RULES.nls.wechat.amountSymbols,
+                    packageName = dto.nls?.wechat?.packageName ?: defaultRules.nls.wechat.packageName,
+                    directPassTitles = dto.nls?.wechat?.directPassTitles ?: defaultRules.nls.wechat.directPassTitles,
+                    directPassTitleContains = dto.nls?.wechat?.directPassTitleContains ?: defaultRules.nls.wechat.directPassTitleContains,
+                    messagePrefixes = dto.nls?.wechat?.messagePrefixes ?: defaultRules.nls.wechat.messagePrefixes,
+                    amountSymbols = dto.nls?.wechat?.amountSymbols ?: defaultRules.nls.wechat.amountSymbols,
                 ),
                 alipay = AlipayRules(
-                    packageName = dto.nls?.alipay?.packageName ?: DEFAULT_RULES.nls.alipay.packageName,
-                    allowedTitleKeywords = dto.nls?.alipay?.allowedTitleKeywords ?: DEFAULT_RULES.nls.alipay.allowedTitleKeywords,
+                    packageName = dto.nls?.alipay?.packageName ?: defaultRules.nls.alipay.packageName,
+                    allowedTitleKeywords = dto.nls?.alipay?.allowedTitleKeywords ?: defaultRules.nls.alipay.allowedTitleKeywords,
                 ),
-                bankPackagePatterns = dto.nls?.bankPackagePatterns ?: DEFAULT_RULES.nls.bankPackagePatterns,
-                smsPackages = dto.nls?.smsPackages ?: DEFAULT_RULES.nls.smsPackages,
+                bankPackagePatterns = dto.nls?.bankPackagePatterns ?: defaultRules.nls.bankPackagePatterns,
+                smsPackages = dto.nls?.smsPackages ?: defaultRules.nls.smsPackages,
             ),
             a11y = A11yRules(
-                embeddedPaymentApps = dto.a11y?.embeddedPaymentApps ?: DEFAULT_RULES.a11y.embeddedPaymentApps,
-                successKeywords = dto.a11y?.successKeywords ?: DEFAULT_RULES.a11y.successKeywords,
-                embeddedSuccessKeywords = dto.a11y?.embeddedSuccessKeywords ?: DEFAULT_RULES.a11y.embeddedSuccessKeywords,
-                commonExcludeKeywords = dto.a11y?.commonExcludeKeywords ?: DEFAULT_RULES.a11y.commonExcludeKeywords,
-                wechatAlipayExcludeKeywords = dto.a11y?.wechatAlipayExcludeKeywords ?: DEFAULT_RULES.a11y.wechatAlipayExcludeKeywords,
-                amountRegex = dto.a11y?.amountRegex ?: DEFAULT_RULES.a11y.amountRegex,
-                cooldownMinutes = dto.a11y?.cooldownMinutes ?: DEFAULT_RULES.a11y.cooldownMinutes,
+                embeddedPaymentApps = dto.a11y?.embeddedPaymentApps ?: defaultRules.a11y.embeddedPaymentApps,
+                successKeywords = dto.a11y?.successKeywords ?: defaultRules.a11y.successKeywords,
+                embeddedSuccessKeywords = dto.a11y?.embeddedSuccessKeywords ?: defaultRules.a11y.embeddedSuccessKeywords,
+                commonExcludeKeywords = dto.a11y?.commonExcludeKeywords ?: defaultRules.a11y.commonExcludeKeywords,
+                wechatAlipayExcludeKeywords = dto.a11y?.wechatAlipayExcludeKeywords ?: defaultRules.a11y.wechatAlipayExcludeKeywords,
+                amountRegex = dto.a11y?.amountRegex ?: defaultRules.a11y.amountRegex,
+                cooldownMinutes = dto.a11y?.cooldownMinutes ?: defaultRules.a11y.cooldownMinutes,
             ),
             sms = SmsRules(
-                spamKeywords = dto.smsRules?.spamKeywords ?: DEFAULT_RULES.sms.spamKeywords,
+                spamKeywords = dto.smsRules?.spamKeywords ?: defaultRules.sms.spamKeywords,
             ),
-            sourceMapping = dto.sourceMapping ?: DEFAULT_RULES.sourceMapping,
+            sourceMapping = dto.sourceMapping ?: defaultRules.sourceMapping,
             processor = ProcessorRules(
-                scoringWindowSeconds = dto.processor?.scoringWindowSeconds ?: DEFAULT_RULES.processor.scoringWindowSeconds,
-                dedupWindowSeconds = dto.processor?.dedupWindowSeconds ?: DEFAULT_RULES.processor.dedupWindowSeconds,
-                marketingSuffixCutoffs = dto.processor?.marketingSuffixCutoffs ?: DEFAULT_RULES.processor.marketingSuffixCutoffs,
-                maxAmountCents = dto.processor?.maxAmountCents ?: DEFAULT_RULES.processor.maxAmountCents,
-                minAmountCents = dto.processor?.minAmountCents ?: DEFAULT_RULES.processor.minAmountCents,
+                scoringWindowSeconds = dto.processor?.scoringWindowSeconds ?: defaultRules.processor.scoringWindowSeconds,
+                dedupWindowSeconds = dto.processor?.dedupWindowSeconds ?: defaultRules.processor.dedupWindowSeconds,
+                marketingSuffixCutoffs = dto.processor?.marketingSuffixCutoffs ?: defaultRules.processor.marketingSuffixCutoffs,
+                maxAmountCents = dto.processor?.maxAmountCents ?: defaultRules.processor.maxAmountCents,
+                minAmountCents = dto.processor?.minAmountCents ?: defaultRules.processor.minAmountCents,
             ),
         )
     }
@@ -130,74 +131,52 @@ class NotificationRulesManager @Inject constructor(
     companion object {
         private const val KEY_JSON = "notification_rules_json"
         private const val KEY_ETAG = "notification_rules_etag"
-
-        /** 硬编码默认值，与各 Service 当前逻辑完全一致 */
-        val DEFAULT_RULES = NotificationRules(
-            nls = NlsRules(
-                paymentSignalRegex = "[¥￥\$]|RMB|CNY|人民币|元|支付|已付|付款|实付|付出|刷卡|收款|收入|到账|入账|" +
-                    "转入|转出|转账|汇款|消费|交易|扣款|扣费|代扣|缴费|充值|提现|退款|退货|红包|" +
-                    "余额|账单|还款|欠款|尾号|卡号|信用卡|储蓄卡|银行卡|收益|利息|分期|贷款|工资|薪资|报销",
-                wechat = WechatRules(
-                    packageName = "com.tencent.mm",
-                    directPassTitles = listOf("微信支付", "微信支付凭证"),
-                    directPassTitleContains = listOf("零钱"),
-                    messagePrefixes = listOf("[转账]", "[微信红包]"),
-                    amountSymbols = listOf("¥", "￥"),
-                ),
-                alipay = AlipayRules(
-                    packageName = "com.eg.android.AlipayGphone",
-                    allowedTitleKeywords = listOf("交易提醒", "支付", "账单", "花呗", "余额", "到账", "收款", "退款"),
-                ),
-                bankPackagePatterns = listOf("bank", "cmb", "icbc", "ccb", "boc", "abchina"),
-                smsPackages = listOf(
-                    "com.android.mms", "com.google.android.apps.messaging",
-                    "com.samsung.android.messaging", "com.miui.mms",
-                    "com.huawei.message", "com.oppo.mms", "com.vivo.mms"
-                ),
-            ),
-            a11y = A11yRules(
-                embeddedPaymentApps = listOf(
-                    "me.ele", "com.sankuai.meituan", "com.dianping.v1",
-                    "com.taobao.taobao", "com.tmall.wireless", "com.xunmeng.pinduoduo",
-                    "cn.damai", "com.taobao.idlefish", "com.autonavi.minimap",
-                ),
-                successKeywords = listOf("支付成功", "付款成功", "交易成功", "支付完成"),
-                embeddedSuccessKeywords = listOf("订单支付成功", "等待商家接单", "订单已提交"),
-                commonExcludeKeywords = listOf(
-                    "购物车", "加入购物车", "立即购买", "去支付", "确认订单",
-                    "极速付款", "立即付款", "确认付款", "更改付款方式",
-                    "查看物流", "再次购买", "评价", "申请售后", "退款成功",
-                    "已收货", "已签收", "待发货", "已发货", "待收货",
-                    "提交订单", "确认收货",
-                    "删除订单", "追加评价", "申请退款", "交易已取消",
-                ),
-                wechatAlipayExcludeKeywords = listOf(
-                    "朋友圈", "通讯录", "发现", "搜索小程序", "扫一扫",
-                    "视频号", "看一看", "摇一摇", "附近", "小程序面板",
-                ),
-                amountRegex = """[¥￥]\s*(\d+\.?\d{0,2})|(\d+\.?\d{0,2})元""",
-                cooldownMinutes = 5,
-            ),
-            sms = SmsRules(
-                spamKeywords = listOf(
-                    "订购", "退订", "办理", "开通", "激活", "贷款", "借款",
-                    "提额", "申请", "审批", "邀请", "回复R", "回复TD",
-                    "免费领", "中奖", "恭喜", "点击链接",
-                ),
-            ),
-            sourceMapping = emptyMap(), // sourceMapping fallback to NotificationSourceMapping.KNOWN_PACKAGES
-            processor = ProcessorRules(
-                scoringWindowSeconds = 10,
-                dedupWindowSeconds = 60,
-                marketingSuffixCutoffs = listOf(
-                    "点击领取", "点击查看", "点击开启", "戳我领", "立即领取",
-                    "去领", "快来领", "可领取", "赶紧领",
-                ),
-                maxAmountCents = 10_000_000,
-                minAmountCents = 1,
-            ),
-        )
     }
+
+    /**
+     * 默认规则：从 assets/default_rules.json 读取（编译时从 scripts/rules.json 同步）。
+     * 只维护一份文件，避免硬编码和脚本不一致。
+     */
+    private val defaultRules: NotificationRules by lazy {
+        try {
+            val json = application.assets.open("default_rules.json").bufferedReader().readText()
+            // default_rules.json 的结构是 {version, rules: {...}}，取 rules 部分
+            val adapter = moshi.adapter(NotificationRulesData::class.java)
+            val fileDto = adapter.fromJson(json)
+            if (fileDto?.rules != null) {
+                mapDtoToRules(fileDto.rules)
+            } else {
+                Timber.w("NotificationRules: assets default_rules.json parse returned null, using empty fallback")
+                EMPTY_FALLBACK
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "NotificationRules: failed to read assets/default_rules.json")
+            EMPTY_FALLBACK
+        }
+    }
+
+    /** 极端兜底（assets也读不到时） */
+    private val EMPTY_FALLBACK = NotificationRules(
+        nls = NlsRules(
+            paymentSignalRegex = "[¥￥]|支付|付款|到账|转账|消费|扣款|充值|退款",
+            wechat = WechatRules("com.tencent.mm", listOf("微信支付"), listOf("零钱"), listOf("[转账]", "[微信红包]"), listOf("¥", "￥")),
+            alipay = AlipayRules("com.eg.android.AlipayGphone", listOf("交易提醒", "支付", "账单")),
+            bankPackagePatterns = listOf("bank"),
+            smsPackages = listOf("com.android.mms"),
+        ),
+        a11y = A11yRules(
+            embeddedPaymentApps = emptyList(),
+            successKeywords = listOf("支付成功"),
+            embeddedSuccessKeywords = emptyList(),
+            commonExcludeKeywords = emptyList(),
+            wechatAlipayExcludeKeywords = emptyList(),
+            amountRegex = "[¥￥]\\s*(\\d+\\.?\\d{0,2})",
+            cooldownMinutes = 5,
+        ),
+        sms = SmsRules(spamKeywords = emptyList()),
+        sourceMapping = emptyMap(),
+        processor = ProcessorRules(10, 60, emptyList(), 10_000_000, 1),
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════

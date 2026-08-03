@@ -26,6 +26,7 @@ class SettingsViewModel @Inject constructor(
     private val authApi: AuthApi,
     private val userPreferences: UserPreferences,
     private val appLogger: com.aibill.android.util.AppLogger,
+    private val notificationRulesManager: com.aibill.android.service.NotificationRulesManager,
 ) : ViewModel() {
 
     data class UiState(
@@ -150,6 +151,17 @@ class SettingsViewModel @Inject constructor(
                 context.startActivity(android.content.Intent.createChooser(intent, "分享日志文件"))
             } catch (e: Exception) {
                 _events.send("日志导出失败: ${e.message}")
+            }
+        }
+    }
+
+    fun syncRules() {
+        viewModelScope.launch {
+            try {
+                notificationRulesManager.fetchRules()
+                _events.send("规则同步成功")
+            } catch (e: Exception) {
+                _events.send("规则同步失败: ${e.message}")
             }
         }
     }

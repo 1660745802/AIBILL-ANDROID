@@ -1,0 +1,117 @@
+{
+  "version": 3,
+  "rules": {
+    "nls": {
+      "payment_signal_regex": "[¥￥$]|RMB|CNY|人民币|元|支付|已付|付款|实付|付出|刷卡|收款|收入|到账|入账|转入|转出|转账|汇款|消费|交易|扣款|扣费|代扣|缴费|充值|提现|退款|退货|红包|余额|账单|还款|欠款|尾号|卡号|信用卡|储蓄卡|银行卡|收益|利息|分期|贷款|工资|薪资|报销",
+      "wechat": {
+        "package_name": "com.tencent.mm",
+        "direct_pass_titles": ["微信支付", "微信支付凭证"],
+        "direct_pass_title_contains": ["零钱"],
+        "message_prefixes": ["[转账]", "[微信红包]"],
+        "amount_symbols": ["¥", "￥"]
+      },
+      "alipay": {
+        "package_name": "com.eg.android.AlipayGphone",
+        "allowed_title_keywords": ["交易提醒", "支付", "账单", "花呗", "余额", "到账", "收款", "退款"]
+      },
+      "bank_package_patterns": ["bank", "cmb", "icbc", "ccb", "boc", "abchina", "psbc", "cib", "spdb"],
+      "sms_packages": [
+        "com.android.mms", "com.google.android.apps.messaging",
+        "com.samsung.android.messaging", "com.miui.mms",
+        "com.huawei.message", "com.oppo.mms", "com.vivo.mms"
+      ]
+    },
+    "a11y": {
+      "embedded_payment_apps": [
+        "me.ele", "com.sankuai.meituan", "com.dianping.v1",
+        "com.taobao.taobao", "com.tmall.wireless", "com.xunmeng.pinduoduo",
+        "cn.damai", "com.taobao.idlefish", "com.autonavi.minimap"
+      ],
+      "success_keywords": ["支付成功", "付款成功", "交易成功", "支付完成"],
+      "embedded_success_keywords": ["订单支付成功", "等待商家接单", "订单已提交"],
+      "common_exclude_keywords": [
+        "购物车", "加入购物车", "立即购买", "去支付", "确认订单",
+        "极速付款", "立即付款", "确认付款", "更改付款方式",
+        "查看物流", "再次购买", "评价", "申请售后", "退款成功",
+        "已收货", "已签收", "待发货", "已发货", "待收货",
+        "提交订单", "确认收货", "删除订单", "追加评价", "申请退款", "交易已取消"
+      ],
+      "wechat_alipay_exclude_keywords": [
+        "朋友圈", "通讯录", "发现", "搜索小程序", "扫一扫",
+        "看一看", "视频号", "直播", "购物", "游戏",
+        "消息", "收藏", "相册", "表情", "设置"
+      ],
+      "amount_regex": "[¥￥]\\s*(\\d+\\.?\\d{0,2})|(\\d+\\.?\\d{0,2})元",
+      "cooldown_minutes": 5
+    },
+    "sms": {
+      "spam_keywords": [
+        "订购", "退订", "办理", "开通", "激活", "贷款", "借款",
+        "提额", "申请", "审批", "邀请", "回复R", "回复TD",
+        "免费领", "中奖", "恭喜", "点击链接"
+      ]
+    },
+    "source_mapping": {
+      "com.tencent.mm": "微信支付",
+      "com.eg.android.AlipayGphone": "支付宝",
+      "com.android.mms": "短信",
+      "com.google.android.apps.messaging": "短信",
+      "com.samsung.android.messaging": "短信",
+      "com.miui.mms": "短信",
+      "com.huawei.message": "短信",
+      "com.oppo.mms": "短信",
+      "com.vivo.mms": "短信",
+      "com.icbc": "工商银行",
+      "com.chinamworld.bocmbci": "中国银行",
+      "com.ccb.start": "建设银行",
+      "com.abchina.abc": "农业银行",
+      "com.chinamworld.main": "交通银行",
+      "com.psbc.mbank": "邮储银行",
+      "cmb.pb": "招商银行",
+      "com.cmbchina.ccd.pluto.cmbActivity": "招行信用卡",
+      "com.cmbc.cc.mbank": "民生银行",
+      "com.spdbccc.app": "浦发信用卡",
+      "com.spdb.mobilebank.per": "浦发银行",
+      "com.pingan.paces.ccardi": "平安信用卡",
+      "com.pingan.mobilebank": "平安银行",
+      "com.cib.cibmb": "兴业银行",
+      "com.ecitic.bank.mobile": "中信银行",
+      "com.cgbchina.xpt": "广发银行",
+      "com.chinaebocloud.hx": "华夏银行",
+      "com.cebbank.mobile.cemb": "光大银行",
+      "com.bonc.njcb": "南京银行",
+      "com.nbbank": "宁波银行",
+      "com.csii.boc_jiangsu": "江苏银行",
+      "com.bankofbeijing.mobilebank": "北京银行",
+      "com.shbank.mper": "上海银行",
+      "com.jd.jrapp": "京东金融",
+      "com.jingdong.app.mall": "京东",
+      "com.meituan.meituan": "美团",
+      "com.sankuai.meituan.takeoutnew": "美团外卖",
+      "me.ele": "饿了么",
+      "com.taobao.taobao": "淘宝",
+      "com.tmall.wireless": "天猫",
+      "com.achievo.vipshop": "唯品会",
+      "com.xunmeng.pinduoduo": "拼多多",
+      "com.didi.sdk": "滴滴出行",
+      "com.sdu.didi.psnger": "滴滴出行",
+      "com.unionpay": "云闪付",
+      "com.bestpay.vip": "翼支付",
+      "com.suning.mobile.ebuy": "苏宁易购",
+      "ctrip.android.view": "携程",
+      "com.Qunar": "去哪儿",
+      "com.MobileTicket": "铁路12306",
+      "com.autonavi.minimap": "高德地图"
+    },
+    "processor": {
+      "scoring_window_seconds": 10,
+      "dedup_window_seconds": 60,
+      "marketing_suffix_cutoffs": [
+        "点击领取", "点击查看", "点击开启", "戳我领", "立即领取",
+        "去领", "快来领", "可领取", "赶紧领"
+      ],
+      "max_amount_cents": 10000000,
+      "min_amount_cents": 1
+    }
+  }
+}
