@@ -122,6 +122,7 @@ class NotificationRulesManager @Inject constructor(
                 scoringWindowSeconds = dto.processor?.scoringWindowSeconds ?: defaultRules.processor.scoringWindowSeconds,
                 dedupWindowSeconds = dto.processor?.dedupWindowSeconds ?: defaultRules.processor.dedupWindowSeconds,
                 marketingSuffixCutoffs = dto.processor?.marketingSuffixCutoffs ?: defaultRules.processor.marketingSuffixCutoffs,
+                marketingCommaKeywords = dto.processor?.marketingCommaKeywords ?: defaultRules.processor.marketingCommaKeywords,
                 maxAmountCents = dto.processor?.maxAmountCents ?: defaultRules.processor.maxAmountCents,
                 minAmountCents = dto.processor?.minAmountCents ?: defaultRules.processor.minAmountCents,
             ),
@@ -175,7 +176,7 @@ class NotificationRulesManager @Inject constructor(
         ),
         sms = SmsRules(spamKeywords = emptyList()),
         sourceMapping = emptyMap(),
-        processor = ProcessorRules(10, 60, emptyList(), 10_000_000, 1),
+        processor = ProcessorRules(10, 60, emptyList(), emptyList(), 10_000_000, 1),
     )
 }
 
@@ -230,6 +231,7 @@ data class ProcessorRules(
     val scoringWindowSeconds: Int,
     val dedupWindowSeconds: Int,
     val marketingSuffixCutoffs: List<String>,
+    val marketingCommaKeywords: List<String>,
     val maxAmountCents: Int,
     val minAmountCents: Int,
 )

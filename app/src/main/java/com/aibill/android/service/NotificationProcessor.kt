@@ -300,19 +300,21 @@ class NotificationProcessor @Inject constructor(
      * 截掉"点击"之后的所有内容。
      */
     private fun cleanMarketingSuffix(text: String): String {
+        val rules = rulesManager.getRules().processor
         // 1. 直接截断的营销前缀（从云控规则读取）
-        val cutoffs = rulesManager.getRules().processor.marketingSuffixCutoffs
-        for (cutoff in cutoffs) {
+        for (cutoff in rules.marketingSuffixCutoffs) {
             val idx = text.indexOf(cutoff)
             if (idx > 0) return text.substring(0, idx).trim()
         }
-        // 2. 支付宝"交易提醒"格式："你有一笔xx元的支出，去领xx" — 逗号后是营销
-        //    保留逗号前的主体信息
-        val commaIdx = text.indexOf("，")
-        if (commaIdx > 0 && text.substring(commaIdx).let { tail ->
-                tail.contains("红包") || tail.contains("领") || tail.contains("优惠")
-            }) {
-            return text.substring(0, commaIdx).trim()
+        // 2. 逗号后含营销关键词则截断（从云控规则读取）
+        if (rules.marketingCommaKeywords.isNotEmpty()) {
+            val commaIdx = text.indexOf("，")
+            if (commaIdx > 0) {
+                val tail = text.substring(commaIdx)
+                if (rules.marketingCommaKeywords.any { tail.contains(it) }) {
+                    return text.substring(0, commaIdx).trim()
+                }
+            }
         }
         return text
     }

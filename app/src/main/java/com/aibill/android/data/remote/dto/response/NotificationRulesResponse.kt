@@ -70,6 +70,7 @@ data class ProcessorRulesDto(
     @Json(name = "scoring_window_seconds") val scoringWindowSeconds: Int?,
     @Json(name = "dedup_window_seconds") val dedupWindowSeconds: Int?,
     @Json(name = "marketing_suffix_cutoffs") val marketingSuffixCutoffs: List<String>?,
+    @Json(name = "marketing_comma_keywords") val marketingCommaKeywords: List<String>?,
     @Json(name = "max_amount_cents") val maxAmountCents: Int?,
     @Json(name = "min_amount_cents") val minAmountCents: Int?
 )
