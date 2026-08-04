@@ -207,7 +207,7 @@ class PaymentAccessibilityService : AccessibilityService() {
                 )
             }
         } finally {
-            rootNode.recycle()
+            // rootNode 不再需要手动 recycle (Android 14+ deprecated)
         }
     }
 
@@ -230,10 +230,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     private fun findMatchedKeyword(root: AccessibilityNodeInfo, keywords: List<String>): String? {
         for (kw in keywords) {
             val nodes = root.findAccessibilityNodeInfosByText(kw)
-            if (!nodes.isNullOrEmpty()) {
-                nodes.forEach { it.recycle() }
-                return kw
-            }
+            if (!nodes.isNullOrEmpty()) return kw
         }
         return null
     }
@@ -259,16 +256,10 @@ class PaymentAccessibilityService : AccessibilityService() {
                         val child = parent.getChild(i) ?: continue
                         val text = child.text?.toString()?.trim()
                         if (!text.isNullOrBlank() && text != label && text.length in 2..30 && !text.contains("¥")) {
-                            child.recycle()
-                            parent.recycle()
-                            node.recycle()
                             return text
                         }
-                        child.recycle()
                     }
-                    parent.recycle()
                 }
-                node.recycle()
             }
         }
         return null
@@ -325,7 +316,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             collectAllNodeTexts(child, result)
-            child.recycle()
+
         }
     }
 
@@ -352,7 +343,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             sb.append(buildNodeTree(child, maxDepth, depth + 1))
-            child.recycle()
+
         }
         return if (sb.length > 500) sb.substring(0, 500) + "..." else sb.toString()
     }
@@ -368,10 +359,10 @@ class PaymentAccessibilityService : AccessibilityService() {
             val child = node.getChild(i) ?: continue
             val result = findTextByPattern(child, pattern)
             if (result != null) {
-                child.recycle()
+    
                 return result
             }
-            child.recycle()
+
         }
         return null
     }
