@@ -472,19 +472,11 @@ internal fun CategoryDonutChart(
 internal fun CategoryStatItem(
     category: CategoryStat,
     selectedTab: String,
-    rank: Int = 0,
     onClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val progressColor = if (selectedTab == "expense") ExpenseColor else IncomeColor
-
-    // Replace the emoji icon with medal for top 3
-    val displayIcon = when (rank) {
-        1 -> "🥇"
-        2 -> "🥈"
-        3 -> "🥉"
-        else -> category.categoryIcon
-    }
+    val displayIcon = category.categoryIcon
 
     Card(
         modifier = modifier
@@ -561,76 +553,4 @@ internal fun CategoryStatItem(
 /**
  * 月度洞察卡片：生成一段文字总结本月消费特征。
  */
-@Composable
-internal fun MonthInsightCard(
-    summary: StatsSummary,
-    topCategory: CategoryStat?,
-    selectedTab: String,
-    trendData: List<TrendPoint>,
-    modifier: Modifier = Modifier,
-) {
-    val insightText = buildString {
-        if (selectedTab == "expense") {
-            append("本月支出 ${summary.expense.toYuanDisplay()}")
-            summary.expenseChange?.let { change ->
-                when {
-                    change > 20 -> append("，比上月增长明显（+${change}%），建议关注大额支出")
-                    change > 0 -> append("，比上月略有增长（+${change}%）")
-                    change < -20 -> append("，比上月大幅减少（${change}%），控制得不错 👍")
-                    change < 0 -> append("，比上月有所减少（${change}%）")
-                    else -> append("，与上月持平")
-                }
-            }
-            append("。")
-            topCategory?.let {
-                append(" ${it.categoryIcon}${it.categoryName}占比最高（${"%.0f".format(it.percent)}%）")
-            }
-        } else {
-            append("本月收入 ${summary.income.toYuanDisplay()}")
-            summary.incomeChange?.let { change ->
-                when {
-                    change > 0 -> append("，比上月增长 ${change}%")
-                    change < 0 -> append("，比上月减少 ${-change}%")
-                    else -> append("，与上月持平")
-                }
-            }
-            append("。")
-        }
-        // 趋势洞察
-        if (trendData.size >= 7) {
-            val last7 = trendData.takeLast(7)
-            val avg7 = last7.sumOf { it.amount } / 7
-            val prev7 = if (trendData.size >= 14) {
-                trendData.subList(trendData.size - 14, trendData.size - 7).sumOf { it.amount } / 7
-            } else null
-            if (prev7 != null && avg7 > 0) {
-                val weekChange = ((avg7 - prev7).toFloat() / prev7 * 100).toInt()
-                if (weekChange > 15) append(" 近7天日均偏高，注意节奏。")
-                else if (weekChange < -15) append(" 近7天花费有所收敛。")
-            }
-        }
-    }
 
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "💡 月度洞察",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = insightText,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = MaterialTheme.typography.bodyMedium.lineHeight,
-            )
-        }
-    }
-}

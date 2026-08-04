@@ -23,10 +23,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -63,26 +60,12 @@ fun StatisticsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        "统计",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 20.dp),
-        ) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp),
+    ) {
+        Spacer(modifier = Modifier.height(16.dp))
             MonthSelector(
                 year = state.year,
                 month = state.month,
@@ -206,34 +189,18 @@ fun StatisticsScreen(
                         items = state.categoryStats,
                         key = { "${it.categoryId}:${it.categoryName}" },
                     ) { category ->
-                        val rank = state.categoryStats.indexOf(category) + 1
                         CategoryStatItem(
                             category = category,
                             selectedTab = state.selectedTab,
-                            rank = rank,
                             onClick = {
-                                // 跳转到流水页按该分类筛选
                                 category.categoryId?.let { onNavigateToCategoryTransactions(it, state.selectedTab) }
                             },
                         )
                     }
 
-                    // 月度洞察卡片
-                    if (state.summary != null && state.categoryStats.isNotEmpty()) {
-                        item(key = "insight") {
-                            MonthInsightCard(
-                                summary = state.summary!!,
-                                topCategory = state.categoryStats.firstOrNull(),
-                                selectedTab = state.selectedTab,
-                                trendData = state.trendData,
-                            )
-                        }
-                    }
-
                     item { Spacer(modifier = Modifier.height(80.dp)) }
                 }
             }
-        }
         }
     }
 }

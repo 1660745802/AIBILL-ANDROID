@@ -176,6 +176,15 @@ internal fun MiniTrendChart(
                         modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
+                        // 最高那天显示金额
+                        if (amount == maxAmount && amount > 0) {
+                            Text(
+                                text = "¥${amount / 100}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 8.sp,
+                            )
+                        }
                         val barHeight = (amount.toFloat() / maxAmount * 36).coerceAtLeast(2f)
                         androidx.compose.foundation.layout.Box(
                             modifier = Modifier
