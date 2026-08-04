@@ -53,8 +53,10 @@ class AiBillApp : Application(), Configuration.Provider {
         RulesSyncWorker.schedule(this)
     }
 
+    private val applicationScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
     private fun fetchNotificationRules() {
-        CoroutineScope(Dispatchers.IO).launch {
+        applicationScope.launch {
             notificationRulesManager.fetchRules()
         }
     }

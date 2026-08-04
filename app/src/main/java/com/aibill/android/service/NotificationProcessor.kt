@@ -241,13 +241,16 @@ class NotificationProcessor @Inject constructor(
             scoringJobs[key]?.cancel()
             appLogger.debug("NLS", "评分窗口启动: amount=$key score=${candidate.score} isComplete=${candidate.isComplete} channel=${candidate.item.channel}")
             scoringJobs[key] = processorScope.launch {
-                delay(scoreWindowMs)
-                val best = scoringPool.remove(key) ?: run {
-                    appLogger.warn("NLS", "评分窗口到期但池中无数据: amount=$key")
-                    return@launch
+                try {
+                    delay(scoreWindowMs)
+                    val best = scoringPool.remove(key) ?: run {
+                        appLogger.warn("NLS", "评分窗口到期但池中无数据: amount=$key")
+                        return@launch
+                    }
+                    commitBest(best)
+                } finally {
+                    scoringJobs.remove(key)
                 }
-                scoringJobs.remove(key)
-                commitBest(best)
             }
         }
     }

@@ -27,8 +27,6 @@ class SmsReceiverService : BroadcastReceiver() {
     @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
     @Inject lateinit var rulesManager: NotificationRulesManager
 
-    private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
 
@@ -44,7 +42,7 @@ class SmsReceiverService : BroadcastReceiver() {
 
         val pendingResult = goAsync()
 
-        receiverScope.launch {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 handleSms(sender, fullText)
             } catch (e: Exception) {
