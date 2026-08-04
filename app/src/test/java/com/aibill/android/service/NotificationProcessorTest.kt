@@ -71,6 +71,15 @@ class NotificationProcessorTest {
     @BeforeEach
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
+
+        // Mock static calls that happen during commitBest
+        io.mockk.mockkObject(com.aibill.android.service.SyncScheduler)
+        every { com.aibill.android.service.SyncScheduler.scheduleSyncIfNeeded(any()) } returns Unit
+        io.mockk.mockkObject(com.aibill.android.service.WidgetDataUpdater)
+        every { com.aibill.android.service.WidgetDataUpdater.notifyTransactionAdded(any(), any(), any()) } returns Unit
+        io.mockk.mockkObject(com.aibill.android.util.NotificationHelper)
+        every { com.aibill.android.util.NotificationHelper.showAutoRecordedNotification(any(), any(), any(), any(), any(), any(), any(), any()) } returns Unit
+        every { com.aibill.android.util.NotificationHelper.showConfirmNotification(any(), any(), any(), any(), any(), any(), any()) } returns Unit
         // Default: AI parse is enabled
         every { userPreferences.aiParseEnabled } returns flowOf(true)
         every { userPreferences.notificationPrivacy } returns flowOf(true)
@@ -103,6 +112,10 @@ class NotificationProcessorTest {
     @AfterEach
     fun tearDown() {
         Dispatchers.resetMain()
+        io.mockk.unmockkObject(com.aibill.android.service.SyncScheduler)
+        io.mockk.unmockkObject(com.aibill.android.service.WidgetDataUpdater)
+        io.mockk.unmockkStatic(com.aibill.android.util.NotificationHelper::class)
+        io.mockk.unmockkObject(com.aibill.android.util.NotificationHelper)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -213,13 +226,16 @@ class NotificationProcessorTest {
         coEvery { notificationRecordDao.findRecentConfirmedFromOtherChannel(any(), any(), any()) } returns null
 
         processor.process(makeItem())
+        testDispatcher.scheduler.runCurrent() // 让 processorScope.launch 启动
 
         // Before 10s - no insert yet
         advanceTimeBy(5_000)
+        testDispatcher.scheduler.runCurrent()
         coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
 
         // After 10s - should insert
         advanceTimeBy(6_000)
+        testDispatcher.scheduler.runCurrent()
         coVerify(exactly = 1) { pendingTransactionDao.insert(any()) }
         coVerify(atLeast = 1) { notificationRecordDao.insert(any()) }
     }
@@ -239,8 +255,10 @@ class NotificationProcessorTest {
         coEvery { notificationRecordDao.findRecentConfirmedFromOtherChannel(any(), any(), any()) } returns null
 
         processor.process(makeItem(fullText = "支付成功 ¥50.00"))
+        testDispatcher.scheduler.runCurrent()
 
         advanceTimeBy(11_000)
+        testDispatcher.scheduler.runCurrent()
 
         // Should insert notification record as "parsed" (pending review), NOT insert pending transaction
         coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
@@ -280,6 +298,7 @@ class NotificationProcessorTest {
             channel = NotificationProcessor.Channel.NLS,
             receivedAt = baseTime,
         ))
+        testDispatcher.scheduler.runCurrent()
 
         // Process A11Y item within 10s (higher score)
         advanceTimeBy(3_000)
@@ -289,9 +308,11 @@ class NotificationProcessorTest {
             channel = NotificationProcessor.Channel.A11Y,
             receivedAt = baseTime + 3_000,
         ))
+        testDispatcher.scheduler.runCurrent()
 
         // Wait for scoring window to complete
         advanceTimeBy(12_000)
+        testDispatcher.scheduler.runCurrent()
 
         // Only ONE insert to pendingTransactionDao (the higher-scored one)
         coVerify(atMost = 1) { pendingTransactionDao.insert(any()) }
@@ -315,9 +336,11 @@ class NotificationProcessorTest {
             channel = NotificationProcessor.Channel.NLS,
             receivedAt = baseTime,
         ))
+        testDispatcher.scheduler.runCurrent()
 
         // Wait for first to commit
         advanceTimeBy(11_000)
+        testDispatcher.scheduler.runCurrent()
 
         // Second NLS notification from same wechat (same channel, same package)
         // This represents a genuinely different transaction
@@ -327,8 +350,10 @@ class NotificationProcessorTest {
             channel = NotificationProcessor.Channel.NLS,
             receivedAt = baseTime + 11_000,
         ))
+        testDispatcher.scheduler.runCurrent()
 
         advanceTimeBy(11_000)
+        testDispatcher.scheduler.runCurrent()
 
         // Both should be inserted (same channel + same package = not deduped)
         coVerify(exactly = 2) { pendingTransactionDao.insert(any()) }
@@ -352,9 +377,11 @@ class NotificationProcessorTest {
             channel = NotificationProcessor.Channel.NLS,
             receivedAt = baseTime,
         ))
+        testDispatcher.scheduler.runCurrent()
 
         // Wait for first to commit (10s scoring window)
         advanceTimeBy(11_000)
+        testDispatcher.scheduler.runCurrent()
         coVerify(exactly = 1) { pendingTransactionDao.insert(any()) }
 
         // Second: A11Y from alipay, 30s after first (still within 60s dedup window)
@@ -375,8 +402,10 @@ class NotificationProcessorTest {
             channel = NotificationProcessor.Channel.A11Y,
             receivedAt = baseTime + 30_000,
         ))
+        testDispatcher.scheduler.runCurrent()
 
         advanceTimeBy(11_000)
+        testDispatcher.scheduler.runCurrent()
 
         // Only the first one should have been inserted
         coVerify(exactly = 1) { pendingTransactionDao.insert(any()) }
@@ -398,8 +427,10 @@ class NotificationProcessorTest {
         coEvery { notificationRecordDao.findRecentConfirmedFromOtherChannel(any(), any(), any()) } returns null
 
         processor.process(makeItem(fullText = "支付成功 ¥20.00 早餐"))
+        testDispatcher.scheduler.runCurrent()
 
         advanceTimeBy(11_000)
+        testDispatcher.scheduler.runCurrent()
 
         // Should insert with type="expense" (fallback)
         coVerify(exactly = 1) { pendingTransactionDao.insert(match { it.type == "expense" }) }
