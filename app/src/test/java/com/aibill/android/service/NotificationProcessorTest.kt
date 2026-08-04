@@ -76,9 +76,9 @@ class NotificationProcessorTest {
         io.mockk.mockkObject(com.aibill.android.service.SyncScheduler)
         every { com.aibill.android.service.SyncScheduler.scheduleSyncIfNeeded(any()) } returns Unit
         io.mockk.mockkObject(com.aibill.android.service.WidgetDataUpdater)
-        every { com.aibill.android.service.WidgetDataUpdater.notifyTransactionAdded(any(), any(), any()) } returns Unit
+        every { com.aibill.android.service.WidgetDataUpdater.notifyTransactionAdded(any(), any(), any(), any()) } returns Unit
         io.mockk.mockkObject(com.aibill.android.util.NotificationHelper)
-        every { com.aibill.android.util.NotificationHelper.showAutoRecordedNotification(any(), any(), any(), any(), any(), any(), any(), any()) } returns Unit
+        every { com.aibill.android.util.NotificationHelper.showAutoRecordedNotification(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Unit
         every { com.aibill.android.util.NotificationHelper.showConfirmNotification(any(), any(), any(), any(), any(), any(), any()) } returns Unit
         // Default: AI parse is enabled
         every { userPreferences.aiParseEnabled } returns flowOf(true)

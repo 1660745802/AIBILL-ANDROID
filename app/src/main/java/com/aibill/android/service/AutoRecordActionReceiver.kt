@@ -74,6 +74,9 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
             // Still pending locally — just delete from local DB
             pendingTransactionDao.deleteByClientId(clientId)
             appLogger.info("AutoRecordActionReceiver", "Undo: deleted local pending record clientId=$clientId")
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "已撤销，可在回收站中恢复", Toast.LENGTH_SHORT).show()
+            }
         } else {
             // Already synced to server — query server by keyword (clientId) to find serverId, then delete
             val searchResult = transactionRepository.getTransactions(keyword = clientId)
@@ -81,21 +84,35 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
                 searchResult is com.aibill.android.domain.model.Result.Success && searchResult.data.items.isNotEmpty() -> {
                     val serverId = searchResult.data.items.first().id
                     if (serverId != null) {
-                        transactionRepository.deleteTransaction(serverId)
-                        appLogger.info("AutoRecordActionReceiver", "Undo: deleted server record serverId=$serverId, clientId=$clientId")
+                        when (transactionRepository.deleteTransaction(serverId)) {
+                            is com.aibill.android.domain.model.Result.Success -> {
+                                appLogger.info("AutoRecordActionReceiver", "Undo: deleted server record serverId=$serverId, clientId=$clientId")
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "已撤销，可在回收站中恢复", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                            is com.aibill.android.domain.model.Result.Error -> {
+                                appLogger.warn("AutoRecordActionReceiver", "Undo: server delete failed for serverId=$serverId")
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "撤销失败，请稍后在流水页手动删除", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                            else -> Unit
+                        }
                     } else {
                         appLogger.warn("AutoRecordActionReceiver", "Undo: server record has null id for clientId=$clientId")
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "撤销失败", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
                 else -> {
                     appLogger.warn("AutoRecordActionReceiver", "Undo: record not found for clientId=$clientId")
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "撤销失败，记录未找到", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
-        }
-
-        // Show toast on main thread
-        withContext(Dispatchers.Main) {
-            Toast.makeText(context, "已撤销，可在回收站中恢复", Toast.LENGTH_SHORT).show()
         }
     }
 

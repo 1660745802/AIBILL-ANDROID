@@ -549,8 +549,3 @@ internal fun CategoryStatItem(
         }
     }
 }
-
-/**
- * 月度洞察卡片：生成一段文字总结本月消费特征。
- */
-
