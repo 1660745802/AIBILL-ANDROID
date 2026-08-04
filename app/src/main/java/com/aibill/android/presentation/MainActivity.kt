@@ -58,7 +58,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        navigateTo = intent?.getStringExtra("navigate_to")
+        navigateTo = resolveNavigateTo(intent)
         aiInputPrefill = intent?.getStringExtra("ai_input")
         observeAuthEvents()
         appLogger.autoCleanOldLogs(this) // 每次打开 App 清理 7 天前日志+文件
@@ -110,8 +110,19 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         // App 已在运行时点击通知，更新导航目标
         setIntent(intent)
-        navigateTo = intent.getStringExtra("navigate_to")
+        navigateTo = resolveNavigateTo(intent)
         intent.getStringExtra("ai_input")?.let { aiInputPrefill = it }
+    }
+
+    /**
+     * 统一解析 Intent 中的导航目标。
+     * 支持 navigate_to extra 和 VIEW_TRANSACTIONS action。
+     */
+    private fun resolveNavigateTo(intent: android.content.Intent?): String? {
+        if (intent == null) return null
+        // ACTION: VIEW_TRANSACTIONS → 跳转流水 Tab
+        if (intent.action == "VIEW_TRANSACTIONS") return "transactions"
+        return intent.getStringExtra("navigate_to")
     }
 
     override fun onStop() {

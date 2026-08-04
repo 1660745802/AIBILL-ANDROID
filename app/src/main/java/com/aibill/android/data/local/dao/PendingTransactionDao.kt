@@ -53,4 +53,10 @@ interface PendingTransactionDao {
 
     @Query("DELETE FROM pending_transactions")
     suspend fun deleteAll()
+
+    @Query("SELECT * FROM pending_transactions WHERE client_id = :clientId LIMIT 1")
+    suspend fun findByClientId(clientId: String): PendingTransactionEntity?
+
+    @Query("DELETE FROM pending_transactions WHERE client_id = :clientId")
+    suspend fun deleteByClientId(clientId: String)
 }

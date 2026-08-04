@@ -431,6 +431,7 @@ class NotificationProcessor @Inject constructor(
             source = NotificationSourceMapping.friendlyName(item.packageName, rulesManager),
             type = type,
             privacyMode = privacyMode,
+            clientId = clientId,
         )
     }
 

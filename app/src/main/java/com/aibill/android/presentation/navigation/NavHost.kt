@@ -58,6 +58,10 @@ fun AiBillNavHost(
     androidx.compose.runtime.LaunchedEffect(navigateTo) {
         when (navigateTo) {
             "notification_center" -> navController.navigate(Route.NotificationCenter)
+            "transactions" -> navController.navigate(Route.Transactions()) {
+                popUpTo(Route.Home) { inclusive = false }
+                launchSingleTop = true
+            }
             "manual_record" -> navController.navigate(Route.ManualRecord())
             "home" -> {
                 // 外部 Intent（Tasker/AI_PARSE）跳首页

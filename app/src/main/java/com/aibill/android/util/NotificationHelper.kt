@@ -13,6 +13,7 @@ import android.os.Looper
 import androidx.core.app.NotificationCompat
 import com.aibill.android.R
 import com.aibill.android.presentation.MainActivity
+import com.aibill.android.service.AutoRecordActionReceiver
 import com.aibill.android.service.NotificationActionReceiver
 
 /**
@@ -291,11 +292,15 @@ object NotificationHelper {
     }
 
     /**
-     * v3 轻通知：AI 入库成功后展示，无按钮。
-     * 用户看一眼就知道"账记了"，无需任何操作。
-     * 点击 → 进通知中心页可修改/删除。
+     * 自动记账成功后的 Heads-up 通知，带「撤销」「查看」Action Button。
      *
-     * @param autoDismissMs 非 null 时在指定毫秒后自动取消通知；null 则保留直到用户划掉。
+     * - 标题："已记账 · {来源}"
+     * - 内容："¥{金额} · {分类} · {描述}"
+     * - 30 秒后自动消失
+     * - 点击通知本体 = 查看流水
+     *
+     * @param clientId     交易的 clientId，用于撤销时定位记录
+     * @param autoDismissMs 非 null 时覆盖默认 30s 自动消失时间（主要用于 NotificationActionReceiver 的轻反馈场景）
      */
     fun showAutoRecordedNotification(
         context: Context,
@@ -306,45 +311,96 @@ object NotificationHelper {
         type: String = "expense",
         privacyMode: Boolean = false,
         autoDismissMs: Long? = null,
+        clientId: String? = null,
     ) {
         createNotificationChannel(context)
 
         val notificationId = recordId.toInt()
         val amountDisplay = formatAmount(amount, privacyMode)
-        val sign = if (type == "income") "+" else "-"
         val descDisplay = if (privacyMode) "***" else (description ?: source)
+        val sourceDisplay = if (privacyMode) "***" else source
 
-        // 点击 → 打开通知中心页
-        val contentIntent = Intent(context, com.aibill.android.presentation.MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra("navigate_to", "notification_center")
+        // 判断是否为带 Action 的完整通知（有 clientId）还是轻反馈通知
+        val hasActions = clientId != null
+
+        // 标题 & 内容
+        val title = if (hasActions) {
+            if (privacyMode) "已记账" else "已记账 · $sourceDisplay"
+        } else {
+            "已自动记录"
         }
-        val contentPending = PendingIntent.getActivity(
+        val contentText = if (privacyMode) {
+            "有一笔新记录"
+        } else {
+            "$amountDisplay · $descDisplay"
+        }
+
+        // 点击通知 → 打开流水页
+        val viewIntent = Intent(context, MainActivity::class.java).apply {
+            action = "VIEW_TRANSACTIONS"
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val viewPending = PendingIntent.getActivity(
             context,
-            recordId.toInt() + 50000,
-            contentIntent,
+            if (clientId != null) clientId.hashCode() else (recordId.toInt() + 50000),
+            viewIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("已自动记录")
-            .setContentText("$descDisplay $sign$amountDisplay")
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT) // 不用 HIGH，轻提示即可
+            .setContentTitle(title)
+            .setContentText(contentText)
             .setAutoCancel(true)
-            .setContentIntent(contentPending)
-            // 无按钮：用户无需操作
+            .setContentIntent(viewPending)
             .setVisibility(
                 if (privacyMode) NotificationCompat.VISIBILITY_SECRET
                 else NotificationCompat.VISIBILITY_PUBLIC
             )
-            .build()
 
+        if (hasActions) {
+            // Heads-up style with actions
+            builder.setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setTimeoutAfter(autoDismissMs ?: 30_000L)
+
+            // 撤销 Action
+            val undoIntent = Intent(context, AutoRecordActionReceiver::class.java).apply {
+                action = AutoRecordActionReceiver.ACTION_UNDO
+                putExtra(AutoRecordActionReceiver.EXTRA_CLIENT_ID, clientId)
+                putExtra(AutoRecordActionReceiver.EXTRA_NOTIFICATION_ID, notificationId)
+            }
+            val undoPending = PendingIntent.getBroadcast(
+                context,
+                clientId!!.hashCode() + 1,
+                undoIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(0, "撤销", undoPending)
+
+            // 查看 Action
+            val viewActionIntent = Intent(context, MainActivity::class.java).apply {
+                action = "VIEW_TRANSACTIONS"
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val viewActionPending = PendingIntent.getActivity(
+                context,
+                clientId.hashCode() + 2,
+                viewActionIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(0, "查看", viewActionPending)
+        } else {
+            // Lightweight notification (used by NotificationActionReceiver confirmation feedback)
+            builder.setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        }
+
+        val notification = builder.build()
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(notificationId, notification)
 
-        // 如果指定了 autoDismissMs，则在延迟后自动取消通知
-        if (autoDismissMs != null) {
+        // 如果指定了 autoDismissMs 但没有使用 setTimeoutAfter（无 actions 场景），
+        // 用 Handler 方式自动取消
+        if (!hasActions && autoDismissMs != null) {
             scheduleAutoCancel(manager, notificationId, autoDismissMs)
         }
     }

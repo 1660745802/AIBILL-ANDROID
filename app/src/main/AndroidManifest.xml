@@ -111,6 +111,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- 自动记账撤销/查看操作接收器 -->
+        <receiver
+            android:name=".service.AutoRecordActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.aibill.android.ACTION_AUTO_RECORD_UNDO" />
+                <action android:name="com.aibill.android.ACTION_AUTO_RECORD_VIEW" />
+            </intent-filter>
+        </receiver>
+
         <!-- 外部 Intent 接收器 (Tasker/快捷指令) -->
         <receiver
             android:name=".service.ExternalActionReceiver"
