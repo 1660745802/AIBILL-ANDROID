@@ -12,6 +12,13 @@ import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.util.AiResultValidator
 import com.aibill.android.util.AppLogger
+import com.aibill.android.service.A11yRules
+import com.aibill.android.service.AlipayRules
+import com.aibill.android.service.NlsRules
+import com.aibill.android.service.NotificationRules
+import com.aibill.android.service.ProcessorRules
+import com.aibill.android.service.SmsRules
+import com.aibill.android.service.WechatRules
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -56,6 +63,8 @@ class NotificationProcessorTest {
     private val userPreferences: UserPreferences = mockk()
     private val categoryLearningEngine: CategoryLearningEngine = mockk(relaxed = true)
     private val appLogger: AppLogger = mockk(relaxed = true)
+    private val rulesManager: NotificationRulesManager = mockk(relaxed = true)
+    private val streakTracker: com.aibill.android.domain.usecase.StreakTracker = mockk(relaxed = true)
 
     private lateinit var processor: NotificationProcessor
 
@@ -67,6 +76,14 @@ class NotificationProcessorTest {
         every { userPreferences.notificationPrivacy } returns flowOf(true)
         // Default: no learned category
         coEvery { categoryLearningEngine.matchCategory(any()) } returns null
+        // Default: rules returns processor defaults
+        every { rulesManager.getRules() } returns NotificationRules(
+            nls = NlsRules("", WechatRules("", emptyList(), emptyList(), emptyList(), emptyList()), AlipayRules("", emptyList()), emptyList(), emptyList()),
+            a11y = A11yRules(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), "", 5),
+            sms = SmsRules(emptyList()),
+            sourceMapping = emptyMap(),
+            processor = ProcessorRules(10, 60, listOf("点击领取"), listOf("红包", "领", "优惠"), 10_000_000, 1),
+        )
 
         processor = NotificationProcessor(
             context = context,
@@ -77,7 +94,10 @@ class NotificationProcessorTest {
             userPreferences = userPreferences,
             categoryLearningEngine = categoryLearningEngine,
             appLogger = appLogger,
+            rulesManager = rulesManager,
+            streakTracker = streakTracker,
         )
+        processor.testDispatcher = testDispatcher
     }
 
     @AfterEach

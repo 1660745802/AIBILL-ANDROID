@@ -59,6 +59,10 @@ class NotificationProcessor @Inject constructor(
     private val rulesManager: NotificationRulesManager,
 ) {
 
+    /** 可在测试中替换的调度器 */
+    @Volatile
+    var testDispatcher: kotlinx.coroutines.CoroutineDispatcher? = null
+
     /** 来源渠道 */
     enum class Channel { NLS, A11Y, SMS }
 
@@ -103,7 +107,7 @@ class NotificationProcessor @Inject constructor(
     )
     private val scoringPool = java.util.concurrent.ConcurrentHashMap<Int, ScoredCandidate>() // key=amount
     private val scoringJobs = java.util.concurrent.ConcurrentHashMap<Int, kotlinx.coroutines.Job>()
-    private val processorScope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    private val processorScope by lazy { CoroutineScope(SupervisorJob() + (testDispatcher ?: kotlinx.coroutines.Dispatchers.IO)) }
 
     /** 内存级已入库记录（用于跨渠道去重，比 DB 查询更快更准） */
     private data class ProcessedEntry(val amount: Int, val channel: Channel, val packageName: String, val time: Long)
