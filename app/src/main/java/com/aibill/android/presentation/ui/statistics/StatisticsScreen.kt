@@ -10,41 +10,39 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.aibill.android.presentation.theme.ExpenseColor
-import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.theme.SecondaryButton
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatisticsScreen(
     onNavigateToCategoryTransactions: (Int, String) -> Unit = { _, _ -> },
@@ -55,7 +53,6 @@ fun StatisticsScreen(
 
     // 从其他页面返回时刷新统计（记账后自动反映到本月）
     val lifecycleOwner = LocalLifecycleOwner.current
-    val context = LocalContext.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -66,29 +63,42 @@ fun StatisticsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 20.dp),
-    ) {
-        Spacer(modifier = Modifier.height(20.dp))
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        "统计",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp),
+        ) {
+            MonthSelector(
+                year = state.year,
+                month = state.month,
+                onPrevious = { viewModel.onMonthChanged(-1) },
+                onNext = { viewModel.onMonthChanged(1) },
+                onJumpToCurrent = { viewModel.onJumpToCurrentMonth() },
+            )
 
-        MonthSelector(
-            year = state.year,
-            month = state.month,
-            onPrevious = { viewModel.onMonthChanged(-1) },
-            onNext = { viewModel.onMonthChanged(1) },
-            onJumpToCurrent = { viewModel.onJumpToCurrentMonth() },
-        )
+            Spacer(modifier = Modifier.height(16.dp))
 
-        Spacer(modifier = Modifier.height(16.dp))
+            StatsTabRow(
+                selectedTab = state.selectedTab,
+                onTabChanged = { viewModel.onTabChanged(it) },
+            )
 
-        StatsTabRow(
-            selectedTab = state.selectedTab,
-            onTabChanged = { viewModel.onTabChanged(it) },
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
         when {
             state.isLoading && state.summary == null -> {
@@ -224,6 +234,7 @@ fun StatisticsScreen(
                 }
             }
         }
+        }
     }
 }
 
@@ -284,42 +295,21 @@ private fun StatsTabRow(
     onTabChanged: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val tabs = listOf("expense" to "支出", "income" to "收入")
-    val selectedIndex = if (selectedTab == "expense") 0 else 1
-    val indicatorColor = if (selectedTab == "expense") ExpenseColor else IncomeColor
-
-    TabRow(
-        selectedTabIndex = selectedIndex,
+    Row(
         modifier = modifier.fillMaxWidth(),
-        containerColor = Color.Transparent,
-        indicator = { tabPositions ->
-            TabRowDefaults.SecondaryIndicator(
-                modifier = Modifier.tabIndicatorOffset(tabPositions[selectedIndex]),
-                color = indicatorColor,
-            )
-        },
-        divider = {},
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        tabs.forEachIndexed { index, (key, label) ->
-            Tab(
-                selected = selectedIndex == index,
-                onClick = { onTabChanged(key) },
-                text = {
-                    Text(
-                        text = label,
-                        fontWeight = if (selectedIndex == index) {
-                            FontWeight.Bold
-                        } else {
-                            FontWeight.Normal
-                        },
-                        color = if (selectedIndex == index) {
-                            if (key == "expense") ExpenseColor else IncomeColor
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                },
-            )
-        }
+        FilterChip(
+            selected = selectedTab == "expense",
+            onClick = { onTabChanged("expense") },
+            label = { Text("支出") },
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        FilterChip(
+            selected = selectedTab == "income",
+            onClick = { onTabChanged("income") },
+            label = { Text("收入") },
+        )
     }
 }

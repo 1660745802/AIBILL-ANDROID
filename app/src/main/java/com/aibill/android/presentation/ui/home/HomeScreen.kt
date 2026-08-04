@@ -3,7 +3,6 @@ package com.aibill.android.presentation.ui.home
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -90,20 +89,12 @@ fun HomeScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    // PR #48：PRD §5.2.1 要求 TopBar 显示月份 + 月支出总额
-                    Column {
-                        val now = LocalDate.now()
-                        Text(
-                            text = "${now.year} 年 ${now.monthValue} 月",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = "本月支出 ${uiState.monthlyExpense / 100.0} 元",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    val now = LocalDate.now()
+                    Text(
+                        text = "${now.year} 年 ${now.monthValue} 月",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
                 },
                 actions = {
                     IconButton(onClick = onNavigateToNotification) {
