@@ -82,8 +82,17 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideAiApi(retrofit: Retrofit): AiApi =
-        retrofit.create(AiApi::class.java)
+    fun provideAiApi(retrofit: Retrofit, okHttpClient: OkHttpClient): AiApi {
+        // AI 接口需要更长超时（AI 上游响应慢，30s 不够）
+        val aiClient = okHttpClient.newBuilder()
+            .readTimeout(90, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
+        return retrofit.newBuilder()
+            .client(aiClient)
+            .build()
+            .create(AiApi::class.java)
+    }
 
     @Provides
     @Singleton
