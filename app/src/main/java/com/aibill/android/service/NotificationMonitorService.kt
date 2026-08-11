@@ -7,7 +7,6 @@ import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.util.AppLogger
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationParser
-import com.aibill.android.util.NotificationSourceMapping
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -17,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 /**
  * 通知监听服务 v4
@@ -51,7 +51,7 @@ class NotificationMonitorService : NotificationListenerService() {
     // ═══════════════════════════════════════════════════════════════
     // 从云控规则读取
     // ═══════════════════════════════════════════════════════════════
-    private var paymentSignalRegex: Regex = Regex("")
+    private var paymentSignalRegex: Regex = PAYMENT_SIGNAL
     private var wechatDirectPassTitles: List<String> = emptyList()
     private var wechatDirectPassTitleContains: List<String> = emptyList()
     private var wechatMessagePrefixes: List<String> = emptyList()
@@ -59,12 +59,16 @@ class NotificationMonitorService : NotificationListenerService() {
     private var alipayAllowedTitleKeywords: List<String> = emptyList()
     private var bankPackagePatterns: List<String> = emptyList()
     private var smsSpamKeywords: List<String> = emptyList()
+    private var smsPackages: Set<String> = emptySet()
+
+    /** 跟踪已加载的规则代际，避免重复 load */
+    private var lastRulesGeneration: Int = -1
 
     companion object {
         private const val DEDUP_WINDOW_MS = 1000L
 
-        /** 白名单：只处理这些包名的通知 */
-        private val WHITELIST_PACKAGES: Set<String> = NotificationSourceMapping.KNOWN_PACKAGES
+        /** 内部内容去重窗口：同内容 hash 在此窗口内只处理一次 */
+        private const val CONTENT_DEDUP_WINDOW_MS = 5_000L
 
         /**
          * 支付特征关键词正则（向后兼容：SmsReceiverService 引用此字段）。
@@ -97,11 +101,15 @@ class NotificationMonitorService : NotificationListenerService() {
     }
 
     private fun loadRules() {
-        val rules = rulesManager.getRules()
+        val snapshot = rulesManager.getSnapshot()
+        val rules = snapshot.rules
+        val currentGen = snapshot.generation
+
         paymentSignalRegex = try {
             Regex(rules.nls.paymentSignalRegex)
         } catch (e: Exception) {
-            PAYMENT_SIGNAL // fallback to hardcoded
+            Timber.w(e, "NLS: invalid paymentSignalRegex from rules, using hardcoded fallback")
+            PAYMENT_SIGNAL
         }
         wechatDirectPassTitles = rules.nls.wechat.directPassTitles
         wechatDirectPassTitleContains = rules.nls.wechat.directPassTitleContains
@@ -110,6 +118,26 @@ class NotificationMonitorService : NotificationListenerService() {
         alipayAllowedTitleKeywords = rules.nls.alipay.allowedTitleKeywords
         bankPackagePatterns = rules.nls.bankPackagePatterns
         smsSpamKeywords = rules.sms.spamKeywords
+        smsPackages = rules.nls.smsPackages.toSet()
+        lastRulesGeneration = currentGen
+
+        appLogger.info("NLS", "规则已加载 gen=$currentGen " +
+            "wechatDirectPassTitles=${wechatDirectPassTitles.size} " +
+            "bankPatterns=${bankPackagePatterns.size} " +
+            "spamKeywords=${smsSpamKeywords.size} " +
+            "knownPackages=${rulesManager.getAllKnownPackages().size}")
+    }
+
+    /**
+     * 如果规则已更新（代际变化），则重新加载本地派生值。
+     * 每次 onNotificationPosted 调用，避免创建新 Notification 时规则滞后。
+     */
+    private fun refreshRulesIfNeeded() {
+        val currentGen = rulesManager.getSnapshot().generation
+        if (currentGen != lastRulesGeneration) {
+            Timber.d("NLS: rules generation changed $lastRulesGeneration → $currentGen, reloading...")
+            loadRules()
+        }
     }
 
     override fun onListenerConnected() {
@@ -152,9 +180,16 @@ class NotificationMonitorService : NotificationListenerService() {
     private val recentNotificationKeys = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     private suspend fun handleNotification(sbn: StatusBarNotification) {
-        // 1. 包名白名单
+        // 1. 动态包名白名单（含云控 sourceMapping + smsPackages + bankPatterns）
         val packageName = sbn.packageName ?: return
-        if (packageName !in WHITELIST_PACKAGES) return
+
+        // 按需刷新规则（代际无变化则跳过）
+        refreshRulesIfNeeded()
+
+        if (!rulesManager.isKnownOrBankPackage(packageName)) {
+            appLogger.debug("NLS", "包名不在白名单: pkg=$packageName")
+            return
+        }
 
         // 2. 提取通知文本
         val extras = sbn.notification?.extras ?: return
@@ -169,20 +204,29 @@ class NotificationMonitorService : NotificationListenerService() {
             .filter { it.isNotBlank() }
             .distinct()
             .joinToString(" ")
-        if (fullText.isBlank()) return
+        if (fullText.isBlank()) {
+            appLogger.debug("NLS", "空文本: pkg=$packageName")
+            return
+        }
 
         // 排除系统运行通知和通知分组摘要（无意义）
-        if (fullText.contains("正在运行") || fullText.contains("GroupSummary")) return
+        if (fullText.contains("正在运行") || fullText.contains("GroupSummary")) {
+            appLogger.debug("NLS", "系统/分组摘要: pkg=$packageName title=$title")
+            return
+        }
 
         // 排除营销/广告/订购类短信（含金额关键词但不是真实账务）
-        if (packageName.contains("mms") && isLikelySpamSms(fullText)) return
+        if (packageName in smsPackages && isLikelySpamSms(fullText)) {
+            appLogger.debug("NLS", "垃圾短信: pkg=$packageName text=${fullText.take(50)}")
+            return
+        }
 
         // 0. 内存级去重（用内容hash，防系统重复触发+协程竞态）
         val contentKey = "$packageName:${fullText.hashCode()}"
         val now = System.currentTimeMillis()
         val lastSeen = recentNotificationKeys.put(contentKey, now)
-        if (lastSeen != null && (now - lastSeen) < 5000L) {
-            appLogger.debug("NLS", "内存去重: pkg=$packageName (重复触发)")
+        if (lastSeen != null && (now - lastSeen) < CONTENT_DEDUP_WINDOW_MS) {
+            appLogger.debug("NLS", "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName")
             return
         }
         // 每次清理过期 key（>10s），防泄漏
@@ -190,16 +234,19 @@ class NotificationMonitorService : NotificationListenerService() {
 
         // 3. 排除层：过滤明显不是账务的通知
         if (!isLikelyFinancial(packageName, title, fullText)) {
-            appLogger.debug("NLS", "排除: pkg=$packageName title=$title")
+            appLogger.debug("NLS", "排除(非账务): pkg=$packageName title=${title.take(30)} text=${fullText.take(50)}")
             return
         }
 
-        appLogger.info("NLS", "通知放行: pkg=$packageName title=$title text=${text.take(50)} bigText=${bigText.take(50)} fullText=${fullText.take(80)}")
+        appLogger.info("NLS", "✓通过过滤: pkg=$packageName title=${title.take(30)} fullText=${fullText.take(80)}")
 
         // 4. 1s 内容去重（防同一条通知被系统多次分发）
         val since = System.currentTimeMillis() - DEDUP_WINDOW_MS
         val duplicate = notificationRecordDao.findDuplicate(packageName, fullText, since)
-        if (duplicate != null) return
+        if (duplicate != null) {
+            appLogger.debug("NLS", "DB去重(1s): pkg=$packageName")
+            return
+        }
 
         // 5. 直接交给 Processor（AI + 后置按金额去重）
         notificationProcessor.process(

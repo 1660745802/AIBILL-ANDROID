@@ -154,7 +154,46 @@ class NotificationRulesManagerTest {
     }
 
     @Test
-    @DisplayName("7. SP中JSON格式错误 → fallback默认值")
+    @DisplayName("7. 动态 package filter 包含云控映射、短信包和银行模式")
+    fun dynamicPackageFilter_usesCloudRules() = runTest {
+        val dto = makeMinimalDto().copy(
+            sourceMapping = mapOf("com.example.wallet" to "示例钱包"),
+            nls = makeMinimalDto().nls?.copy(
+                smsPackages = listOf("com.example.sms"),
+                bankPackagePatterns = listOf("newbank"),
+            ),
+        )
+        every { prefs.getString(any(), any()) } returns null
+        coEvery { api.getRules(any()) } returns Response.success(
+            NotificationRulesResponse(code = 0, data = NotificationRulesData(version = 3, updatedAt = null, rules = dto)),
+        )
+
+        manager.fetchRules()
+
+        assertTrue(manager.isKnownOrBankPackage("com.example.wallet"))
+        assertTrue(manager.isKnownOrBankPackage("com.example.sms"))
+        assertTrue(manager.isKnownOrBankPackage("com.vendor.newbank.mobile"))
+        assertFalse(manager.isKnownOrBankPackage("com.example.unrelated"))
+        assertEquals(manager.getSnapshot().rules, manager.getRules())
+        assertEquals(manager.getSnapshot().generation, manager.getRulesGeneration())
+    }
+
+    @Test
+    @DisplayName("空银行模式不会匹配所有包名")
+    fun blankBankPattern_doesNotMatchEverything() = runTest {
+        val dto = makeMinimalDto().copy(
+            nls = makeMinimalDto().nls?.copy(bankPackagePatterns = listOf(" ", "")),
+        )
+        every { prefs.getString(any(), any()) } returns null
+        coEvery { api.getRules(any()) } returns Response.success(
+            NotificationRulesResponse(code = 0, data = NotificationRulesData(version = 4, updatedAt = null, rules = dto)),
+        )
+        manager.fetchRules()
+        assertFalse(manager.isKnownOrBankPackage("com.example.unrelated"))
+    }
+
+    @Test
+    @DisplayName("8. SP中JSON格式错误 → fallback默认值")
     fun getRules_corruptedSp_fallbackToDefault() {
         every { prefs.getString("notification_rules_json", null) } returns "{{invalid json}}"
         every { prefs.getString("notification_rules_etag", null) } returns null

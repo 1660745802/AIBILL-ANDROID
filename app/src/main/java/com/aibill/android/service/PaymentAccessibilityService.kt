@@ -14,7 +14,91 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.math.RoundingMode
 import java.util.concurrent.ConcurrentHashMap
+
+internal object PaymentAccessibilityRecognition {
+    fun pageToken(packageName: String, className: String, windowId: Int): String =
+        "${packageName.trim().lowercase()}|$windowId|${className.trim().lowercase()}"
+
+    fun pageState(packageName: String, className: String, windowId: Int): Pair<String, String> =
+        className to pageToken(packageName, className, windowId)
+
+    fun isRootForEvent(rootPackage: String?, rootWindowId: Int, eventPackage: String, eventWindowId: Int): Boolean {
+        if (rootPackage != eventPackage) return false
+        return rootWindowId < 0 || eventWindowId < 0 || rootWindowId == eventWindowId
+    }
+
+    fun amountKey(amountText: String): String? {
+        val value = amountText
+            .replace("¥", "")
+            .replace("￥", "")
+            .replace("元", "")
+            .replace(",", "")
+            .replace(" ", "")
+            .trim()
+            .toBigDecimalOrNull() ?: return null
+        return value.setScale(2, RoundingMode.HALF_UP).movePointRight(2).toBigInteger().toString()
+    }
+
+    fun isSuccessKeywordMatch(text: String, keyword: String): Boolean {
+        val value = text.trim()
+        if (value == keyword) return true
+        if (value.length > keyword.length * 3 || !value.contains(keyword)) return false
+        val suffix = value.substring(value.indexOf(keyword) + keyword.length)
+        if (suffix.isBlank()) return true
+        if (suffix == "了" || suffix.startsWith("了 ") || suffix.startsWith("了，") || suffix.startsWith("了。") || suffix.startsWith("了！")) {
+            return true
+        }
+        return suffix.first().isWhitespace() || suffix.first() in "!！。,.，:：¥￥(（[【"
+    }
+
+    fun retryAnchor(texts: List<String>, successKeyword: String): Set<String> =
+        texts.asSequence()
+            .map(String::trim)
+            .filter { it.isNotBlank() && it.length <= 50 }
+            .filterNot { it == successKeyword || amountKey(it) != null }
+            .distinct()
+            .take(6)
+            .toSet()
+
+    fun matchesRetryAnchor(anchor: Set<String>, currentTexts: List<String>): Boolean {
+        if (anchor.isEmpty()) return false
+        val current = currentTexts.mapTo(HashSet(), String::trim)
+        return anchor.count(current::contains) >= minOf(2, anchor.size)
+    }
+
+    fun paymentPackages(embeddedPackages: List<String>): Set<String> =
+        setOf("com.tencent.mm", "com.eg.android.AlipayGphone") +
+            embeddedPackages.asSequence().map(String::trim).filter(String::isNotBlank).toSet()
+
+    fun dedupTtl(cooldownMs: Long): Long = minOf(cooldownMs, 30_000L)
+
+    fun containsExcludeKeyword(texts: List<String>, keywords: List<String>): Boolean =
+        keywords.any { keyword -> keyword.isNotBlank() && texts.any { it.contains(keyword) } }
+
+    fun isRecentTextRange(texts: List<String>, today: java.time.LocalDate): Boolean {
+        if (texts.any { it.contains("昨天") || it.contains("昨日") || it.contains("天前") || it.contains("月前") }) {
+            return false
+        }
+        val monthDay = Regex("""(\d{1,2})月(\d{1,2})日""")
+        // Bare M-D strings are commonly order IDs; only accept full ISO dates.
+        val dashDate = Regex("""(\d{4})-(\d{1,2})-(\d{1,2})""")
+        return texts.none { text ->
+            val chinese = monthDay.find(text)
+            if (chinese != null) {
+                chinese.groupValues[1].toIntOrNull() != today.monthValue ||
+                    chinese.groupValues[2].toIntOrNull() != today.dayOfMonth
+            } else {
+                val dashed = dashDate.find(text)
+                dashed != null && (
+                    dashed.groupValues[2].toIntOrNull() != today.monthValue ||
+                        dashed.groupValues[3].toIntOrNull() != today.dayOfMonth
+                    )
+            }
+        }
+    }
+}
 
 /**
  * 支付页面无障碍识别服务（v4）
@@ -51,11 +135,11 @@ class PaymentAccessibilityService : AccessibilityService() {
     /** cooldown：同"金额+商家"组合 N 分钟内只触发一次 */
     private val recentPayments = ConcurrentHashMap<String, Long>()
 
-    /** CONTENT_CHANGED 节流：同包名 3s 内只处理一次 */
+    /** CONTENT_CHANGED 节流：同页面 3s 内只处理一次 */
     private val contentChangeThrottle = ConcurrentHashMap<String, Long>()
 
-    /** 延迟重试标记：避免同一个页面重复调度重试 */
-    private var pendingRetryHash: Int = 0
+    /** 延迟重试：每个页面最多挂起一次，切页后旧 token 会自动失效 */
+    private val pendingRetryTokens = ConcurrentHashMap.newKeySet<String>()
 
     // ═══════════════════════════════════════════════════════════════
     // 从云控规则读取（每次事件时从内存缓存刷新）
@@ -68,6 +152,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     private var wechatAlipayExcludeKeywords: List<String> = emptyList()
     private var amountRegex: Regex = Regex("""[¥￥]\s*(\d+\.?\d{0,2})|(\d+\.?\d{0,2})元""")
     private var cooldownMs: Long = 5 * 60 * 1000L
+    private var lastRulesGeneration: Int = -1
 
     companion object {
         private const val DEBOUNCE_MS = 8_000L
@@ -84,14 +169,16 @@ class PaymentAccessibilityService : AccessibilityService() {
         appLogger = entryPoint.appLogger()
         rulesManager = entryPoint.rulesManager()
 
-        loadRules()
+        refreshRulesIfNeeded(force = true)
         appLogger.info("A11Y", "无障碍服务已连接 (v4: STATE+CONTENT, 节流+重试)")
     }
 
-    private fun loadRules() {
-        val rules = rulesManager.getRules()
-        embeddedPaymentApps = rules.a11y.embeddedPaymentApps.toSet()
-        paymentApps = setOf(PACKAGE_WECHAT, PACKAGE_ALIPAY) + embeddedPaymentApps
+    private fun refreshRulesIfNeeded(force: Boolean = false) {
+        val snapshot = rulesManager.getSnapshot()
+        if (!force && snapshot.generation == lastRulesGeneration) return
+        val rules = snapshot.rules
+        embeddedPaymentApps = rules.a11y.embeddedPaymentApps.map(String::trim).filter(String::isNotBlank).toSet()
+        paymentApps = PaymentAccessibilityRecognition.paymentPackages(rules.a11y.embeddedPaymentApps)
         successKeywords = rules.a11y.successKeywords
         embeddedSuccessKeywords = rules.a11y.embeddedSuccessKeywords
         commonExcludeKeywords = rules.a11y.commonExcludeKeywords
@@ -102,43 +189,66 @@ class PaymentAccessibilityService : AccessibilityService() {
             Regex("""[¥￥]\s*(\d+\.?\d{0,2})|(\d+\.?\d{0,2})元""")
         }
         cooldownMs = rules.a11y.cooldownMinutes * 60 * 1000L
+        lastRulesGeneration = snapshot.generation
+        serviceInfo = serviceInfo?.apply { packageNames = paymentApps.toTypedArray() }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val ev = event ?: return
         val packageName = ev.packageName?.toString() ?: return
 
-        // 实时读取最新规则（getRules() 读内存缓存，无性能问题）
-        loadRules()
-
+        refreshRulesIfNeeded()
         if (packageName !in paymentApps) return
 
         when (ev.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                // Activity 切换 → 记录当前 Activity 并处理
+                // 页面状态必须先更新；root 为空时仅跳过本次扫描，避免旧 retry 处理新页面。
                 val className = ev.className?.toString() ?: ""
-                if (isActivityClassName(className)) {
+                val activity = if (isActivityClassName(className)) {
                     currentActivity[packageName] = className
+                    className
+                } else {
+                    currentActivity[packageName] ?: className
                 }
-                processPaymentCheck(packageName, ev, isRetry = false)
+                val windowId = ev.windowId
+                val pageToken = PaymentAccessibilityRecognition.pageToken(packageName, activity, windowId)
+                currentWindowId[packageName] = windowId
+                currentPageToken[packageName] = pageToken
+                pendingRetryTokens.removeIf { it != pageToken }
+                rootInActiveWindow?.takeIf { root ->
+                    PaymentAccessibilityRecognition.isRootForEvent(
+                        root.packageName?.toString(), root.windowId, packageName, windowId,
+                    )
+                }?.let { root ->
+                    processPaymentCheck(root, packageName, activity, windowId, isRetry = false)
+                }
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                val savedWindowId = currentWindowId[packageName] ?: -1
+                val root = rootInActiveWindow?.takeIf {
+                    PaymentAccessibilityRecognition.isRootForEvent(
+                        it.packageName?.toString(), it.windowId, packageName, savedWindowId,
+                    )
+                } ?: return
                 // CONTENT_CHANGED 防误触：只有在上一次 STATE_CHANGED 记录的 Activity
                 // 命中"可能的支付结果页"特征时才处理（参考反编译项目的 Activity 白名单策略）
                 val activity = currentActivity[packageName] ?: return
                 if (!isPotentialPaymentActivity(activity, packageName)) return
 
+                val pageToken = currentPageToken[packageName] ?: return
                 val now = System.currentTimeMillis()
-                val lastCheck = contentChangeThrottle[packageName] ?: 0L
+                val lastCheck = contentChangeThrottle[pageToken] ?: 0L
                 if (now - lastCheck < CONTENT_CHANGE_THROTTLE_MS) return
-                contentChangeThrottle[packageName] = now
-                processPaymentCheck(packageName, ev, isRetry = false)
+                contentChangeThrottle[pageToken] = now
+                processPaymentCheck(root, packageName, activity, savedWindowId, isRetry = false)
             }
         }
     }
 
     /** 记录每个包名当前所在的 Activity */
     private val currentActivity = ConcurrentHashMap<String, String>()
+    private val currentPageToken = ConcurrentHashMap<String, String>()
+    private val currentWindowId = ConcurrentHashMap<String, Int>()
 
     /**
      * 判断类名是否是一个 Activity（而非 View/Dialog 等）。
@@ -182,24 +292,23 @@ class PaymentAccessibilityService : AccessibilityService() {
      * 核心识别逻辑。
      * @param isRetry 是否是延迟重试调用
      */
-    private fun processPaymentCheck(packageName: String, ev: AccessibilityEvent, isRetry: Boolean) {
-        val rootNode = rootInActiveWindow ?: return
-
+    private fun processPaymentCheck(
+        rootNode: AccessibilityNodeInfo,
+        packageName: String,
+        className: String,
+        windowId: Int,
+        isRetry: Boolean,
+    ) {
         try {
-            val className = ev.className?.toString() ?: "?"
             val shortClassName = className.substringAfterLast('.')
 
-            // ===== 全量页面日志（用于排查） =====
+            // 单次遍历收集页面文本；详细树日志仅在最终命中/漏识别时按需构建。
             val allTexts = mutableListOf<String>()
             collectAllNodeTexts(rootNode, allTexts)
-
-            val pageSnapshot = allTexts.take(30).joinToString("|")
-            appLogger.debug("A11Y_PAGE", "[$packageName/$shortClassName] $pageSnapshot")
-            appLogger.debug("A11Y_META", "activity=$className pkg=$packageName texts=${allTexts.size} retry=$isRetry time=${System.currentTimeMillis()}")
-
-            val nodeTree = buildNodeTree(rootNode, maxDepth = 5)
-            appLogger.debug("A11Y_TREE", "[$shortClassName] $nodeTree")
-            // ===== 日志结束 =====
+            appLogger.debug(
+                "A11Y_PAGE",
+                "[$packageName/$shortClassName] texts=${allTexts.size} retry=$isRetry ${allTexts.take(20).joinToString("|")}",
+            )
 
             // 判断是否为内嵌支付 App
             val isEmbeddedApp = packageName in embeddedPaymentApps
@@ -210,7 +319,10 @@ class PaymentAccessibilityService : AccessibilityService() {
             if (matchedKeyword == null) {
                 val hasAmount = allTexts.any { amountRegex.containsMatchIn(it) }
                 if (hasAmount) {
-                    appLogger.debug("A11Y_MISS", "有金额无成功词: [$shortClassName] ${allTexts.take(15).joinToString("|")}")
+                    appLogger.debug(
+                        "A11Y_MISS",
+                        "有金额无成功词: [$shortClassName] ${allTexts.take(15).joinToString("|")} tree=${buildNodeTree(rootNode, maxDepth = 5)}",
+                    )
                 }
                 return
             }
@@ -227,7 +339,12 @@ class PaymentAccessibilityService : AccessibilityService() {
             if (amountText == null) {
                 // 有成功词但没找到金额 → 可能页面还没渲染完
                 if (!isRetry) {
-                    scheduleRetry(packageName, ev)
+                    scheduleRetry(
+                        packageName,
+                        className,
+                        windowId,
+                        PaymentAccessibilityRecognition.retryAnchor(allTexts, matchedKeyword),
+                    )
                 } else {
                     appLogger.debug("A11Y_SKIP", "重试后仍无金额: [$shortClassName]")
                 }
@@ -266,18 +383,25 @@ class PaymentAccessibilityService : AccessibilityService() {
             lastHash = hash
             lastTime = now
 
-            // cooldown：同"金额+商家"组合 N 分钟内只触发一次
-            val deduKey = "$amountText|${merchant ?: ""}"
+            // cooldown：同规范化金额+页面 N 分钟内只触发一次
+            val amountKey = PaymentAccessibilityRecognition.amountKey(amountText) ?: return
+            val pageToken = PaymentAccessibilityRecognition.pageToken(packageName, className, windowId)
+            val merchantKey = merchant?.trim()?.lowercase().orEmpty()
+            val deduKey = "$amountKey|$merchantKey|$pageToken"
+            val dedupTtl = PaymentAccessibilityRecognition.dedupTtl(cooldownMs)
             val lastPayTime = recentPayments[deduKey]
-            if (lastPayTime != null && (now - lastPayTime) < cooldownMs) {
-                appLogger.debug("A11Y_SKIP", "cooldown拦截(${cooldownMs / 1000 / 60}min同金额+商家): $deduKey")
+            if (lastPayTime != null && (now - lastPayTime) < dedupTtl) {
+                appLogger.debug("A11Y_SKIP", "页面去重(${dedupTtl / 1000}s同金额+商家): $deduKey")
                 return
             }
             recentPayments[deduKey] = now
             // 清理过期条目
-            recentPayments.entries.removeIf { now - it.value > cooldownMs }
+            recentPayments.entries.removeIf { now - it.value > dedupTtl }
 
-            appLogger.info("A11Y", "✓识别支付页: $summary pkg=$packageName keyword=$matchedKeyword")
+            appLogger.info(
+                "A11Y",
+                "✓识别支付页: $summary pkg=$packageName keyword=$matchedKeyword tree=${buildNodeTree(rootNode, maxDepth = 5)}",
+            )
 
             // 交给 Processor（和通知渠道统一处理）
             serviceScope.launch {
@@ -299,20 +423,25 @@ class PaymentAccessibilityService : AccessibilityService() {
      * 延迟重试：500ms 后重新获取 rootNode 再解析一次。
      * 解决支付结果页渐进渲染导致首次扫描时金额还未出现的问题。
      */
-    private fun scheduleRetry(packageName: String, ev: AccessibilityEvent) {
-        val retryHash = "$packageName|${ev.className}".hashCode()
-        if (retryHash == pendingRetryHash) return // 同页面已有挂起的重试
-        pendingRetryHash = retryHash
+    private fun scheduleRetry(packageName: String, className: String, windowId: Int, contentAnchor: Set<String>) {
+        val pageToken = PaymentAccessibilityRecognition.pageToken(packageName, className, windowId)
+        if (!pendingRetryTokens.add(pageToken)) return
 
-        appLogger.debug("A11Y_RETRY", "调度延迟重试: pkg=$packageName class=${ev.className}")
+        appLogger.debug("A11Y_RETRY", "调度延迟重试: pkg=$packageName class=$className")
 
         handler.postDelayed({
-            pendingRetryHash = 0
+            pendingRetryTokens.remove(pageToken)
             val retryRoot = rootInActiveWindow ?: return@postDelayed
-            // 重新检查当前窗口是否还在同一个 app
-            val currentPkg = retryRoot.packageName?.toString()
-            if (currentPkg == packageName) {
-                processPaymentCheck(packageName, ev, isRetry = true)
+            if (!PaymentAccessibilityRecognition.isRootForEvent(
+                    retryRoot.packageName?.toString(), retryRoot.windowId, packageName, windowId,
+                )) return@postDelayed
+            val currentTexts = mutableListOf<String>()
+            collectAllNodeTexts(retryRoot, currentTexts)
+            if (
+                currentPageToken[packageName] == pageToken &&
+                PaymentAccessibilityRecognition.matchesRetryAnchor(contentAnchor, currentTexts)
+            ) {
+                processPaymentCheck(retryRoot, packageName, className, windowId, isRetry = true)
             }
         }, RETRY_DELAY_MS)
     }
@@ -332,8 +461,12 @@ class PaymentAccessibilityService : AccessibilityService() {
     // 辅助方法
     // ═══════════════════════════════════════════════════════════════
 
+    /** Exclusion rules are substring rules (for example, "购物车" in "加入购物车"). */
     private fun hasAnyKeyword(root: AccessibilityNodeInfo, keywords: List<String>): Boolean {
-        return findMatchedKeyword(root, keywords) != null
+        if (keywords.isEmpty()) return false
+        val texts = mutableListOf<String>()
+        collectAllNodeTexts(root, texts)
+        return PaymentAccessibilityRecognition.containsExcludeKeyword(texts, keywords)
     }
 
     /**
@@ -368,19 +501,7 @@ class PaymentAccessibilityService : AccessibilityService() {
      * - 文本很长（如整段描述）且包含关键词 → 不匹配（避免 "查看支付成功的订单" 误触发）
      */
     private fun isExactKeywordMatch(text: String, keyword: String): Boolean {
-        if (text.isBlank()) return false
-        if (text == keyword) return true
-        if (text.length <= keyword.length * 3 && text.contains(keyword)) {
-            // 额外检查：关键词后面不能跟"率"、"的"、"后"等使语义改变的字
-            val idx = text.indexOf(keyword)
-            val afterIdx = idx + keyword.length
-            if (afterIdx < text.length) {
-                val nextChar = text[afterIdx]
-                if (nextChar in "率的后了吗么呢页面记录") return false
-            }
-            return true
-        }
-        return false
+        return PaymentAccessibilityRecognition.isSuccessKeywordMatch(text, keyword)
     }
 
     /** 从金额文本中提取数值（如 "¥12.50" → 12.5） */
@@ -441,34 +562,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             allTexts.take(15)
         }
 
-        val today = java.time.LocalDate.now()
-
-        // 检查明确的过去时间标记
-        if (checkRange.any { it.contains("天前") || it.contains("月前") }) return false
-
-        // "昨天" 需更谨慎：只在它看起来是时间标签时才拦截（如 "昨天 14:30"）
-        val yesterdayTimePattern = Regex("""昨天\s*\d{1,2}:\d{2}""")
-        if (checkRange.any { yesterdayTimePattern.containsMatchIn(it) }) return false
-
-        // 检查 "X月X日" 格式
-        val datePattern = Regex("""(\d{1,2})月(\d{1,2})日""")
-        for (text in checkRange) {
-            val match = datePattern.find(text) ?: continue
-            val month = match.groupValues[1].toIntOrNull() ?: continue
-            val day = match.groupValues[2].toIntOrNull() ?: continue
-            if (month != today.monthValue || day != today.dayOfMonth) return false
-        }
-
-        // 检查 "YYYY-MM-DD" 或 "MM-DD" 格式
-        val dashDatePattern = Regex("""(\d{4})-(\d{2})-(\d{2})|(\d{2})-(\d{2})""")
-        for (text in checkRange) {
-            val match = dashDatePattern.find(text) ?: continue
-            val month = (match.groupValues[2].ifEmpty { match.groupValues[4] }).toIntOrNull() ?: continue
-            val day = (match.groupValues[3].ifEmpty { match.groupValues[5] }).toIntOrNull() ?: continue
-            if (month != today.monthValue || day != today.dayOfMonth) return false
-        }
-
-        return true
+        return PaymentAccessibilityRecognition.isRecentTextRange(checkRange, java.time.LocalDate.now())
     }
 
     /**

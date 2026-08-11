@@ -27,6 +27,11 @@ class SmsReceiverService : BroadcastReceiver() {
     @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
     @Inject lateinit var rulesManager: NotificationRulesManager
 
+    /** 缓存的支付特征 Regex + 对应的规则代际，避免每次 SMS 都重新编译 */
+    @Volatile
+    private var cachedPaymentRegex: Regex = NotificationMonitorService.PAYMENT_SIGNAL
+    private var cachedPaymentRegexGeneration: Int = -1
+
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
 
@@ -55,19 +60,24 @@ class SmsReceiverService : BroadcastReceiver() {
     }
 
     private suspend fun handleSms(sender: String, text: String) {
-        // 支付特征预筛：优先用云控规则，fallback 到静态 PAYMENT_SIGNAL
-        val paymentRegex = try {
-            Regex(rulesManager.getRules().nls.paymentSignalRegex)
-        } catch (e: Exception) {
-            NotificationMonitorService.PAYMENT_SIGNAL
+        // 支付特征预筛：缓存 Regex，仅在规则代际变化时重新编译
+        val currentGen = rulesManager.getRulesGeneration()
+        if (currentGen != cachedPaymentRegexGeneration) {
+            cachedPaymentRegex = try {
+                Regex(rulesManager.getRules().nls.paymentSignalRegex)
+            } catch (e: Exception) {
+                Timber.w(e, "SMS: invalid paymentSignalRegex, using PAYMENT_SIGNAL fallback")
+                NotificationMonitorService.PAYMENT_SIGNAL
+            }
+            cachedPaymentRegexGeneration = currentGen
         }
 
-        if (!paymentRegex.containsMatchIn(text)) {
-            appLogger.debug("SMS", "预筛不通过: sender=$sender")
+        if (!cachedPaymentRegex.containsMatchIn(text)) {
+            appLogger.debug("SMS", "预筛不通过: sender=$sender text=${text.take(40)}")
             return
         }
 
-        appLogger.info("SMS", "预筛通过,交给Processor: sender=$sender")
+        appLogger.info("SMS", "预筛通过,交给Processor: sender=$sender len=${text.length}")
 
         // 直接交给 Processor（AI + 后置按金额去重）
         notificationProcessor.process(
