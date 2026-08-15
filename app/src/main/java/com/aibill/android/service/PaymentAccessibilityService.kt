@@ -200,9 +200,14 @@ class PaymentAccessibilityService : AccessibilityService() {
         refreshRulesIfNeeded()
         if (packageName !in paymentApps) return
 
+        val eventTypeName = when (ev.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "STATE"
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "CONTENT"
+            else -> "OTHER(${ev.eventType})"
+        }
+
         when (ev.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                // 页面状态必须先更新；root 为空时仅跳过本次扫描，避免旧 retry 处理新页面。
                 val className = ev.className?.toString() ?: ""
                 val activity = if (isActivityClassName(className)) {
                     currentActivity[packageName] = className
@@ -215,30 +220,49 @@ class PaymentAccessibilityService : AccessibilityService() {
                 currentWindowId[packageName] = windowId
                 currentPageToken[packageName] = pageToken
                 pendingRetryTokens.removeIf { it != pageToken }
-                rootInActiveWindow?.takeIf { root ->
-                    PaymentAccessibilityRecognition.isRootForEvent(
-                        root.packageName?.toString(), root.windowId, packageName, windowId,
-                    )
-                }?.let { root ->
-                    processPaymentCheck(root, packageName, activity, windowId, isRetry = false)
+
+                val root = rootInActiveWindow
+                if (root == null) {
+                    appLogger.debug("A11Y_EVENT", "$eventTypeName pkg=$packageName class=${className.substringAfterLast('.')} root=NULL")
+                    return
                 }
+                if (!PaymentAccessibilityRecognition.isRootForEvent(
+                        root.packageName?.toString(), root.windowId, packageName, windowId,
+                    )) {
+                    appLogger.debug("A11Y_EVENT", "$eventTypeName pkg=$packageName class=${className.substringAfterLast('.')} root=MISMATCH(rootPkg=${root.packageName} rootWin=${root.windowId} evWin=$windowId)")
+                    return
+                }
+                processPaymentCheck(root, packageName, activity, windowId, isRetry = false)
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 val savedWindowId = currentWindowId[packageName] ?: -1
-                val root = rootInActiveWindow?.takeIf {
-                    PaymentAccessibilityRecognition.isRootForEvent(
-                        it.packageName?.toString(), it.windowId, packageName, savedWindowId,
-                    )
-                } ?: return
-                // CONTENT_CHANGED 防误触：只有在上一次 STATE_CHANGED 记录的 Activity
-                // 命中"可能的支付结果页"特征时才处理（参考反编译项目的 Activity 白名单策略）
-                val activity = currentActivity[packageName] ?: return
-                if (!isPotentialPaymentActivity(activity, packageName)) return
+                val root = rootInActiveWindow
+                if (root == null) {
+                    // CONTENT_CHANGED root为null很常见（频繁事件），不记日志避免爆量
+                    return
+                }
+                if (!PaymentAccessibilityRecognition.isRootForEvent(
+                        root.packageName?.toString(), root.windowId, packageName, savedWindowId,
+                    )) {
+                    return
+                }
+                val activity = currentActivity[packageName]
+                if (activity == null) {
+                    appLogger.debug("A11Y_EVENT", "CONTENT pkg=$packageName 无已知Activity，跳过")
+                    return
+                }
+                if (!isPotentialPaymentActivity(activity, packageName)) {
+                    // 非支付相关Activity的CONTENT_CHANGED，不记日志（太多）
+                    return
+                }
 
                 val pageToken = currentPageToken[packageName] ?: return
                 val now = System.currentTimeMillis()
                 val lastCheck = contentChangeThrottle[pageToken] ?: 0L
-                if (now - lastCheck < CONTENT_CHANGE_THROTTLE_MS) return
+                if (now - lastCheck < CONTENT_CHANGE_THROTTLE_MS) {
+                    // 节流中，不记日志
+                    return
+                }
                 contentChangeThrottle[pageToken] = now
                 processPaymentCheck(root, packageName, activity, savedWindowId, isRetry = false)
             }
