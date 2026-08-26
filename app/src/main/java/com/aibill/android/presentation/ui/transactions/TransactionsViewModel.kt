@@ -24,7 +24,6 @@ class TransactionsViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val transactionApi: com.aibill.android.data.remote.api.TransactionApi,
     private val categoryRepository: com.aibill.android.domain.repository.CategoryRepository,
-    private val statsRepository: com.aibill.android.domain.repository.StatsRepository,
 ) : ViewModel() {
 
     data class TransactionsUiState(
@@ -126,6 +125,7 @@ class TransactionsViewModel @Inject constructor(
                             hasMore = (currentPage * pageSize) < pageResult.total,
                         )
                     }
+                    loadPeriodSummary()
                 }
                 is Result.Error -> {
                     Timber.e("加载流水失败: ${result.message}")
@@ -249,24 +249,19 @@ class TransactionsViewModel @Inject constructor(
     }
 
     private fun loadPeriodSummary() {
-        viewModelScope.launch {
-            val state = _uiState.value
-            if (state.filterStartDate == null) {
-                _uiState.update { it.copy(periodExpense = 0, periodIncome = 0) }
-                return@launch
-            }
-            val start = java.time.LocalDate.parse(state.filterStartDate)
-            val ym = java.time.YearMonth.from(start)
-            when (val result = statsRepository.getSummary(ym.year, ym.monthValue)) {
-                is Result.Success -> {
-                    _uiState.update { it.copy(
-                        periodExpense = result.data.expense,
-                        periodIncome = result.data.income,
-                    ) }
-                }
-                else -> Unit
-            }
+        // 前端从已加载数据计算合计（不依赖后端summary接口，支持任意日期范围）
+        val state = _uiState.value
+        if (state.filterStartDate == null) {
+            _uiState.update { it.copy(periodExpense = 0, periodIncome = 0) }
+            return
         }
+        val expense = allTransactions
+            .filter { it.type == com.aibill.android.domain.model.TransactionType.EXPENSE }
+            .sumOf { it.amount }
+        val income = allTransactions
+            .filter { it.type == com.aibill.android.domain.model.TransactionType.INCOME }
+            .sumOf { it.amount }
+        _uiState.update { it.copy(periodExpense = expense, periodIncome = income) }
     }
 
     private fun loadAvailableTags() {

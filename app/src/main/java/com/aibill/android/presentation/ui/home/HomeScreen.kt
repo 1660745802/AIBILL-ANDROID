@@ -136,18 +136,18 @@ fun HomeScreen(
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
-                        start = 20.dp,
-                        end = 20.dp,
                         top = 20.dp,
                         bottom = 100.dp,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     item(key = "header") {
                         MonthlyExpenseHeader(
                             amount = uiState.monthlyExpense,
                             income = uiState.monthlyIncome,
-                            modifier = Modifier.clickable { onNavigateToStatistics() },
+                            modifier = Modifier
+                                .padding(horizontal = 20.dp)
+                                .padding(bottom = 16.dp)
+                                .clickable { onNavigateToStatistics() },
                         )
                     }
 
@@ -169,7 +169,7 @@ fun HomeScreen(
                             .filter { it.type == TransactionType.EXPENSE }
                             .sumOf { it.amount }
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
@@ -212,9 +212,6 @@ fun HomeScreen(
                             }
                         }
                     } else {
-                        item(key = "transactions_bg_start") {
-                            Spacer(modifier = Modifier.height(0.dp))
-                        }
                         items(
                             items = uiState.todayTransactions,
                             key = { it.clientId },
