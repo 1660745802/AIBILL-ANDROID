@@ -136,18 +136,18 @@ fun HomeScreen(
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
+                        start = 20.dp,
+                        end = 20.dp,
                         top = 20.dp,
                         bottom = 100.dp,
                     ),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     item(key = "header") {
                         MonthlyExpenseHeader(
                             amount = uiState.monthlyExpense,
                             income = uiState.monthlyIncome,
-                            modifier = Modifier
-                                .padding(horizontal = 20.dp)
-                                .padding(bottom = 16.dp)
-                                .clickable { onNavigateToStatistics() },
+                            modifier = Modifier.clickable { onNavigateToStatistics() },
                         )
                     }
 
@@ -169,7 +169,7 @@ fun HomeScreen(
                             .filter { it.type == TransactionType.EXPENSE }
                             .sumOf { it.amount }
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
@@ -195,7 +195,7 @@ fun HomeScreen(
                         }
                     }
 
-                    // 灰色背景区域开始（流水条目）
+                    // 流水条目（灰色背景占满剩余高度）
                     if (uiState.todayTransactions.isEmpty() && !uiState.isLoading) {
                         item(key = "empty") {
                             androidx.compose.foundation.layout.Box(
@@ -204,7 +204,7 @@ fun HomeScreen(
                                     .fillParentMaxHeight(0.5f)
                                     .background(
                                         MaterialTheme.colorScheme.surfaceContainerLow,
-                                        androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                                        androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
                                     ),
                                 contentAlignment = Alignment.Center,
                             ) {
@@ -216,14 +216,10 @@ fun HomeScreen(
                             items = uiState.todayTransactions,
                             key = { it.clientId },
                         ) { transaction ->
-                            androidx.compose.material3.Surface(
-                                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                            ) {
-                                TransactionItem(
-                                    transaction = transaction,
-                                    onClick = { transaction.id?.let { onNavigateToDetail(it) } },
-                                )
-                            }
+                            TransactionItem(
+                                transaction = transaction,
+                                onClick = { transaction.id?.let { onNavigateToDetail(it) } },
+                            )
                         }
                     }
                 }
