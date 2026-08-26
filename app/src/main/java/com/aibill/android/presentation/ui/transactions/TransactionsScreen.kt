@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -126,36 +127,77 @@ fun TransactionsScreen(
         containerColor = MaterialTheme.colorScheme.background,
     ) { innerPadding ->
         Column(modifier = modifier.fillMaxSize().padding(innerPadding)) {
-            // 月份选择器（和统计页风格统一）
-            val isCurrent = uiState.filterYear == java.time.LocalDate.now().year &&
-                uiState.filterMonth == java.time.LocalDate.now().monthValue
+            // 日期范围选择（快捷chip + 自定义范围）
+            var showDatePicker by remember { mutableStateOf(false) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.Center,
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(
-                    onClick = { viewModel.onMonthChanged(-1) },
-                    modifier = Modifier.size(32.dp),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "上月", modifier = Modifier.size(20.dp))
-                }
-                androidx.compose.material3.TextButton(
+                FilterChip(
+                    selected = uiState.filterDateLabel == "本月",
                     onClick = { viewModel.onJumpToCurrentMonth() },
-                ) {
-                    Text(
-                        text = if (isCurrent) "本月" else "${uiState.filterYear}年${uiState.filterMonth}月",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    label = { Text("本月") },
+                )
+                FilterChip(
+                    selected = uiState.filterDateLabel == "上月",
+                    onClick = {
+                        val ym = java.time.YearMonth.now().minusMonths(1)
+                        viewModel.onDateRangeSelected(
+                            ym.atDay(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                            ym.atEndOfMonth().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                        )
+                    },
+                    label = { Text("上月") },
+                )
+                FilterChip(
+                    selected = uiState.filterDateLabel != "本月" && uiState.filterDateLabel != "上月",
+                    onClick = { showDatePicker = true },
+                    label = {
+                        Text(
+                            if (uiState.filterDateLabel != "本月" && uiState.filterDateLabel != "上月")
+                                uiState.filterDateLabel
+                            else "自定义"
+                        )
+                    },
+                )
+                // 左右月切换箭头（快捷）
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(onClick = { viewModel.onMonthChanged(-1) }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "上月", modifier = Modifier.size(18.dp))
                 }
-                IconButton(
-                    onClick = { viewModel.onMonthChanged(1) },
-                    modifier = Modifier.size(32.dp),
+                IconButton(onClick = { viewModel.onMonthChanged(1) }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "下月", modifier = Modifier.size(18.dp))
+                }
+            }
+
+            // DateRangePicker Dialog
+            if (showDatePicker) {
+                val dateRangePickerState = rememberDateRangePickerState()
+                androidx.compose.material3.DatePickerDialog(
+                    onDismissRequest = { showDatePicker = false },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                val start = dateRangePickerState.selectedStartDateMillis
+                                val end = dateRangePickerState.selectedEndDateMillis
+                                if (start != null && end != null) {
+                                    viewModel.onDateRangeSelected(start, end)
+                                }
+                                showDatePicker = false
+                            },
+                        ) { Text("确定") }
+                    },
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+                    },
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "下月", modifier = Modifier.size(20.dp))
+                    androidx.compose.material3.DateRangePicker(
+                        state = dateRangePickerState,
+                        modifier = Modifier.height(500.dp),
+                    )
                 }
             }
 

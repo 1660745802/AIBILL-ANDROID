@@ -43,9 +43,10 @@ class TransactionsViewModel @Inject constructor(
         val availableTags: List<String> = emptyList(),
         /** 可选分类列表 */
         val categories: List<com.aibill.android.domain.model.Category> = emptyList(),
-        /** 日期筛选：当前查看的年月 */
-        val filterYear: Int = java.time.LocalDate.now().year,
-        val filterMonth: Int = java.time.LocalDate.now().monthValue,
+        /** 日期筛选 */
+        val filterStartDate: String = java.time.YearMonth.now().atDay(1).toString(),
+        val filterEndDate: String = java.time.YearMonth.now().atEndOfMonth().toString(),
+        val filterDateLabel: String = "本月",
     )
 
     sealed class UiEvent {
@@ -91,16 +92,12 @@ class TransactionsViewModel @Inject constructor(
             val typeFilter = _uiState.value.filterType.takeIf { it != "all" }
             val categoryFilter = _uiState.value.filterCategoryId
             val tagFilter = _uiState.value.filterTags.joinToString(",").ifEmpty { null }
-            // 日期范围：当前选中月份的首日和末日
             val state = _uiState.value
-            val yearMonth = java.time.YearMonth.of(state.filterYear, state.filterMonth)
-            val startDate = yearMonth.atDay(1).toString()
-            val endDate = yearMonth.atEndOfMonth().toString()
             when (val result = transactionRepository.getTransactions(
                 page = currentPage,
                 pageSize = pageSize,
-                startDate = startDate,
-                endDate = endDate,
+                startDate = state.filterStartDate,
+                endDate = state.filterEndDate,
                 type = typeFilter,
                 categoryId = categoryFilter,
                 keyword = keyword,
@@ -159,19 +156,39 @@ class TransactionsViewModel @Inject constructor(
 
     /** PR #27：切换类型筛选 */
     fun onMonthChanged(delta: Int) {
-        _uiState.update { state ->
-            var newYear = state.filterYear
-            var newMonth = state.filterMonth + delta
-            if (newMonth < 1) { newMonth = 12; newYear-- }
-            else if (newMonth > 12) { newMonth = 1; newYear++ }
-            state.copy(filterYear = newYear, filterMonth = newMonth)
-        }
+        val current = java.time.LocalDate.parse(_uiState.value.filterStartDate)
+        val newMonth = current.plusMonths(delta.toLong())
+        val ym = java.time.YearMonth.from(newMonth)
+        val label = if (ym == java.time.YearMonth.now()) "本月"
+            else if (ym == java.time.YearMonth.now().minusMonths(1)) "上月"
+            else "${ym.year}年${ym.monthValue}月"
+        _uiState.update { it.copy(
+            filterStartDate = ym.atDay(1).toString(),
+            filterEndDate = ym.atEndOfMonth().toString(),
+            filterDateLabel = label,
+        ) }
         loadTransactions(refresh = true)
     }
 
     fun onJumpToCurrentMonth() {
-        val now = java.time.LocalDate.now()
-        _uiState.update { it.copy(filterYear = now.year, filterMonth = now.monthValue) }
+        val ym = java.time.YearMonth.now()
+        _uiState.update { it.copy(
+            filterStartDate = ym.atDay(1).toString(),
+            filterEndDate = ym.atEndOfMonth().toString(),
+            filterDateLabel = "本月",
+        ) }
+        loadTransactions(refresh = true)
+    }
+
+    fun onDateRangeSelected(startMillis: Long, endMillis: Long) {
+        val start = java.time.Instant.ofEpochMilli(startMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val end = java.time.Instant.ofEpochMilli(endMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val label = "${start.monthValue}.${start.dayOfMonth}-${end.monthValue}.${end.dayOfMonth}"
+        _uiState.update { it.copy(
+            filterStartDate = start.toString(),
+            filterEndDate = end.toString(),
+            filterDateLabel = label,
+        ) }
         loadTransactions(refresh = true)
     }
 
@@ -179,9 +196,16 @@ class TransactionsViewModel @Inject constructor(
      * 从外部设置初始日期范围（统计页跳转时传入）
      */
     fun setDateRange(startDate: String?, endDate: String?) {
-        if (startDate != null) {
-            val date = java.time.LocalDate.parse(startDate)
-            _uiState.update { it.copy(filterYear = date.year, filterMonth = date.monthValue) }
+        if (startDate != null && endDate != null) {
+            val start = java.time.LocalDate.parse(startDate)
+            val ym = java.time.YearMonth.from(start)
+            val label = if (ym == java.time.YearMonth.now()) "本月"
+                else "${ym.year}年${ym.monthValue}月"
+            _uiState.update { it.copy(
+                filterStartDate = startDate,
+                filterEndDate = endDate,
+                filterDateLabel = label,
+            ) }
         }
     }
 
