@@ -137,6 +137,11 @@ fun TransactionsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 FilterChip(
+                    selected = uiState.filterDateLabel == "全部",
+                    onClick = { viewModel.clearDateFilter() },
+                    label = { Text("全部") },
+                )
+                FilterChip(
                     selected = uiState.filterDateLabel == "本月",
                     onClick = { viewModel.onJumpToCurrentMonth() },
                     label = { Text("本月") },
@@ -153,24 +158,16 @@ fun TransactionsScreen(
                     label = { Text("上月") },
                 )
                 FilterChip(
-                    selected = uiState.filterDateLabel != "本月" && uiState.filterDateLabel != "上月",
+                    selected = uiState.filterDateLabel != "全部" && uiState.filterDateLabel != "本月" && uiState.filterDateLabel != "上月",
                     onClick = { showDatePicker = true },
                     label = {
                         Text(
-                            if (uiState.filterDateLabel != "本月" && uiState.filterDateLabel != "上月")
+                            if (uiState.filterDateLabel != "全部" && uiState.filterDateLabel != "本月" && uiState.filterDateLabel != "上月")
                                 uiState.filterDateLabel
                             else "自定义"
                         )
                     },
                 )
-                // 左右月切换箭头（快捷）
-                Spacer(modifier = Modifier.weight(1f))
-                IconButton(onClick = { viewModel.onMonthChanged(-1) }, modifier = Modifier.size(28.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "上月", modifier = Modifier.size(18.dp))
-                }
-                IconButton(onClick = { viewModel.onMonthChanged(1) }, modifier = Modifier.size(28.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "下月", modifier = Modifier.size(18.dp))
-                }
             }
 
             // DateRangePicker Dialog
@@ -199,19 +196,6 @@ fun TransactionsScreen(
                         modifier = Modifier.height(500.dp),
                     )
                 }
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, top = 0.dp, end = 12.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SearchInputBar(
-                    keyword = uiState.searchKeyword,
-                    onKeywordChanged = viewModel::onSearchChanged,
-                    modifier = Modifier.weight(1f),
-                )
             }
 
             Row(
@@ -271,15 +255,10 @@ fun TransactionsScreen(
                 }
             }
 
-            // 筛选合计（有日期筛选时显示当月支出/收入汇总）
-            run {
-                val allItems = uiState.transactions.values.flatten()
-                val expenseTotal = allItems
-                    .filter { it.type == com.aibill.android.domain.model.TransactionType.EXPENSE }
-                    .sumOf { it.amount }
-                val incomeTotal = allItems
-                    .filter { it.type == com.aibill.android.domain.model.TransactionType.INCOME }
-                    .sumOf { it.amount }
+            // 筛选合计（只在选了日期时显示）
+            if (uiState.filterStartDate != null) {
+                val expenseTotal = uiState.periodExpense
+                val incomeTotal = uiState.periodIncome
                 if (expenseTotal > 0 || incomeTotal > 0) {
                     Row(
                         modifier = Modifier

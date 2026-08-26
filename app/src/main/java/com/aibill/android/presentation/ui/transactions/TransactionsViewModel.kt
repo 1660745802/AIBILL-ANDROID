@@ -24,6 +24,7 @@ class TransactionsViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val transactionApi: com.aibill.android.data.remote.api.TransactionApi,
     private val categoryRepository: com.aibill.android.domain.repository.CategoryRepository,
+    private val statsRepository: com.aibill.android.domain.repository.StatsRepository,
 ) : ViewModel() {
 
     data class TransactionsUiState(
@@ -43,10 +44,13 @@ class TransactionsViewModel @Inject constructor(
         val availableTags: List<String> = emptyList(),
         /** 可选分类列表 */
         val categories: List<com.aibill.android.domain.model.Category> = emptyList(),
-        /** 日期筛选 */
-        val filterStartDate: String = java.time.YearMonth.now().atDay(1).toString(),
-        val filterEndDate: String = java.time.YearMonth.now().atEndOfMonth().toString(),
-        val filterDateLabel: String = "本月",
+        /** 日期筛选（null表示不限） */
+        val filterStartDate: String? = null,
+        val filterEndDate: String? = null,
+        val filterDateLabel: String = "全部",
+        /** 当前筛选范围的合计（从stats API获取，准确） */
+        val periodExpense: Int = 0,
+        val periodIncome: Int = 0,
     )
 
     sealed class UiEvent {
@@ -77,6 +81,7 @@ class TransactionsViewModel @Inject constructor(
         if (refresh) {
             currentPage = 1
             allTransactions.clear()
+            loadPeriodSummary()
         }
 
         viewModelScope.launch {
@@ -156,8 +161,10 @@ class TransactionsViewModel @Inject constructor(
 
     /** PR #27：切换类型筛选 */
     fun onMonthChanged(delta: Int) {
-        val current = java.time.LocalDate.parse(_uiState.value.filterStartDate)
-        val newMonth = current.plusMonths(delta.toLong())
+        val currentStart = _uiState.value.filterStartDate
+        val base = if (currentStart != null) java.time.LocalDate.parse(currentStart)
+            else java.time.LocalDate.now().withDayOfMonth(1)
+        val newMonth = base.plusMonths(delta.toLong())
         val ym = java.time.YearMonth.from(newMonth)
         val label = if (ym == java.time.YearMonth.now()) "本月"
             else if (ym == java.time.YearMonth.now().minusMonths(1)) "上月"
@@ -176,6 +183,15 @@ class TransactionsViewModel @Inject constructor(
             filterStartDate = ym.atDay(1).toString(),
             filterEndDate = ym.atEndOfMonth().toString(),
             filterDateLabel = "本月",
+        ) }
+        loadTransactions(refresh = true)
+    }
+
+    fun clearDateFilter() {
+        _uiState.update { it.copy(
+            filterStartDate = null,
+            filterEndDate = null,
+            filterDateLabel = "全部",
         ) }
         loadTransactions(refresh = true)
     }
@@ -230,6 +246,27 @@ class TransactionsViewModel @Inject constructor(
             }
         }
         loadTransactions(refresh = true)
+    }
+
+    private fun loadPeriodSummary() {
+        viewModelScope.launch {
+            val state = _uiState.value
+            if (state.filterStartDate == null) {
+                _uiState.update { it.copy(periodExpense = 0, periodIncome = 0) }
+                return@launch
+            }
+            val start = java.time.LocalDate.parse(state.filterStartDate)
+            val ym = java.time.YearMonth.from(start)
+            when (val result = statsRepository.getSummary(ym.year, ym.monthValue)) {
+                is Result.Success -> {
+                    _uiState.update { it.copy(
+                        periodExpense = result.data.expense,
+                        periodIncome = result.data.income,
+                    ) }
+                }
+                else -> Unit
+            }
+        }
     }
 
     private fun loadAvailableTags() {
