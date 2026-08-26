@@ -26,11 +26,8 @@ import com.aibill.android.presentation.ui.auth.LoginScreen
 import com.aibill.android.presentation.ui.auth.RegisterScreen
 import com.aibill.android.presentation.ui.auth.ServerConfigScreen
 import com.aibill.android.presentation.ui.account.AccountManageScreen
-import com.aibill.android.presentation.ui.budget.BudgetScreen
 import com.aibill.android.presentation.ui.category.CategoryManageScreen
-import com.aibill.android.presentation.ui.chat.AiChatScreen
 import com.aibill.android.presentation.ui.home.HomeScreen
-import com.aibill.android.presentation.ui.import_.CsvImportScreen
 import com.aibill.android.presentation.ui.notification.NotificationCenterScreen
 import com.aibill.android.presentation.ui.profile.ProfileScreen
 import com.aibill.android.presentation.ui.record.ManualRecordScreen
@@ -38,7 +35,6 @@ import com.aibill.android.presentation.ui.recurring.RecurringScreen
 import com.aibill.android.presentation.ui.settings.PermissionGuideScreen
 import com.aibill.android.presentation.ui.settings.SettingsScreen
 import com.aibill.android.presentation.ui.statistics.StatisticsScreen
-import com.aibill.android.presentation.ui.template.TemplateScreen
 import com.aibill.android.presentation.ui.transactions.TransactionDetailScreen
 import com.aibill.android.presentation.ui.transactions.TransactionsScreen
 import com.aibill.android.presentation.ui.trash.TrashScreen
@@ -209,10 +205,7 @@ fun AiBillNavHost(
             }
             composable<Route.Profile> {
                 ProfileScreen(
-                    onNavigateToAiChat = { navController.navigate(Route.AiChat) },
-                    onNavigateToBudget = { navController.navigate(Route.Budget) },
                     onNavigateToSettings = { navController.navigate(Route.Settings) },
-                    onNavigateToExport = { navController.navigate(Route.CsvImport) },
                     onNavigateToNotification = {
                         navController.navigate(Route.PermissionGuide)
                     },
@@ -224,9 +217,6 @@ fun AiBillNavHost(
                     },
                     onNavigateToTrash = {
                         navController.navigate(Route.Trash)
-                    },
-                    onNavigateToTemplate = {
-                        navController.navigate(Route.Template)
                     },
                     onLogout = {
                         navController.navigate(Route.Login) {
@@ -247,29 +237,9 @@ fun AiBillNavHost(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
-            composable<Route.Template> {
-                TemplateScreen(
-                    onNavigateBack = { navController.popBackStack() },
-                    // P1#28：传递 templateId 给 ManualRecord，触发预填
-                    onNavigateToRecord = { template ->
-                        navController.navigate(Route.ManualRecord(templateId = template.id))
-                    }
-                )
-            }
-            composable<Route.AiChat> {
-                AiChatScreen()
-            }
-            composable<Route.Budget> {
-                BudgetScreen()
-            }
             composable<Route.NotificationCenter> {
                 NotificationCenterScreen(
                     onBack = { navController.popBackStack() }
-                )
-            }
-            composable<Route.CsvImport> {
-                CsvImportScreen(
-                    onNavigateBack = { navController.popBackStack() }
                 )
             }
             composable<Route.Settings> {

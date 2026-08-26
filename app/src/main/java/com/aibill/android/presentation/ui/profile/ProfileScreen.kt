@@ -18,16 +18,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Category
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.AlertDialog
@@ -99,14 +95,10 @@ private val GradientEnd = Color(0xFF4DB6AC)
 @Composable
 fun ProfileScreen(
     onNavigateToSettings: () -> Unit = {},
-    onNavigateToAiChat: () -> Unit = {},
-    onNavigateToBudget: () -> Unit = {},
-    onNavigateToExport: () -> Unit = {},
     onNavigateToNotification: () -> Unit = {},
     onNavigateToCategoryManage: () -> Unit = {},
     onNavigateToAccountManage: () -> Unit = {},
     onNavigateToTrash: () -> Unit = {},
-    onNavigateToTemplate: () -> Unit = {},
     onLogout: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: ProfileViewModel = hiltViewModel(),
@@ -140,34 +132,6 @@ fun ProfileScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item { UserHeaderCard(displayName = viewModel.displayName.collectAsStateWithLifecycle().value) }
-        item { SectionLabel("功能") }
-        item {
-            MenuCard {
-                ProfileMenuItem(
-                    icon = Icons.Default.Chat, title = "AI 对话",
-                    subtitle = "和 AI 聊聊你的消费习惯",
-                    onClick = onNavigateToAiChat,
-                )
-                MenuDivider()
-                ProfileMenuItem(
-                    icon = Icons.Default.Savings, title = "预算管理",
-                    subtitle = "设置月度预算，控制开支",
-                    onClick = onNavigateToBudget,
-                )
-                MenuDivider()
-                ProfileMenuItem(
-                    icon = Icons.Default.Download, title = "数据导出",
-                    subtitle = "导出 CSV 格式账单",
-                    onClick = onNavigateToExport,
-                )
-                MenuDivider()
-                ProfileMenuItem(
-                    icon = Icons.AutoMirrored.Filled.List, title = "记账模板",
-                    subtitle = "保存常用记账，一键复用",
-                    onClick = onNavigateToTemplate,
-                )
-            }
-        }
         item { SectionLabel("管理") }
         item {
             MenuCard {
@@ -195,18 +159,17 @@ fun ProfileScreen(
             MenuCard {
                 ProfileMenuItem(
                     icon = Icons.Default.Notifications, title = "通知设置",
-                    subtitle = "通知监听、弹窗、后台保活",
+                    subtitle = "自动记账权限与后台保活",
                     onClick = onNavigateToNotification,
                 )
                 MenuDivider()
                 ProfileMenuItem(
                     icon = Icons.Default.Settings, title = "通用设置",
-                    subtitle = "主题外观、深色模式、隐私安全",
+                    subtitle = "主题、隐私、服务器",
                     onClick = onNavigateToSettings,
                 )
             }
         }
-        item { SectionLabel("其他") }
         item {
             MenuCard {
                 ProfileMenuItem(

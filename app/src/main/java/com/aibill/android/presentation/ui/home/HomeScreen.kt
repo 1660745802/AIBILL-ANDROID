@@ -144,7 +144,6 @@ fun HomeScreen(
                     item(key = "header") {
                         MonthlyExpenseHeader(
                             amount = uiState.monthlyExpense,
-                            budget = uiState.monthlyBudget,
                             income = uiState.monthlyIncome,
                             modifier = Modifier.clickable { onNavigateToStatistics() },
                         )

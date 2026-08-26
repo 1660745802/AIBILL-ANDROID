@@ -2,7 +2,6 @@ package com.aibill.android.presentation.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aibill.android.domain.repository.BudgetRepository
 import com.aibill.android.domain.repository.StatsRepository
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
@@ -35,7 +34,6 @@ class HomeViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val accountRepository: AccountRepository,
     private val statsRepository: StatsRepository,
-    private val budgetRepository: BudgetRepository,
     private val notificationRecordDao: com.aibill.android.data.local.dao.NotificationRecordDao,
     private val appLogger: com.aibill.android.util.AppLogger,
 ) : ViewModel() {
@@ -45,7 +43,6 @@ class HomeViewModel @Inject constructor(
         val isRefreshing: Boolean = false,
         val monthlyExpense: Int = 0,
         val monthlyIncome: Int = 0,
-        val monthlyBudget: Int? = null,
         val inputText: String = "", // 保留：外部 Intent 预填用
         val todayTransactions: List<Transaction> = emptyList(),
         val pendingNotificationCount: Int = 0,
@@ -53,7 +50,6 @@ class HomeViewModel @Inject constructor(
         val isSyncing: Boolean = false,
         val categoriesByType: Map<String, List<Category>> = emptyMap(),
         val availableTags: List<String> = emptyList(),
-        /** 最近7天日支出趋势 (dayLabel, amountCents) */
         val weeklyTrend: List<Pair<String, Int>> = emptyList(),
         val error: String? = null,
     )
@@ -169,8 +165,7 @@ class HomeViewModel @Inject constructor(
                         _uiEvent.emit(UiEvent.ShowError("加载今日流水失败，请检查网络"))
                     }
                 }
-                val deferred5 = async { loadMonthlyBudget() }
-                awaitAll(deferred1, deferred2, deferred3, deferred4, deferred5)
+                awaitAll(deferred1, deferred2, deferred3, deferred4)
                 loadAvailableTags()
                 loadWeeklyTrend()
             } finally {
@@ -244,26 +239,10 @@ class HomeViewModel @Inject constructor(
      * 加载月度总预算（categoryId == 0 表示总预算）
      * 用于首页展示"支出 / 预算 xxx 元"进度
      */
-    private suspend fun loadMonthlyBudget() {
-        val now = LocalDate.now()
-        when (val result = budgetRepository.getBudgets(now.year, now.monthValue)) {
-            is Result.Success -> {
-                val totalBudget = result.data.firstOrNull { it.categoryId == 0 }
-                _uiState.update { it.copy(monthlyBudget = totalBudget?.amount) }
-            }
-            is Result.Error -> {
-                Timber.e("加载月度预算失败: ${result.message}")
-                // 预算加载失败不影响主流程，静默处理
-            }
-            is Result.Loading -> Unit
-        }
-    }
-
     private fun refreshData() {
         viewModelScope.launch {
             launch { loadTodayTransactions() }
             launch { loadMonthlyExpense() }
-            launch { loadMonthlyBudget() }
         }
     }
 }
