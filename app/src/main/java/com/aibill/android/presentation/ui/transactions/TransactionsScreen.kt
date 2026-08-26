@@ -132,7 +132,8 @@ fun TransactionsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -202,7 +203,8 @@ fun TransactionsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(start = 20.dp, top = 6.dp, end = 12.dp, bottom = 4.dp),
+                    .padding(horizontal = 20.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 FilterChip(
@@ -210,21 +212,17 @@ fun TransactionsScreen(
                     onClick = { viewModel.onFilterTypeChanged("all") },
                     label = { Text("全部") },
                 )
-                Spacer(modifier = Modifier.width(4.dp))
                 FilterChip(
                     selected = uiState.filterType == "expense",
                     onClick = { viewModel.onFilterTypeChanged("expense") },
                     label = { Text("支出") },
                 )
-                Spacer(modifier = Modifier.width(4.dp))
                 FilterChip(
                     selected = uiState.filterType == "income",
                     onClick = { viewModel.onFilterTypeChanged("income") },
                     label = { Text("收入") },
                 )
-                // 分类筛选下拉
                 if (uiState.categories.isNotEmpty()) {
-                    Spacer(modifier = Modifier.width(8.dp))
                     CategoryFilterDropdown(
                         categories = uiState.categories,
                         selectedCategoryId = uiState.filterCategoryId,
