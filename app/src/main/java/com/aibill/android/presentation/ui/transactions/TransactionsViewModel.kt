@@ -97,9 +97,12 @@ class TransactionsViewModel @Inject constructor(
             val categoryFilter = _uiState.value.filterCategoryId
             val tagFilter = _uiState.value.filterTags.joinToString(",").ifEmpty { null }
             val state = _uiState.value
+            // 有任何筛选条件时一次性加载完（合计准确），无筛选时才分页
+            val hasFilter = state.filterStartDate != null || typeFilter != null || categoryFilter != null || tagFilter != null
+            val effectivePageSize = if (hasFilter) 9999 else pageSize
             when (val result = transactionRepository.getTransactions(
                 page = currentPage,
-                pageSize = pageSize,
+                pageSize = effectivePageSize,
                 startDate = state.filterStartDate,
                 endDate = state.filterEndDate,
                 type = typeFilter,
