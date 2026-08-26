@@ -1,5 +1,6 @@
 package com.aibill.android.presentation.ui.home
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -193,17 +195,38 @@ fun HomeScreen(
                         }
                     }
 
+                    // 灰色背景区域开始（流水条目）
                     if (uiState.todayTransactions.isEmpty() && !uiState.isLoading) {
-                        item(key = "empty") { EmptyTodayCard() }
+                        item(key = "empty") {
+                            androidx.compose.foundation.layout.Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillParentMaxHeight(0.5f)
+                                    .background(
+                                        MaterialTheme.colorScheme.surfaceContainerLow,
+                                        androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                EmptyTodayCard()
+                            }
+                        }
                     } else {
+                        item(key = "transactions_bg_start") {
+                            Spacer(modifier = Modifier.height(0.dp))
+                        }
                         items(
                             items = uiState.todayTransactions,
                             key = { it.clientId },
                         ) { transaction ->
-                            TransactionItem(
-                                transaction = transaction,
-                                onClick = { transaction.id?.let { onNavigateToDetail(it) } },
-                            )
+                            androidx.compose.material3.Surface(
+                                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            ) {
+                                TransactionItem(
+                                    transaction = transaction,
+                                    onClick = { transaction.id?.let { onNavigateToDetail(it) } },
+                                )
+                            }
                         }
                     }
                 }
