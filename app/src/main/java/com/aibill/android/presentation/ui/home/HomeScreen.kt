@@ -150,15 +150,6 @@ fun HomeScreen(
                         )
                     }
 
-                    if (uiState.weeklyTrend.isNotEmpty()) {
-                        item(key = "mini_trend") {
-                            MiniTrendChart(
-                                trendData = uiState.weeklyTrend,
-                                modifier = Modifier.clickable { onNavigateToStatistics() },
-                            )
-                        }
-                    }
-
                     if (uiState.pendingSyncCount > 0) {
                         item(key = "pending_sync") {
                             PendingSyncChip(

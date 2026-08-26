@@ -33,16 +33,19 @@ class TransactionsViewModel @Inject constructor(
         val error: String? = null,
         val searchKeyword: String = "",
         val isRefreshing: Boolean = false,
-        /** PR #27：流水类型筛选 (all/expense/income)，按 PRD §5.2.2 多维度筛选 */
+        /** 流水类型筛选 (all/expense/income) */
         val filterType: String = "all",
-        /** 按分类筛选（从统计页点击分类跳转时使用） */
+        /** 按分类筛选 */
         val filterCategoryId: Int? = null,
         /** 标签筛选 */
         val filterTags: List<String> = emptyList(),
         /** 可选标签列表 */
         val availableTags: List<String> = emptyList(),
-        /** 可选分类列表（用于分类筛选下拉） */
+        /** 可选分类列表 */
         val categories: List<com.aibill.android.domain.model.Category> = emptyList(),
+        /** 日期筛选：当前查看的年月 */
+        val filterYear: Int = java.time.LocalDate.now().year,
+        val filterMonth: Int = java.time.LocalDate.now().monthValue,
     )
 
     sealed class UiEvent {
@@ -85,13 +88,19 @@ class TransactionsViewModel @Inject constructor(
             }
 
             val keyword = _uiState.value.searchKeyword.ifBlank { null }
-            // PR #27：透传 type 筛选给 Repository，后端按 type 过滤
             val typeFilter = _uiState.value.filterType.takeIf { it != "all" }
             val categoryFilter = _uiState.value.filterCategoryId
             val tagFilter = _uiState.value.filterTags.joinToString(",").ifEmpty { null }
+            // 日期范围：当前选中月份的首日和末日
+            val state = _uiState.value
+            val yearMonth = java.time.YearMonth.of(state.filterYear, state.filterMonth)
+            val startDate = yearMonth.atDay(1).toString()
+            val endDate = yearMonth.atEndOfMonth().toString()
             when (val result = transactionRepository.getTransactions(
                 page = currentPage,
                 pageSize = pageSize,
+                startDate = startDate,
+                endDate = endDate,
                 type = typeFilter,
                 categoryId = categoryFilter,
                 keyword = keyword,
@@ -149,6 +158,33 @@ class TransactionsViewModel @Inject constructor(
     }
 
     /** PR #27：切换类型筛选 */
+    fun onMonthChanged(delta: Int) {
+        _uiState.update { state ->
+            var newYear = state.filterYear
+            var newMonth = state.filterMonth + delta
+            if (newMonth < 1) { newMonth = 12; newYear-- }
+            else if (newMonth > 12) { newMonth = 1; newYear++ }
+            state.copy(filterYear = newYear, filterMonth = newMonth)
+        }
+        loadTransactions(refresh = true)
+    }
+
+    fun onJumpToCurrentMonth() {
+        val now = java.time.LocalDate.now()
+        _uiState.update { it.copy(filterYear = now.year, filterMonth = now.monthValue) }
+        loadTransactions(refresh = true)
+    }
+
+    /**
+     * 从外部设置初始日期范围（统计页跳转时传入）
+     */
+    fun setDateRange(startDate: String?, endDate: String?) {
+        if (startDate != null) {
+            val date = java.time.LocalDate.parse(startDate)
+            _uiState.update { it.copy(filterYear = date.year, filterMonth = date.monthValue) }
+        }
+    }
+
     fun onFilterTypeChanged(type: String) {
         _uiState.update { it.copy(filterType = type) }
         loadTransactions(refresh = true)

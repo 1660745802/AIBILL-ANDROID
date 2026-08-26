@@ -21,6 +21,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -29,6 +31,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -47,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -58,12 +62,17 @@ import com.aibill.android.domain.model.Transaction
 fun TransactionsScreen(
     initialCategoryId: Int? = null,
     initialType: String? = null,
+    initialStartDate: String? = null,
+    initialEndDate: String? = null,
     onNavigateToDetail: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: TransactionsViewModel = hiltViewModel(),
 ) {
     // 如果有初始分类筛选，设置到 ViewModel
-    androidx.compose.runtime.LaunchedEffect(initialCategoryId, initialType) {
+    androidx.compose.runtime.LaunchedEffect(initialCategoryId, initialType, initialStartDate) {
+        if (initialStartDate != null) {
+            viewModel.setDateRange(initialStartDate, initialEndDate)
+        }
         if (initialCategoryId != null) {
             viewModel.setCategoryFilter(initialCategoryId)
         }
@@ -117,13 +126,45 @@ fun TransactionsScreen(
         containerColor = MaterialTheme.colorScheme.background,
     ) { innerPadding ->
         Column(modifier = modifier.fillMaxSize().padding(innerPadding)) {
+            // 月份选择器（和统计页风格统一）
+            val isCurrent = uiState.filterYear == java.time.LocalDate.now().year &&
+                uiState.filterMonth == java.time.LocalDate.now().monthValue
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 20.dp, top = 12.dp, end = 12.dp, bottom = 6.dp),
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // PR #27：搜索框 + 类型过滤 chip（PRD §5.2.2 多维度筛选）
+                IconButton(
+                    onClick = { viewModel.onMonthChanged(-1) },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "上月", modifier = Modifier.size(20.dp))
+                }
+                androidx.compose.material3.TextButton(
+                    onClick = { viewModel.onJumpToCurrentMonth() },
+                ) {
+                    Text(
+                        text = if (isCurrent) "本月" else "${uiState.filterYear}年${uiState.filterMonth}月",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                IconButton(
+                    onClick = { viewModel.onMonthChanged(1) },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "下月", modifier = Modifier.size(20.dp))
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, top = 0.dp, end = 12.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 SearchInputBar(
                     keyword = uiState.searchKeyword,
                     onKeywordChanged = viewModel::onSearchChanged,
@@ -184,6 +225,40 @@ fun TransactionsScreen(
                             },
                             label = { Text("#$tag") },
                         )
+                    }
+                }
+            }
+
+            // 筛选合计（有日期筛选时显示当月支出/收入汇总）
+            run {
+                val allItems = uiState.transactions.values.flatten()
+                val expenseTotal = allItems
+                    .filter { it.type == com.aibill.android.domain.model.TransactionType.EXPENSE }
+                    .sumOf { it.amount }
+                val incomeTotal = allItems
+                    .filter { it.type == com.aibill.android.domain.model.TransactionType.INCOME }
+                    .sumOf { it.amount }
+                if (expenseTotal > 0 || incomeTotal > 0) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        if (expenseTotal > 0) {
+                            Text(
+                                text = "支出 ¥${"%.2f".format(expenseTotal / 100.0)}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = com.aibill.android.presentation.theme.ExpenseColor,
+                            )
+                        }
+                        if (incomeTotal > 0) {
+                            Text(
+                                text = "收入 ¥${"%.2f".format(incomeTotal / 100.0)}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = com.aibill.android.presentation.theme.IncomeColor,
+                            )
+                        }
                     }
                 }
             }

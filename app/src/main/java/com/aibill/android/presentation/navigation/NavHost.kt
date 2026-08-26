@@ -183,6 +183,8 @@ fun AiBillNavHost(
                 TransactionsScreen(
                     initialCategoryId = route.categoryId,
                     initialType = route.type,
+                    initialStartDate = route.startDate,
+                    initialEndDate = route.endDate,
                     onNavigateToDetail = { id ->
                         navController.navigate(Route.TransactionDetail(id))
                     }
@@ -190,8 +192,14 @@ fun AiBillNavHost(
             }
             composable<Route.Statistics> {
                 StatisticsScreen(
-                    onNavigateToCategoryTransactions = { categoryId, type ->
-                        navController.navigate(Route.Transactions(categoryId = categoryId, type = type)) {
+                    onNavigateToCategoryTransactions = { categoryId, type, year, month ->
+                        val ym = java.time.YearMonth.of(year, month)
+                        navController.navigate(Route.Transactions(
+                            categoryId = categoryId,
+                            type = type,
+                            startDate = ym.atDay(1).toString(),
+                            endDate = ym.atEndOfMonth().toString(),
+                        )) {
                             popUpTo(Route.Home) { saveState = true }
                             launchSingleTop = true
                             restoreState = false

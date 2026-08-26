@@ -42,7 +42,7 @@ import com.aibill.android.presentation.theme.SecondaryButton
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatisticsScreen(
-    onNavigateToCategoryTransactions: (Int, String) -> Unit = { _, _ -> },
+    onNavigateToCategoryTransactions: (Int, String, Int, Int) -> Unit = { _, _, _, _ -> },
     modifier: Modifier = Modifier,
     viewModel: StatisticsViewModel = hiltViewModel(),
 ) {
@@ -193,7 +193,7 @@ fun StatisticsScreen(
                             category = category,
                             selectedTab = state.selectedTab,
                             onClick = {
-                                category.categoryId?.let { onNavigateToCategoryTransactions(it, state.selectedTab) }
+                                category.categoryId?.let { onNavigateToCategoryTransactions(it, state.selectedTab, state.year, state.month) }
                             },
                         )
                     }
