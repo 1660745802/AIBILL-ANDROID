@@ -215,9 +215,9 @@ class NotificationMonitorService : NotificationListenerService() {
             return
         }
 
-        // 排除营销/广告/订购类短信（含金额关键词但不是真实账务）
-        if (packageName in smsPackages && isLikelySpamSms(fullText)) {
-            appLogger.debug("NLS", "垃圾短信: pkg=$packageName text=${fullText.take(50)}")
+        // 排除营销/广告/优惠券推送（含金额关键词但不是真实账务）——所有渠道生效
+        if (isLikelySpamSms(fullText)) {
+            appLogger.debug("NLS", "营销推送拦截: pkg=$packageName text=${fullText.take(50)}")
             return
         }
 
