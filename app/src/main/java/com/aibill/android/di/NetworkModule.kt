@@ -118,4 +118,20 @@ object NetworkModule {
     @Singleton
     fun provideNotificationRulesApi(retrofit: Retrofit): NotificationRulesApi =
         retrofit.create(NotificationRulesApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideGithubReleaseApi(moshi: Moshi): com.aibill.android.data.remote.api.GithubReleaseApi {
+        // 独立 Retrofit，固定 baseUrl 到 GitHub API（不经 ServerUrlInterceptor 重写）
+        val client = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+        return Retrofit.Builder()
+            .baseUrl("https://api.github.com/")
+            .client(client)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(com.aibill.android.data.remote.api.GithubReleaseApi::class.java)
+    }
 }

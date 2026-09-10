@@ -10,6 +10,7 @@ import com.aibill.android.service.A11yHealthCheckWorker
 import com.aibill.android.service.NotificationRulesManager
 import com.aibill.android.service.RecurringWorker
 import com.aibill.android.service.RulesSyncWorker
+import com.aibill.android.service.UpdateCheckWorker
 import com.aibill.android.util.NetworkMonitor
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -51,6 +52,7 @@ class AiBillApp : Application(), Configuration.Provider {
         NlsHealthCheckWorker.schedule(this)
         A11yHealthCheckWorker.schedule(this)
         RulesSyncWorker.schedule(this)
+        UpdateCheckWorker.schedule(this)
     }
 
     private val applicationScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
