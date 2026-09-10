@@ -140,7 +140,6 @@ class NotificationActionReceiver : BroadcastReceiver() {
             source = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
             type = record.parsedType ?: "expense",
             privacyMode = false,
-            autoDismissMs = 3000L,
         )
     }
 
@@ -202,7 +201,6 @@ class NotificationActionReceiver : BroadcastReceiver() {
             description = description,
             source = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
             type = record.parsedType ?: "expense",
-            autoDismissMs = 3000L,
         )
     }
 }

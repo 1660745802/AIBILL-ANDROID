@@ -25,8 +25,6 @@ object NotificationHelper {
 
     private const val CHANNEL_ID = "aibill_auto_record"
     private const val CHANNEL_NAME = "自动记账"
-    // PR #40：PRD §4.3 规定 10 秒后自动收起，避免 heads-up 长时间霸屏
-    private const val AUTO_DISMISS_DELAY_MS = 10_000L
 
     /**
      * 创建通知渠道（Android O+）
@@ -360,8 +358,9 @@ object NotificationHelper {
 
         if (hasActions) {
             // Heads-up style with actions
+            // 不设 setTimeoutAfter：Heads-up 由系统自动收起到通知栏，
+            // 但通知本身保留，用户可稍后撤销/查看，不会"还没看就没了"
             builder.setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setTimeoutAfter(autoDismissMs ?: 30_000L)
 
             // 撤销 Action
             val undoIntent = Intent(context, AutoRecordActionReceiver::class.java).apply {
