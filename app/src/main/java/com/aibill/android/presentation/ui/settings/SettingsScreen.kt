@@ -205,7 +205,7 @@ fun SettingsScreen(
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     SettingsActionRow(
                         title = "检查更新",
-                        subtitle = "当前版本 ${com.aibill.android.BuildConfig.VERSION_NAME}",
+                        subtitle = "当前 ${com.aibill.android.BuildConfig.VERSION_NAME}，点击下载最新版",
                         onClick = { viewModel.checkUpdate(context) }
                     )
                 }

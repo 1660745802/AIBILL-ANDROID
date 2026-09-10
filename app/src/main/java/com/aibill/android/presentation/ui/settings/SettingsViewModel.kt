@@ -169,13 +169,13 @@ class SettingsViewModel @Inject constructor(
 
     fun checkUpdate(context: android.content.Context) {
         viewModelScope.launch {
-            _events.send("正在检查更新…")
-            val info = updateManager.checkUpdate()
+            _events.send("正在获取最新版本…")
+            val info = updateManager.fetchLatest()
             if (info != null) {
-                _events.send("发现新版本 ${info.versionName}，开始下载")
+                _events.send("开始下载 ${info.versionName}")
                 updateManager.downloadAndInstall(context, info)
             } else {
-                _events.send("已是最新版本")
+                _events.send("获取失败，请检查网络")
             }
         }
     }

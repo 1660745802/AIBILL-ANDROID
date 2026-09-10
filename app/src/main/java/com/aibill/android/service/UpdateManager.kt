@@ -41,19 +41,40 @@ class UpdateManager @Inject constructor(
             val tag = release.tagName?.removePrefix("v")?.trim() ?: return null
             // 版本对比：语义化 versionName（如 1.4.2）
             if (!isNewerVersion(tag, BuildConfig.VERSION_NAME)) return null
-            val apk = release.assets?.firstOrNull { it.name?.endsWith(".apk") == true }
-                ?: return null
-            val url = apk.browserDownloadUrl ?: return null
-            UpdateInfo(
-                versionName = tag,
-                changelog = release.body?.trim().orEmpty(),
-                apkUrl = url,
-                apkSize = apk.size,
-            )
+            toUpdateInfo(release, tag)
         } catch (e: Exception) {
             Timber.w(e, "UpdateManager: check failed")
             null
         }
+    }
+
+    /**
+     * 获取最新版本（不做版本对比）。手动"检查更新"用，
+     * 允许强制重装/回滚到 GitHub 最新 Release。
+     */
+    suspend fun fetchLatest(): UpdateInfo? {
+        return try {
+            val release = api.getLatestRelease(OWNER, REPO)
+            val tag = release.tagName?.removePrefix("v")?.trim() ?: return null
+            toUpdateInfo(release, tag)
+        } catch (e: Exception) {
+            Timber.w(e, "UpdateManager: fetchLatest failed")
+            null
+        }
+    }
+
+    private fun toUpdateInfo(
+        release: com.aibill.android.data.remote.api.GithubReleaseDto,
+        tag: String,
+    ): UpdateInfo? {
+        val apk = release.assets?.firstOrNull { it.name?.endsWith(".apk") == true } ?: return null
+        val url = apk.browserDownloadUrl ?: return null
+        return UpdateInfo(
+            versionName = tag,
+            changelog = release.body?.trim().orEmpty(),
+            apkUrl = url,
+            apkSize = apk.size,
+        )
     }
 
     /**
