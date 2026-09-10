@@ -215,6 +215,7 @@ class NotificationRulesManagerTest {
             alipay = null,
             bankPackagePatterns = listOf("bank"),
             smsPackages = listOf("com.android.mms"),
+            perPackage = null,
         ),
         a11y = A11yRulesDto(
             embeddedPaymentApps = listOf("me.ele"),

@@ -209,6 +209,19 @@ class NotificationRulesManager @Inject constructor(
                 smsPackages = (dto.nls?.smsPackages ?: defaultRules.nls.smsPackages)
                     .map(String::trim)
                     .filter(String::isNotBlank),
+                perPackage = dto.nls?.perPackage?.map { p ->
+                    PerPackageRule(
+                        packageName = p.packageName,
+                        packagePattern = p.packagePattern,
+                        passAll = p.passAll ?: false,
+                        passTitleExact = p.passTitleExact ?: emptyList(),
+                        passTitleContains = p.passTitleContains ?: emptyList(),
+                        passMsgPrefix = p.passMsgPrefix ?: emptyList(),
+                        requireAmountSymbol = p.requireAmountSymbol ?: false,
+                        excludeTitleContains = p.excludeTitleContains ?: emptyList(),
+                        excludeContentContains = p.excludeContentContains ?: emptyList(),
+                    )
+                } ?: defaultRules.nls.perPackage,
             ),
             a11y = A11yRules(
                 embeddedPaymentApps = dto.a11y?.embeddedPaymentApps ?: defaultRules.a11y.embeddedPaymentApps,
@@ -303,7 +316,28 @@ data class NlsRules(
     val alipay: AlipayRules,
     val bankPackagePatterns: List<String>,
     val smsPackages: List<String>,
+    val perPackage: List<PerPackageRule> = emptyList(),
 )
+
+data class PerPackageRule(
+    val packageName: String? = null,
+    val packagePattern: String? = null,
+    val passAll: Boolean = false,
+    val passTitleExact: List<String> = emptyList(),
+    val passTitleContains: List<String> = emptyList(),
+    val passMsgPrefix: List<String> = emptyList(),
+    val requireAmountSymbol: Boolean = false,
+    val excludeTitleContains: List<String> = emptyList(),
+    val excludeContentContains: List<String> = emptyList(),
+) {
+    fun matches(pkg: String): Boolean {
+        if (packageName != null && packageName == pkg) return true
+        if (packagePattern != null && packagePattern.isNotBlank()) {
+            return pkg.contains(packagePattern) || pkg.startsWith(packagePattern)
+        }
+        return false
+    }
+}
 
 data class WechatRules(
     val packageName: String,

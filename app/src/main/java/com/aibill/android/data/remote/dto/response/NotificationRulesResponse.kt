@@ -31,7 +31,34 @@ data class NlsRulesDto(
     @Json(name = "wechat") val wechat: WechatRulesDto?,
     @Json(name = "alipay") val alipay: AlipayRulesDto?,
     @Json(name = "bank_package_patterns") val bankPackagePatterns: List<String>?,
-    @Json(name = "sms_packages") val smsPackages: List<String>?
+    @Json(name = "sms_packages") val smsPackages: List<String>?,
+    @Json(name = "per_package") val perPackage: List<PerPackageRuleDto>?
+)
+
+/**
+ * 按包名的通用识别规则（新，可云控）。
+ * 匹配到某包名时优先使用此配置，为空则回退到 wechat/alipay/bank 旧逻辑。
+ */
+@JsonClass(generateAdapter = true)
+data class PerPackageRuleDto(
+    /** 精确包名匹配 */
+    @Json(name = "package") val packageName: String?,
+    /** 包名模式匹配（contains/startsWith），用于银行类批量匹配 */
+    @Json(name = "package_pattern") val packagePattern: String?,
+    /** 命中即全放行（如银行） */
+    @Json(name = "pass_all") val passAll: Boolean?,
+    /** 放行：title 精确等于 */
+    @Json(name = "pass_title_exact") val passTitleExact: List<String>?,
+    /** 放行：title 包含 */
+    @Json(name = "pass_title_contains") val passTitleContains: List<String>?,
+    /** 放行：正文（去掉title后）以这些前缀开头 */
+    @Json(name = "pass_msg_prefix") val passMsgPrefix: List<String>?,
+    /** 放行：需要含金额符号 */
+    @Json(name = "require_amount_symbol") val requireAmountSymbol: Boolean?,
+    /** 排除：title 包含（优先级最高，命中直接拒绝） */
+    @Json(name = "exclude_title_contains") val excludeTitleContains: List<String>?,
+    /** 排除：正文包含 */
+    @Json(name = "exclude_content_contains") val excludeContentContains: List<String>?
 )
 
 @JsonClass(generateAdapter = true)

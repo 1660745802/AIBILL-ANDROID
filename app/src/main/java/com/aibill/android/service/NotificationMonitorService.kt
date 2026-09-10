@@ -60,6 +60,7 @@ class NotificationMonitorService : NotificationListenerService() {
     private var bankPackagePatterns: List<String> = emptyList()
     private var smsSpamKeywords: List<String> = emptyList()
     private var smsPackages: Set<String> = emptySet()
+    private var perPackageRules: List<com.aibill.android.service.PerPackageRule> = emptyList()
 
     /** 跟踪已加载的规则代际，避免重复 load */
     private var lastRulesGeneration: Int = -1
@@ -119,6 +120,7 @@ class NotificationMonitorService : NotificationListenerService() {
         bankPackagePatterns = rules.nls.bankPackagePatterns
         smsSpamKeywords = rules.sms.spamKeywords
         smsPackages = rules.nls.smsPackages.toSet()
+        perPackageRules = rules.nls.perPackage
         lastRulesGeneration = currentGen
 
         appLogger.info("NLS", "规则已加载 gen=$currentGen " +
@@ -266,25 +268,54 @@ class NotificationMonitorService : NotificationListenerService() {
      * 设计原则：极保守，宁可多放不漏。
      */
     private fun isLikelyFinancial(packageName: String, title: String, fullText: String): Boolean {
+        // 优先：per_package 规则驱动（云控，命中则用配置判断）
+        val cfg = perPackageRules.firstOrNull { it.matches(packageName) }
+        if (cfg != null) {
+            return evaluateByConfig(cfg, title, fullText)
+        }
+        // 回退：旧硬编码逻辑（向后兼容，per_package为空时生效）
+        return legacyIsLikelyFinancial(packageName, title, fullText)
+    }
+
+    /**
+     * 规则驱动的通用判断（per_package 配置）。
+     * 顺序：排除词（title/content）→ pass_all → title/前缀/金额符号放行。
+     */
+    private fun evaluateByConfig(cfg: com.aibill.android.service.PerPackageRule, title: String, fullText: String): Boolean {
+        // 1. 排除词优先（命中直接拒绝）
+        if (cfg.excludeTitleContains.any { title.contains(it) }) return false
+        if (cfg.excludeContentContains.any { fullText.contains(it) }) return false
+        // 2. 全放行
+        if (cfg.passAll) return true
+        // 3. title 精确/包含放行
+        if (cfg.passTitleExact.any { title == it }) return true
+        if (cfg.passTitleContains.any { title.contains(it) }) return true
+        // 4. 正文前缀放行
+        val textAfterTitle = fullText.substringAfter(title).trim()
+        if (cfg.passMsgPrefix.any { textAfterTitle.startsWith(it) }) return true
+        // 5. 金额符号放行
+        if (cfg.requireAmountSymbol) {
+            return wechatAmountSymbols.any { textAfterTitle.contains(it) } ||
+                fullText.contains("¥") || fullText.contains("￥")
+        }
+        return false
+    }
+
+    /** 旧硬编码逻辑，保证向后兼容 */
+    private fun legacyIsLikelyFinancial(packageName: String, title: String, fullText: String): Boolean {
         return when (packageName) {
             "com.tencent.mm" -> {
-                // 微信：title 是直接放行列表 → 直接放行
                 if (wechatDirectPassTitles.any { title == it }) return true
                 if (wechatDirectPassTitleContains.any { title.contains(it) }) return true
-                // 其他 title（联系人/群/服务号）：
-                // 只放行微信系统消息格式（前缀列表）或含金额符号的
                 val textAfterTitle = fullText.substringAfter(title).trim()
                 if (wechatMessagePrefixes.any { textAfterTitle.startsWith(it) }) return true
                 wechatAmountSymbols.any { textAfterTitle.contains(it) }
             }
             "com.eg.android.AlipayGphone" -> {
-                // 支付宝：只有明确的交易/账务 title 才放行
                 alipayAllowedTitleKeywords.any { title.contains(it) }
             }
             else -> {
-                // 银行 App：包名含 bank/银行号段 → 全部放行
                 if (bankPackagePatterns.any { packageName.contains(it) || packageName.startsWith(it) }) return true
-                // 其他：用 PAYMENT_SIGNAL 过滤营销
                 paymentSignalRegex.containsMatchIn(fullText)
             }
         }
