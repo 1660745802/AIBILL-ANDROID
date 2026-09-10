@@ -28,7 +28,6 @@ import com.aibill.android.presentation.theme.AppTextButton
 fun SettingsScreen(
     onBack: () -> Unit = {},
     onNavigateToPermissionGuide: () -> Unit = {},
-    onNavigateToRecurring: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -104,11 +103,6 @@ fun SettingsScreen(
                 subtitle = "配置通知监听、弹窗、电池优化等权限",
                 onClick = onNavigateToPermissionGuide
             )
-            SettingsNavCard(
-                title = "周期记账",
-                subtitle = "设置每月固定收支自动记录",
-                onClick = onNavigateToRecurring
-            )
 
             // ========== 分组2：外观 ==========
             SettingsSectionLabel("外观")
@@ -172,8 +166,8 @@ fun SettingsScreen(
                 }
             }
 
-            // ========== 分组4：关于 ==========
-            SettingsSectionLabel("关于")
+            // ========== 分组4：数据与同步 ==========
+            SettingsSectionLabel("数据与同步")
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     // 服务器地址（纯展示）
@@ -192,20 +186,26 @@ fun SettingsScreen(
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     SettingsActionRow(
-                        title = "导出日志",
-                        subtitle = "生成日志文件分享给开发者排查",
-                        onClick = { viewModel.onExportLogs(context) }
-                    )
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    SettingsActionRow(
                         title = "同步规则",
                         subtitle = "从服务端拉取最新通知记账规则",
                         onClick = { viewModel.syncRules() }
                     )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     SettingsActionRow(
+                        title = "导出日志",
+                        subtitle = "生成日志文件分享给开发者排查",
+                        onClick = { viewModel.onExportLogs(context) }
+                    )
+                }
+            }
+
+            // ========== 分组5：关于 ==========
+            SettingsSectionLabel("关于")
+            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    SettingsActionRow(
                         title = "检查更新",
-                        subtitle = "当前 ${com.aibill.android.BuildConfig.VERSION_NAME}，点击下载最新版",
+                        subtitle = "当前版本 ${com.aibill.android.BuildConfig.VERSION_NAME}",
                         onClick = { viewModel.checkUpdate(context) }
                     )
                 }

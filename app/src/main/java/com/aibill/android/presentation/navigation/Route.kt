@@ -25,7 +25,6 @@ sealed interface Route {
     @Serializable data object NotificationCenter : Route
     @Serializable data object Settings : Route
     @Serializable data object PermissionGuide : Route
-    @Serializable data object Recurring : Route
     @Serializable data object CategoryManage : Route
     @Serializable data object AccountManage : Route
     @Serializable data object Trash : Route

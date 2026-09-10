@@ -31,7 +31,6 @@ import com.aibill.android.presentation.ui.home.HomeScreen
 import com.aibill.android.presentation.ui.notification.NotificationCenterScreen
 import com.aibill.android.presentation.ui.profile.ProfileScreen
 import com.aibill.android.presentation.ui.record.ManualRecordScreen
-import com.aibill.android.presentation.ui.recurring.RecurringScreen
 import com.aibill.android.presentation.ui.settings.PermissionGuideScreen
 import com.aibill.android.presentation.ui.settings.SettingsScreen
 import com.aibill.android.presentation.ui.statistics.StatisticsScreen
@@ -248,16 +247,10 @@ fun AiBillNavHost(
                     onNavigateToPermissionGuide = {
                         navController.navigate(Route.PermissionGuide)
                     },
-                    onNavigateToRecurring = {
-                        navController.navigate(Route.Recurring)
-                    },
                 )
             }
             composable<Route.PermissionGuide> {
                 PermissionGuideScreen(onBack = { navController.popBackStack() })
-            }
-            composable<Route.Recurring> {
-                RecurringScreen(onBack = { navController.popBackStack() })
             }
             composable<Route.CategoryManage> {
                 CategoryManageScreen(onBack = { navController.popBackStack() })
