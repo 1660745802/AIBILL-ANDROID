@@ -45,3 +45,4 @@ COMMIT_MSG.tmp
 ### Gradle Wrapper JAR (optional - some teams include it) ###
 # gradle/wrapper/gradle-wrapper.jar
 app/release/ 
+keystore.properties

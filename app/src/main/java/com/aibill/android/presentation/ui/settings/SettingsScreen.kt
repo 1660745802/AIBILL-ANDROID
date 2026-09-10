@@ -202,6 +202,12 @@ fun SettingsScreen(
                         subtitle = "从服务端拉取最新通知记账规则",
                         onClick = { viewModel.syncRules() }
                     )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    SettingsActionRow(
+                        title = "检查更新",
+                        subtitle = "当前版本 ${com.aibill.android.BuildConfig.VERSION_NAME}",
+                        onClick = { viewModel.checkUpdate(context) }
+                    )
                 }
             }
         }

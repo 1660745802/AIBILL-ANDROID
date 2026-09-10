@@ -27,6 +27,7 @@ class SettingsViewModel @Inject constructor(
     private val userPreferences: UserPreferences,
     private val appLogger: com.aibill.android.util.AppLogger,
     private val notificationRulesManager: com.aibill.android.service.NotificationRulesManager,
+    private val updateManager: com.aibill.android.service.UpdateManager,
 ) : ViewModel() {
 
     data class UiState(
@@ -162,6 +163,19 @@ class SettingsViewModel @Inject constructor(
                 _events.send("规则同步成功")
             } catch (e: Exception) {
                 _events.send("规则同步失败: ${e.message}")
+            }
+        }
+    }
+
+    fun checkUpdate(context: android.content.Context) {
+        viewModelScope.launch {
+            _events.send("正在检查更新…")
+            val info = updateManager.checkUpdate()
+            if (info != null) {
+                _events.send("发现新版本 ${info.versionName}，开始下载")
+                updateManager.downloadAndInstall(context, info)
+            } else {
+                _events.send("已是最新版本")
             }
         }
     }
