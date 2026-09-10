@@ -32,7 +32,18 @@ data class NlsRulesDto(
     @Json(name = "alipay") val alipay: AlipayRulesDto?,
     @Json(name = "bank_package_patterns") val bankPackagePatterns: List<String>?,
     @Json(name = "sms_packages") val smsPackages: List<String>?,
-    @Json(name = "per_package") val perPackage: List<PerPackageRuleDto>?
+    @Json(name = "per_package") val perPackage: List<PerPackageRuleDto>?,
+    /** 默认规则：未在 per_package 中配置的 App 走这套 */
+    @Json(name = "default_rule") val defaultRule: DefaultRuleDto?
+)
+
+/**
+ * 默认识别规则（大多数 App 共用）。
+ * 逻辑：命中排除词直接拒绝；否则含 payment_signal 才放行。
+ */
+@JsonClass(generateAdapter = true)
+data class DefaultRuleDto(
+    @Json(name = "exclude_content_contains") val excludeContentContains: List<String>?
 )
 
 /**

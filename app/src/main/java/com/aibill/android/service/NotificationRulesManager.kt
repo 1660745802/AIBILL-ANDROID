@@ -222,6 +222,8 @@ class NotificationRulesManager @Inject constructor(
                         excludeContentContains = p.excludeContentContains ?: emptyList(),
                     )
                 } ?: defaultRules.nls.perPackage,
+                defaultExcludeContent = dto.nls?.defaultRule?.excludeContentContains
+                    ?: defaultRules.nls.defaultExcludeContent,
             ),
             a11y = A11yRules(
                 embeddedPaymentApps = dto.a11y?.embeddedPaymentApps ?: defaultRules.a11y.embeddedPaymentApps,
@@ -317,6 +319,7 @@ data class NlsRules(
     val bankPackagePatterns: List<String>,
     val smsPackages: List<String>,
     val perPackage: List<PerPackageRule> = emptyList(),
+    val defaultExcludeContent: List<String> = emptyList(),
 )
 
 data class PerPackageRule(

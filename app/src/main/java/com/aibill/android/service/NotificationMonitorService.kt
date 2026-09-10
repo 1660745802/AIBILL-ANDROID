@@ -61,6 +61,7 @@ class NotificationMonitorService : NotificationListenerService() {
     private var smsSpamKeywords: List<String> = emptyList()
     private var smsPackages: Set<String> = emptySet()
     private var perPackageRules: List<com.aibill.android.service.PerPackageRule> = emptyList()
+    private var defaultExcludeContent: List<String> = emptyList()
 
     /** 跟踪已加载的规则代际，避免重复 load */
     private var lastRulesGeneration: Int = -1
@@ -121,6 +122,7 @@ class NotificationMonitorService : NotificationListenerService() {
         smsSpamKeywords = rules.sms.spamKeywords
         smsPackages = rules.nls.smsPackages.toSet()
         perPackageRules = rules.nls.perPackage
+        defaultExcludeContent = rules.nls.defaultExcludeContent
         lastRulesGeneration = currentGen
 
         appLogger.info("NLS", "规则已加载 gen=$currentGen " +
@@ -268,12 +270,17 @@ class NotificationMonitorService : NotificationListenerService() {
      * 设计原则：极保守，宁可多放不漏。
      */
     private fun isLikelyFinancial(packageName: String, title: String, fullText: String): Boolean {
-        // 优先：per_package 规则驱动（云控，命中则用配置判断）
+        // 优先1：per_package 精确配置（格式特殊的App，如微信/支付宝）
         val cfg = perPackageRules.firstOrNull { it.matches(packageName) }
         if (cfg != null) {
             return evaluateByConfig(cfg, title, fullText)
         }
-        // 回退：旧硬编码逻辑（向后兼容，per_package为空时生效）
+        // 优先2：default_rule（大多数App走这套：营销排除 + payment_signal 放行）
+        if (defaultExcludeContent.isNotEmpty()) {
+            if (defaultExcludeContent.any { fullText.contains(it) }) return false
+            return paymentSignalRegex.containsMatchIn(fullText)
+        }
+        // 回退：旧硬编码逻辑（default_rule 也为空时，向后兼容）
         return legacyIsLikelyFinancial(packageName, title, fullText)
     }
 

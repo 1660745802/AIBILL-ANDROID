@@ -216,6 +216,7 @@ class NotificationRulesManagerTest {
             bankPackagePatterns = listOf("bank"),
             smsPackages = listOf("com.android.mms"),
             perPackage = null,
+            defaultRule = null,
         ),
         a11y = A11yRulesDto(
             embeddedPaymentApps = listOf("me.ele"),
