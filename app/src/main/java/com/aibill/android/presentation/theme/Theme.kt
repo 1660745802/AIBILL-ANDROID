@@ -1,13 +1,17 @@
 package com.aibill.android.presentation.theme
 
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 
-// ============ 品牌配色 ============
+// ============ 品牌配色（fallback） ============
 // 主色：Teal 青绿（记账 App 常用，专业、清爽）
 private val Teal = Color(0xFF00897B)
 private val TealLight = Color(0xFF4DB6AC)
@@ -77,14 +81,18 @@ private val DarkColorScheme = darkColorScheme(
 
 /**
  * 全局主题。
- * 注意：不使用 Material You 动态取色（dynamicColor），
- * 统一用品牌 Teal 配色，保证所有页面/按钮视觉一致、可控。
+ *
+ * PR C1：Android 12+ 自动启用 Material You 动态取色（跟随系统壁纸色调），
+ * 由用户首次启动时通过系统设置弹窗授权。Android 11 及以下回退到品牌 Teal。
  *
  * @param themeMode 用户在设置中选择的模式："system"（跟随系统）/ "light" / "dark"
+ * @param dynamicColor 是否启用动态取色。默认 true（Android 12+ 启用），
+ *                     设置页可关闭以恢复品牌配色一致性。
  */
 @Composable
 fun AiBillTheme(
     themeMode: String = "system",
+    dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val darkTheme = when (themeMode) {
@@ -92,7 +100,17 @@ fun AiBillTheme(
         "dark" -> true
         else -> isSystemInDarkTheme()
     }
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+
+    val colorScheme = when {
+        // PR C1：Android 12+ 启用 Material You 动态取色
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val context = LocalContext.current
+            if (darkTheme) dynamicDarkColorScheme(context)
+            else dynamicLightColorScheme(context)
+        }
+        darkTheme -> DarkColorScheme
+        else -> LightColorScheme
+    }
 
     MaterialTheme(
         colorScheme = colorScheme,

@@ -43,6 +43,11 @@ class MainViewModel @Inject constructor(
         viewModelScope, SharingStarted.Eagerly, "system",
     )
 
+    /** 是否启用 Material You 动态取色（Android 12+） */
+    val dynamicColorEnabled: StateFlow<Boolean> = userPreferences.dynamicColorEnabled.stateIn(
+        viewModelScope, SharingStarted.Eagerly, true,
+    )
+
     /** 是否从最近任务中隐藏 */
     val hideFromRecents: StateFlow<Boolean> = userPreferences.hideFromRecents.stateIn(
         viewModelScope, SharingStarted.Eagerly, false,

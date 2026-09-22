@@ -61,6 +61,7 @@ class UserPreferences @Inject constructor(
         val NOTIFICATION_PRIVACY = booleanPreferencesKey("notification_privacy")
         val APP_LOCK_ENABLED = booleanPreferencesKey("app_lock_enabled")
         val QUICK_ENTRY_ENABLED = booleanPreferencesKey("quick_entry_enabled")
+        val DYNAMIC_COLOR_ENABLED = booleanPreferencesKey("dynamic_color_enabled")
         val AUTOMATION_LEVEL = stringPreferencesKey("automation_level")
         val AI_PARSE_ENABLED = booleanPreferencesKey("ai_parse_enabled")
     }
@@ -103,6 +104,19 @@ class UserPreferences @Inject constructor(
 
     suspend fun setThemeMode(mode: String) {
         dataStore.edit { it[Keys.THEME_MODE] = mode }
+    }
+
+    // --- Dynamic Color（Android 12+ Material You） ---
+    /**
+     * PR C1：用户是否启用 Material You 动态取色（跟随系统壁纸色调）。
+     * 默认 true；用户可在 Settings → 主题 中关闭以恢复品牌 Teal 配色。
+     */
+    val dynamicColorEnabled: Flow<Boolean> = dataStore.data.map {
+        it[Keys.DYNAMIC_COLOR_ENABLED] ?: true
+    }
+
+    suspend fun setDynamicColorEnabled(enabled: Boolean) {
+        dataStore.edit { it[Keys.DYNAMIC_COLOR_ENABLED] = enabled }
     }
 
     // --- Sync ---

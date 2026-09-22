@@ -720,3 +720,101 @@ if (!hasDigit || !hasPaymentSignal) return  // 直接丢弃，不存 raw 不调 
 - AI 生成的 Compose 组件必须支持 `@Preview`
 - AI 辅助生成的代码在 commit body 标注：`AI-assisted: 核心逻辑由 AI 生成，已 review 并调整`
 - AI 不可做：跳过测试 / 引入未在 libs.versions.toml 中管理的依赖 / 修改已稳定接口签名 / 生成超过 300 行的单文件
+
+---
+
+## 附录 B：Release 发布流程
+
+### B.1 准备签名
+
+仓库根目录准备 `keystore.properties`（已在 `.gitignore`）：
+
+```properties
+storeFile=/absolute/path/to/release.keystore
+storePassword=<store-pass>
+keyAlias=<alias>
+keyPassword=<key-pass>
+```
+
+生成签名：
+
+```bash
+keytool -genkey -v \
+  -keystore release.keystore \
+  -alias aibill \
+  -keyalg RSA -keysize 4096 -validity 10000
+```
+
+### B.2 版本号约定
+
+- `versionCode`：单调递增整数（用户设备升级对比），每次发版 +1
+- `versionName`：语义化版本 `MAJOR.MINOR.PATCH`
+  - MAJOR：不兼容的 API 变更
+  - MINOR：向后兼容的新功能
+  - PATCH：向后兼容的 Bug 修复
+
+### B.3 发布步骤
+
+```bash
+# 1. 确认 CI 绿：单元测试 + Kover 覆盖率门槛通过
+./gradlew :app:testDebugUnitTest :app:koverVerify
+
+# 2. Release 构建（产出 app-release.apk）
+./gradlew :app:assembleRelease
+
+# 3. 验证 APK 完整性
+$ANDROID_HOME/build-tools/<v>/apksigner verify --print-certs \
+  app/build/outputs/apk/release/app-release.apk
+
+# 4. 打 tag（annotated tag + release notes）
+git tag -a v1.1.0 -m "v1.1.0 (2026-09-22)
+- 重大变更：xxx
+- 修复：xxx
+- 测试：xxx"
+git push origin v1.1.0
+
+# 5. 触发自更新：UpdateCheckWorker 24h 内会检测到新 release
+#    用户收到温和的"有新版本"通知
+```
+
+### B.4 自更新机制
+
+发布后由 [UpdateCheckWorker](./ARCHITECTURE.md#六-离线同步) 检测 GitHub Release，下载新版 APK 后通过 [UpdateInstallReceiver](./ARCHITECTURE.md#七-通知监听-v3-架构) 触发系统安装器：
+
+- 用户无需打开 Play Store（自部署无需 Play Store）
+- 安全：APK 签名由系统安装器校验
+- 温和：仅在 Settings 页显示"有新版本"按钮，不强制升级
+
+### B.5 ProGuard / R8 规则
+
+Release 构建启用 R8 (`isMinifyEnabled = true` + `isShrinkResources = true`)，配置见 [`app/proguard-rules.pro`](../app/proguard-rules.pro)。
+
+**关键保留**：
+
+| 库 | 处理方式 |
+|---|---|
+| Moshi DTO | `-keep class com.aibill.android.data.remote.dto.**` |
+| Moshi codegen 字段 | `@Json` 注解字段保留 |
+| Retrofit 接口 | `-keepattributes Signature` + `@retrofit2.http.*` 注解方法 |
+| Room Entity | `@androidx.room.Entity` 注解类 |
+| Hilt 注入点 | `@dagger.hilt.*` 注解方法 |
+| Worker 子类 | `extends androidx.work.*Worker` |
+| Kotlin Serialization Route | `com.aibill.android.presentation.navigation.Route$*` |
+| Tink（EncryptedSharedPrefs） | `-keep class com.google.crypto.tink.**` |
+
+依赖库自带 `consumer-rules.pro`（retrofit/okhttp/navigation/glance/biometric）**不再额外全量 keep**，避免削弱 R8 优化收益。
+
+### B.6 CI 流水线
+
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)：
+
+- **触发**：push 到 main/develop / PR
+- **步骤**：checkout → JDK 17 → Gradle cache → 单测 + Kover → assembleDebug → 上传 artifact
+- **覆盖**：单测 207+ / Kover minBound 50%
+- **artifact**：coverage-report / app-debug APK
+
+### B.7 已知约束
+
+- 自部署应用，签名密钥由用户自管（请妥善备份 `release.keystore`，丢失则无法升级覆盖旧版本）
+- Release APK 未上传 Play Store（自托管，无需注册开发者账号）
+- 服务器地址变更时，已同步数据保留，本地缓存保留（详见 [§3.1 API 契约](./ARCHITECTURE.md#31-基础协议)）

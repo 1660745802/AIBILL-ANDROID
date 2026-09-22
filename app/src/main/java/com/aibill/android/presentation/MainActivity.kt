@@ -59,7 +59,8 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val themeMode by mainViewModel.themeMode.collectAsStateWithLifecycle()
-            AiBillTheme(themeMode = themeMode) {
+            val dynamicColor by mainViewModel.dynamicColorEnabled.collectAsStateWithLifecycle()
+            AiBillTheme(themeMode = themeMode, dynamicColor = dynamicColor) {
                 if (isLocked) {
                     AppLockScreen(onUnlocked = { isLocked = false })
                 } else {
