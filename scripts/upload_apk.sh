@@ -175,10 +175,14 @@ except Exception:
 import sys, json
 d = json.load(sys.stdin)
 data = d.get('data', {})
-print(f\"  hasUpdate:    {data.get('hasUpdate')}\")
-print(f\"  latestVersion: {data.get('latestVersion')}\")
-print(f\"  apkUrl:        {data.get('apkUrl')}\")
-print(f\"  changelog:     {(data.get('changelog', '') or '')[:80]}...\")
+print(f\"  hasUpdate:      {data.get('has_update')}\")
+print(f\"  latestVersion:  {data.get('latest_version')}\")
+print(f\"  versionCode:    {data.get('latest_version_code')}\")
+print(f\"  forceUpdate:    {data.get('force_update')}\")
+print(f\"  apkUrl:         {data.get('apk_url')}\")
+print(f\"  apkSize:        {data.get('apk_size')}\")
+changelog = (data.get('changelog', '') or '')[:80]
+print(f\"  changelog:      {changelog}{'...' if changelog else ''}\")
 " 2>/dev/null || echo "  (解析失败，手动验证)"
   fi
   echo ""
