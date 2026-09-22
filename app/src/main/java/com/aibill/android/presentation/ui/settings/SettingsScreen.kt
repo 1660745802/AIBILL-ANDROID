@@ -35,6 +35,8 @@ fun SettingsScreen(
     val context = LocalContext.current
 
     var showPasswordDialog by rememberSaveable { mutableStateOf(false) }
+    // PR：手动检查更新后的发现新版本确认对话框
+    var pendingUpdate by remember { mutableStateOf<com.aibill.android.service.UpdateManager.UpdateInfo?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.checkNotificationListenerPermission(context)
@@ -206,11 +208,68 @@ fun SettingsScreen(
                     SettingsActionRow(
                         title = "检查更新",
                         subtitle = "当前版本 ${com.aibill.android.BuildConfig.VERSION_NAME}",
-                        onClick = { viewModel.checkUpdate(context) }
+                        onClick = {
+                            viewModel.checkUpdate(context) { result ->
+                                if (result is SettingsViewModel.UpdateCheckResult.Available) {
+                                    pendingUpdate = result.info
+                                }
+                            }
+                        }
                     )
                 }
             }
         }
+    }
+
+    // PR：发现新版本确认对话框（先确认再下载，避免误点直接下载）
+    pendingUpdate?.let { info ->
+        AlertDialog(
+            onDismissRequest = { pendingUpdate = null },
+            title = { Text("发现新版本 ${info.versionName}") },
+            text = {
+                Column {
+                    Text(
+                        text = "当前版本 ${com.aibill.android.BuildConfig.VERSION_NAME} → ${info.versionName}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    if (info.changelog.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "更新内容：",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = info.changelog,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 8,
+                        )
+                    }
+                    if (info.apkSize > 0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "下载大小：${info.apkSize / 1024 / 1024} MB",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                AppTextButton(
+                    text = "立即更新",
+                    onClick = {
+                        viewModel.startUpdateDownload(context, info)
+                        pendingUpdate = null
+                    },
+                )
+            },
+            dismissButton = {
+                AppTextButton(text = "稍后", onClick = { pendingUpdate = null })
+            }
+        )
     }
 
     if (showPasswordDialog) {

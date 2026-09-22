@@ -167,16 +167,46 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun checkUpdate(context: android.content.Context) {
+    /**
+     * PR：手动检查更新。先查询 GitHub Release → 比对版本 →
+     * 有新版本返回 [UpdateCheckResult.Available]（待用户在 UI 确认后下载）→
+     * 已是最新返回 [UpdateCheckResult.UpToDate] → 网络失败返回 [UpdateCheckResult.Failed]。
+     *
+     * 之前直接 downloadAndInstall() 是不合理的——用户没看到任何确认就被下载了。
+     */
+    sealed class UpdateCheckResult {
+        data class Available(val info: com.aibill.android.service.UpdateManager.UpdateInfo) : UpdateCheckResult()
+        data object UpToDate : UpdateCheckResult()
+        data class Failed(val message: String) : UpdateCheckResult()
+    }
+
+    fun checkUpdate(context: android.content.Context, onResult: (UpdateCheckResult) -> Unit) {
         viewModelScope.launch {
             _events.send("正在获取最新版本…")
-            val info = updateManager.fetchLatest()
-            if (info != null) {
-                _events.send("开始下载 ${info.versionName}")
-                updateManager.downloadAndInstall(context, info)
-            } else {
-                _events.send("获取失败，请检查网络")
+            // fetchLatest() 返回最新版（不做版本对比），便于 UI 展示版本号
+            val latest = updateManager.fetchLatest()
+            if (latest == null) {
+                onResult(UpdateCheckResult.Failed("获取失败，请检查网络"))
+                return@launch
             }
+            val current = com.aibill.android.BuildConfig.VERSION_NAME
+            if (!com.aibill.android.service.UpdateManager.isNewerVersion(latest.versionName, current)) {
+                _events.send("已是最新版本 v$current")
+                onResult(UpdateCheckResult.UpToDate)
+                return@launch
+            }
+            _events.send("发现新版本 ${latest.versionName}")
+            onResult(UpdateCheckResult.Available(latest))
+        }
+    }
+
+    /**
+     * 用户在「发现新版本」对话框点"立即更新"后调用。
+     */
+    fun startUpdateDownload(context: android.content.Context, info: com.aibill.android.service.UpdateManager.UpdateInfo) {
+        viewModelScope.launch {
+            _events.send("开始下载 ${info.versionName}")
+            updateManager.downloadAndInstall(context, info)
         }
     }
 }
