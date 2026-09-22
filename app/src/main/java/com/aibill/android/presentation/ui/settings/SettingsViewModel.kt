@@ -183,20 +183,29 @@ class SettingsViewModel @Inject constructor(
     fun checkUpdate(context: android.content.Context, onResult: (UpdateCheckResult) -> Unit) {
         viewModelScope.launch {
             _events.send("正在获取最新版本…")
-            // fetchLatest() 返回最新版（不做版本对比），便于 UI 展示版本号
-            val latest = updateManager.fetchLatest()
-            if (latest == null) {
-                onResult(UpdateCheckResult.Failed("获取失败，请检查网络"))
-                return@launch
-            }
             val current = com.aibill.android.BuildConfig.VERSION_NAME
-            if (!com.aibill.android.service.UpdateManager.isNewerVersion(latest.versionName, current)) {
-                _events.send("已是最新版本 v$current")
-                onResult(UpdateCheckResult.UpToDate)
-                return@launch
+            when (val result = updateManager.fetchLatestResult()) {
+                is com.aibill.android.service.UpdateManager.FetchLatestResult.Success -> {
+                    val latest = result.info
+                    if (!com.aibill.android.service.UpdateManager.isNewerVersion(latest.versionName, current)) {
+                        _events.send("已是最新版本 v$current")
+                        onResult(UpdateCheckResult.UpToDate)
+                    } else {
+                        _events.send("发现新版本 ${latest.versionName}")
+                        onResult(UpdateCheckResult.Available(latest))
+                    }
+                }
+                com.aibill.android.service.UpdateManager.FetchLatestResult.NoUpdate -> {
+                    // billserver 权威判定：已是最新（不 fallback GitHub）
+                    _events.send("已是最新版本 v$current（服务器无更新）")
+                    onResult(UpdateCheckResult.UpToDate)
+                }
+                is com.aibill.android.service.UpdateManager.FetchLatestResult.Failure -> {
+                    // 关键修复：之前此分支不发 _events，用户只看到"正在获取…"后永久沉默
+                    _events.send(result.message)
+                    onResult(UpdateCheckResult.Failed(result.message))
+                }
             }
-            _events.send("发现新版本 ${latest.versionName}")
-            onResult(UpdateCheckResult.Available(latest))
         }
     }
 

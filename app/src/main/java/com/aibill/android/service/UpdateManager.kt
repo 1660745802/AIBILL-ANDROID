@@ -91,18 +91,46 @@ class UpdateManager @Inject constructor(
      *    - hasUpdate=false → 返回"已是最新"（不 fallback GitHub，避免误判）
      *    - 网络异常 → fallback GitHub
      * 2. GitHub Release（兜底）
+     *
+     * 注：nullable 版本，无法区分"已是最新"和"获取失败"——
+     * UI 层请用 [fetchLatestResult] 获取三态。
      */
     suspend fun fetchLatest(): UpdateInfo? {
+        return when (val r = fetchLatestResult()) {
+            is FetchLatestResult.Success -> r.info
+            else -> null
+        }
+    }
+
+    /**
+     * 手动"检查更新"的三态结果（与 [fetchLatest] 同逻辑，保留语义区分）：
+     * - Success(info)：拿到最新版本（可能比本地新，也可能旧/相同，UI 再做版本对比）
+     * - NoUpdate：billserver 可达且报告已是最新（服务端权威，不 fallback GitHub）
+     * - Failure(message)：所有源都拿不到（billserver 不可达 且 GitHub 也失败）
+     */
+    sealed class FetchLatestResult {
+        data class Success(val info: UpdateInfo) : FetchLatestResult()
+        data object NoUpdate : FetchLatestResult()
+        data class Failure(val message: String) : FetchLatestResult()
+    }
+
+    suspend fun fetchLatestResult(): FetchLatestResult {
         return when (val result = queryBillserver()) {
-            is BillserverResult.Success -> result.info.copy(source = Source.BILLSERVER)
+            is BillserverResult.Success -> FetchLatestResult.Success(
+                result.info.copy(source = Source.BILLSERVER),
+            )
             is BillserverResult.NoUpdate -> {
                 Timber.d("UpdateManager: billserver reachable, no update available")
-                null
+                FetchLatestResult.NoUpdate
             }
             is BillserverResult.Failure -> {
                 Timber.w(result.throwable, "UpdateManager: billserver check failed, fallback to GitHub")
                 val fromGithub = githubReleaseUpdate(forceLatest = true)
-                fromGithub?.copy(source = Source.GITHUB)
+                if (fromGithub != null) {
+                    FetchLatestResult.Success(fromGithub.copy(source = Source.GITHUB))
+                } else {
+                    FetchLatestResult.Failure("获取失败：billserver 不可达且 GitHub 拉取失败")
+                }
             }
         }
     }
