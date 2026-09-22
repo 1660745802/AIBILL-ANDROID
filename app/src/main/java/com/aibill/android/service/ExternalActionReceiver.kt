@@ -90,20 +90,25 @@ class ExternalActionReceiver : BroadcastReceiver() {
                 )
                 return
             }
+            val pendingResult = goAsync()
             scope.launch {
-                val entity = PendingTransactionEntity(
-                    clientId = UUID.randomUUID().toString(),
-                    type = type,
-                    amount = amount,
-                    description = description,
-                    date = LocalDate.now().toString(),
-                    time = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
-                    source = "external_intent",
-                    sourceDetail = "tasker_quick_record",
-                    clientCreatedAt = LocalDateTime.now().toString()
-                )
-                pendingTransactionDao.insert(entity)
-                Timber.d("ExternalActionReceiver: 静默记录成功 amount=$amount")
+                try {
+                    val entity = PendingTransactionEntity(
+                        clientId = UUID.randomUUID().toString(),
+                        type = type,
+                        amount = amount,
+                        description = description,
+                        date = LocalDate.now().toString(),
+                        time = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
+                        source = "external_intent",
+                        sourceDetail = "tasker_quick_record",
+                        clientCreatedAt = LocalDateTime.now().toString()
+                    )
+                    pendingTransactionDao.insert(entity)
+                    Timber.d("ExternalActionReceiver: 静默记录成功 amount=$amount")
+                } finally {
+                    pendingResult.finish()
+                }
             }
         } else {
             // 打开 App 手动记账页预填（任意调用方可用）

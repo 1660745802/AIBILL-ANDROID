@@ -8,6 +8,7 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.room)
+    alias(libs.plugins.kover)
 }
 
 // 读取签名配置（keystore.properties 不提交到 git）
@@ -25,7 +26,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 2
-        versionName = "1.0.0"
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -174,6 +175,19 @@ tasks.withType<Test>().configureEach {
     useJUnitPlatform()
     testLogging {
         events("passed", "skipped", "failed")
+    }
+}
+
+// Kover 覆盖率配置（PR：CI 化的第一步）
+kover {
+    reports {
+        total {
+            verify {
+                rule {
+                    minBound(50)
+                }
+            }
+        }
     }
 }
 

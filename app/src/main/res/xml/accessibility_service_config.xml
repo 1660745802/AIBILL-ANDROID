@@ -1,4 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  无障碍服务配置（支付识别）
+
+  Flags 说明（仅保留支付识别必要项）：
+  - typeWindowStateChanged: Activity 切换时识别支付结果页
+  - typeWindowContentChanged: 同一页面内弹窗（如确认对话框）触发
+  - flagDefault: 默认行为（点击、焦点等）
+  - flagRetrieveInteractiveWindows: 跨窗口检索（支付宝/微信在悬浮窗中弹支付结果）
+  - flagIncludeNotImportantViews: 启用后能识别第三方 SDK 内部 WebView 内的支付按钮
+    （移除会漏掉部分场景，已权衡隐私/电量与识别完整性）
+  - canRetrieveWindowContent: 必须开启，否则无法读取支付金额/商家
+  - notificationTimeout: 300ms 事件去抖窗口，避免高频事件耗电
+
+  实际行为：服务收到事件后立即 pass 给 NotificationProcessor.process()，
+  不持久化任何窗口内容，仅缓存最近一次结构用于去重。
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"

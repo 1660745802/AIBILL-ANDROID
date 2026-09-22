@@ -12,6 +12,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
 
@@ -31,11 +33,15 @@ private val bottomNavItems = listOf(
 @Composable
 fun BottomNavBar(navController: NavHostController) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
+    val currentDestination = navBackStackEntry?.destination
 
     NavigationBar {
         bottomNavItems.forEach { item ->
-            val isSelected = currentRoute?.startsWith(item.route::class.qualifiedName ?: "") == true
+            // P2 修复：基于 destination.hierarchy 判高亮，比 qualifiedName.startsWith 更稳健
+            // 对参数化 Route（如 Transactions(categoryId=...)）也正确
+            val isSelected = currentDestination?.hierarchy?.any {
+                it.hasRoute(item.route::class)
+            } == true
 
             NavigationBarItem(
                 selected = isSelected,

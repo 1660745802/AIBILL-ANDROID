@@ -54,14 +54,17 @@ fun AiBillNavHost(
         when (navigateTo) {
             "notification_center" -> navController.navigate(Route.NotificationCenter)
             "transactions" -> navController.navigate(Route.Transactions()) {
-                popUpTo(Route.Home) { inclusive = false }
+                // P2 修复：通知深链保留 Tab 滚动位置
+                popUpTo(Route.Home) { inclusive = false; saveState = true }
                 launchSingleTop = true
+                restoreState = true
             }
             "manual_record" -> navController.navigate(Route.ManualRecord())
             "home" -> {
                 // 外部 Intent（Tasker/AI_PARSE）跳首页
                 navController.navigate(Route.Home) {
                     popUpTo(Route.Home) { inclusive = true }
+                    launchSingleTop = true
                 }
             }
             "login_force" -> {
@@ -205,10 +208,13 @@ fun AiBillNavHost(
             composable<Route.Profile> {
                 ProfileScreen(
                     onNavigateToSettings = { navController.navigate(Route.Settings) },
-                    onNavigateToNotification = {
-                        // PR 修复：原回调跳到 PermissionGuide 是误命名/误实现，
-                        // 应跳到 NotificationCenter。
+                    onNavigateToNotificationCenter = {
+                        // 通知中心：查看待确认的自动记账
                         navController.navigate(Route.NotificationCenter)
+                    },
+                    onNavigateToPermissionGuide = {
+                        // 权限与保活：通知监听/电池优化/自启动
+                        navController.navigate(Route.PermissionGuide)
                     },
                     onNavigateToCategoryManage = {
                         navController.navigate(Route.CategoryManage)

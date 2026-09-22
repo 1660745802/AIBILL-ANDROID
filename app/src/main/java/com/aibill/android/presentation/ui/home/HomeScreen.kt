@@ -73,15 +73,11 @@ fun HomeScreen(
     }
 
     // 从其他页面返回时刷新数据（编辑交易/记账后回到首页自动更新今日流水+月支出）
+    // PR 优化：LifecycleResumeEffect 替代 DisposableEffect+LifecycleEventObserver，更符合 Compose 习惯写法。
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                viewModel.refresh()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(lifecycleOwner, lifecycleOwner) {
+        viewModel.refresh()
+        onPauseOrDispose { }
     }
 
     Scaffold(
@@ -162,12 +158,18 @@ fun HomeScreen(
                     }
 
                     item(key = "today_title") {
-                        val autoCount = uiState.todayTransactions.count {
-                            it.source == com.aibill.android.domain.model.TransactionSource.APP_NOTIFICATION
+                        // PR 优化：派生计算包 remember，列表重组时不重复遍历 todayTransactions
+                        val todayTransactions = uiState.todayTransactions
+                        val autoCount = remember(todayTransactions) {
+                            todayTransactions.count {
+                                it.source == com.aibill.android.domain.model.TransactionSource.APP_NOTIFICATION
+                            }
                         }
-                        val todayExpenseTotal = uiState.todayTransactions
-                            .filter { it.type == TransactionType.EXPENSE }
-                            .sumOf { it.amount }
+                        val todayExpenseTotal = remember(todayTransactions) {
+                            todayTransactions
+                                .filter { it.type == TransactionType.EXPENSE }
+                                .sumOf { it.amount }
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,

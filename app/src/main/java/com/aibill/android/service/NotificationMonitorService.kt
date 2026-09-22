@@ -38,6 +38,8 @@ class NotificationMonitorService : NotificationListenerService() {
         fun notificationProcessor(): NotificationProcessor
         fun appLogger(): AppLogger
         fun rulesManager(): NotificationRulesManager
+        @com.aibill.android.di.ApplicationScope
+        fun applicationScope(): kotlinx.coroutines.CoroutineScope
     }
 
     private lateinit var notificationParser: NotificationParser
@@ -46,7 +48,9 @@ class NotificationMonitorService : NotificationListenerService() {
     private lateinit var appLogger: AppLogger
     private lateinit var rulesManager: NotificationRulesManager
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // PR 修复：改用进程级 @ApplicationScope，
+    // 避免 NLS 每次 onCreate 时泄漏一个 SupervisorJob+IO。
+    private lateinit var serviceScope: kotlinx.coroutines.CoroutineScope
 
     // ═══════════════════════════════════════════════════════════════
     // 从云控规则读取
@@ -98,6 +102,7 @@ class NotificationMonitorService : NotificationListenerService() {
         notificationProcessor = entryPoint.notificationProcessor()
         appLogger = entryPoint.appLogger()
         rulesManager = entryPoint.rulesManager()
+        serviceScope = entryPoint.applicationScope()
 
         loadRules()
     }

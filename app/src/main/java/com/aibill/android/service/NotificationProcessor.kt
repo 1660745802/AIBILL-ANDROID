@@ -248,6 +248,15 @@ class NotificationProcessor @Inject constructor(
                         return@launch
                     }
                     commitBest(best)
+                } catch (e: Exception) {
+                    // PR 修复：commitBest 异常路径兜底。
+                    // 原代码若 commitBest 抛异常会被外层 catch 静默吞掉，且
+                    // scoringPool.remove(key) 在 commitBest 之前执行，所以残留
+                    // 概率极低；此处加显式清理 + 日志，确保任何 future 修改
+                    // （如 scoringPool.get/set 后再 commitBest）也不会留下脏数据。
+                    appLogger.error("NLS", "评分提交异常: amount=$key err=${e.message}")
+                    Timber.e(e, "NotificationProcessor scoring commit failed: amount=$key")
+                    scoringPool.remove(key)
                 } finally {
                     scoringJobs.remove(key)
                 }

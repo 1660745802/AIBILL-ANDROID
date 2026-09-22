@@ -2,39 +2,34 @@ package com.aibill.android.presentation
 
 import android.app.ActivityManager
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
-import androidx.fragment.app.FragmentActivity
-import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.remote.interceptor.AuthEvent
 import com.aibill.android.data.remote.interceptor.AuthEventBus
 import com.aibill.android.presentation.navigation.AiBillNavHost
 import com.aibill.android.presentation.theme.AiBillTheme
 import com.aibill.android.presentation.ui.auth.AppLockScreen
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : FragmentActivity() {
-
-    @Inject
-    lateinit var userPreferences: UserPreferences
 
     @Inject
     lateinit var authEventBus: AuthEventBus
@@ -44,16 +39,12 @@ class MainActivity : FragmentActivity() {
 
     private val mainViewModel: MainViewModel by viewModels()
 
+    // ★ PR 修复：isLocked 不再依赖异步 DataStore 读取，
+    // 从 MainViewModel.appLockEnabled 同步消费 .value，避免冷启动+立即切后台的竞态绕过。
     private var isLocked by mutableStateOf(false)
     private var wasInBackground = false
     private var navigateTo by mutableStateOf<String?>(null)
     private var aiInputPrefill by mutableStateOf<String?>(null)
-    /**
-     * PR #41：AppLock 启用状态是否已经在进程生命周期内确认过。
-     * 冷启动（savedInstanceState 不为 null）时直接进入锁定流程，
-     * 不依赖 wasInBackground 标志，避免进程被杀后重启绕过。
-     */
-    private var appLockCheckedThisProcess = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,19 +52,13 @@ class MainActivity : FragmentActivity() {
         navigateTo = resolveNavigateTo(intent)
         aiInputPrefill = intent?.getStringExtra("ai_input")
         observeAuthEvents()
-        appLogger.autoCleanOldLogs(this) // 每次打开 App 清理 7 天前日志+文件
+        appLogger.autoCleanOldLogs(this)
 
-        // PR #41：进程启动时若启用 AppLock，立刻进入锁定态，
-        // 不依赖 wasInBackground（仅靠 onStart 设置）
-        lifecycleScope.launch {
-            val lockEnabled = userPreferences.appLockEnabled.first()
-            if (lockEnabled) {
-                isLocked = true
-            }
-            appLockCheckedThisProcess = true
-        }
+        // ★ 同步初始化锁定态（解决 PR #41 覆盖不到的冷启动 race）
+        isLocked = mainViewModel.appLockEnabled.value
+
         setContent {
-            val themeMode by userPreferences.themeMode.collectAsStateWithLifecycle(initialValue = "system")
+            val themeMode by mainViewModel.themeMode.collectAsStateWithLifecycle()
             AiBillTheme(themeMode = themeMode) {
                 if (isLocked) {
                     AppLockScreen(onUnlocked = { isLocked = false })
@@ -99,28 +84,34 @@ class MainActivity : FragmentActivity() {
             }
         }
 
+        // 监听 appLockEnabled 后续变化（用户在设置中开启 / 关闭）
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                mainViewModel.appLockEnabled.collect { _ ->
+                    // 监听副作用：仅作为状态信号；锁定逻辑统一在 onStart 处理。
+                }
+            }
+        }
+
+        // 监听 hideFromRecents 变化，实时同步到 ActivityManager
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                applyHideFromRecents()
+                mainViewModel.hideFromRecents.collect { hide ->
+                    applyHideFromRecents(hide)
+                }
             }
         }
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
-        // App 已在运行时点击通知，更新导航目标
         setIntent(intent)
         navigateTo = resolveNavigateTo(intent)
         intent.getStringExtra("ai_input")?.let { aiInputPrefill = it }
     }
 
-    /**
-     * 统一解析 Intent 中的导航目标。
-     * 支持 navigate_to extra 和 VIEW_TRANSACTIONS action。
-     */
     private fun resolveNavigateTo(intent: android.content.Intent?): String? {
         if (intent == null) return null
-        // ACTION: VIEW_TRANSACTIONS → 跳转流水 Tab
         if (intent.action == "VIEW_TRANSACTIONS") return "transactions"
         return intent.getStringExtra("navigate_to")
     }
@@ -132,36 +123,26 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
-        // 如果本进程已经检查过 AppLock（onCreate 已经处理过 cold start 场景），
-        // 这里只需要处理从后台返回的情况
-        if (wasInBackground && appLockCheckedThisProcess) {
-            wasInBackground = false
-            lifecycleScope.launch {
-                val lockEnabled = userPreferences.appLockEnabled.first()
-                if (lockEnabled) {
-                    isLocked = true
-                }
-            }
+        // ★ PR 修复：去掉 `appLockCheckedThisProcess` 标志，
+        // 改用同步状态：只要 enabled=true 且刚切回前台，就锁定。
+        // 首次 onCreate 已同步锁定，不需要额外守卫。
+        if (wasInBackground && !isLocked && mainViewModel.appLockEnabled.value) {
+            isLocked = true
         }
+        wasInBackground = false
     }
 
-    private suspend fun applyHideFromRecents() {
-        val hideFromRecents = userPreferences.hideFromRecents.first()
+    private fun applyHideFromRecents(hide: Boolean) {
         val activityManager = getSystemService(ACTIVITY_SERVICE) as? ActivityManager
-        activityManager?.appTasks?.firstOrNull()?.setExcludeFromRecents(hideFromRecents)
+        activityManager?.appTasks?.firstOrNull()?.setExcludeFromRecents(hide)
     }
 
-    /**
-     * 订阅 AuthEventBus：401 时 AuthInterceptor 会清 Token 并发出 TokenExpired。
-     * 这里统一跳转到登录页，并弹出 Dialog 提示用户。
-     */
     private fun observeAuthEvents() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 authEventBus.events.collect { event ->
                     when (event) {
                         is AuthEvent.TokenExpired -> {
-                            // 复用 navigateTo 触发 NavHost 跳 Login，由 NavHost 清栈
                             navigateTo = "login_force"
                         }
                     }

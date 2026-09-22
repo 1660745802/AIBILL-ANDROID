@@ -119,13 +119,16 @@ class PaymentAccessibilityService : AccessibilityService() {
         fun notificationProcessor(): NotificationProcessor
         fun appLogger(): com.aibill.android.util.AppLogger
         fun rulesManager(): NotificationRulesManager
+        @com.aibill.android.di.ApplicationScope
+        fun applicationScope(): kotlinx.coroutines.CoroutineScope
     }
 
     private lateinit var notificationProcessor: NotificationProcessor
     private lateinit var appLogger: com.aibill.android.util.AppLogger
     private lateinit var rulesManager: NotificationRulesManager
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // PR 修复：改用进程级 ApplicationScope，避免 Service 每次实例化都泄漏一个 SupervisorJob。
+    private lateinit var serviceScope: kotlinx.coroutines.CoroutineScope
     private val handler = Handler(Looper.getMainLooper())
 
     /** 防抖：同内容 8s 内不重复（从 10s 降低以减少快速支付场景的遗漏） */
@@ -168,6 +171,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         notificationProcessor = entryPoint.notificationProcessor()
         appLogger = entryPoint.appLogger()
         rulesManager = entryPoint.rulesManager()
+        serviceScope = entryPoint.applicationScope()
 
         refreshRulesIfNeeded(force = true)
         appLogger.info("A11Y", "无障碍服务已连接 (v4: STATE+CONTENT, 节流+重试)")
@@ -478,7 +482,9 @@ class PaymentAccessibilityService : AccessibilityService() {
         super.onDestroy()
         appLogger.warn("A11Y", "无障碍服务销毁")
         handler.removeCallbacksAndMessages(null)
-        serviceScope.cancel()
+        // PR 修复：serviceScope 已改用 @ApplicationScope 注入，
+        // 进程级 Scope 由 CoroutineScopeModule 持有，不在 Service 这里 cancel。
+        // 仅清理本地 handler 回调。
     }
 
     // ═══════════════════════════════════════════════════════════════

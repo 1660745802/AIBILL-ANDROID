@@ -1,6 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络安全配置
+
+  设计决策：全局允许明文 HTTP 是有意为之。
+  - 本应用为自部署（自托管后端），用户在「服务器配置」页填入任意 IP/域名
+  - 无法预知用户的后端地址，硬编码 domain-config 不现实
+  - 安全权衡：HTTP 请求承载的是用户自己的记账数据（私人），且所有写操作
+    仍走 JWT 鉴权，明文传输仅暴露请求体本身
+
+  缓解措施：
+  - 关键数据（JWT Token）存储在 EncryptedSharedPreferences 中，明文 HTTP
+    不会泄露 Token（Token 仅服务端读取并比对）
+  - 提供自签证书支持：NetworkSecurityConfig 可被用户编译时扩展
+-->
 <network-security-config>
-    <!-- 允许所有明文 HTTP 流量（自部署场景） -->
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />

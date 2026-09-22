@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,8 +24,9 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Card
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,7 +36,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,45 +48,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.aibill.android.data.local.datastore.UserPreferences
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.presentation.theme.AppTextButton
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.SharingStarted.Companion.Eagerly
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
-import javax.inject.Inject
-
-@HiltViewModel
-class ProfileViewModel @Inject constructor(
-    private val authRepository: com.aibill.android.domain.repository.AuthRepository,
-    userPreferences: UserPreferences,
-) : ViewModel() {
-    // PR #51：头像读 nickname/username 实际值（之前写死"用户"）
-    val displayName: StateFlow<String> = userPreferences.nickname
-        .combine(userPreferences.username) { nickname, username ->
-            nickname?.takeIf { it.isNotBlank() }
-                ?: username?.takeIf { it.isNotBlank() }
-                ?: "用户"
-        }
-        .stateIn(viewModelScope, Eagerly, "用户")
-
-    fun logout(onComplete: () -> Unit) {
-        viewModelScope.launch {
-            authRepository.logout()
-            onComplete()
-        }
-    }
-}
+import com.aibill.android.presentation.theme.AiBillTheme
 
 private val GradientStart = Color(0xFF00897B)
 private val GradientEnd = Color(0xFF4DB6AC)
@@ -95,7 +62,8 @@ private val GradientEnd = Color(0xFF4DB6AC)
 @Composable
 fun ProfileScreen(
     onNavigateToSettings: () -> Unit = {},
-    onNavigateToNotification: () -> Unit = {},
+    onNavigateToNotificationCenter: () -> Unit = {},
+    onNavigateToPermissionGuide: () -> Unit = {},
     onNavigateToCategoryManage: () -> Unit = {},
     onNavigateToAccountManage: () -> Unit = {},
     onNavigateToTrash: () -> Unit = {},
@@ -158,9 +126,15 @@ fun ProfileScreen(
         item {
             MenuCard {
                 ProfileMenuItem(
-                    icon = Icons.Default.Notifications, title = "通知设置",
-                    subtitle = "自动记账权限与后台保活",
-                    onClick = onNavigateToNotification,
+                    icon = Icons.Default.Notifications, title = "通知中心",
+                    subtitle = "查看待确认的自动记账",
+                    onClick = onNavigateToNotificationCenter,
+                )
+                MenuDivider()
+                ProfileMenuItem(
+                    icon = Icons.Default.Shield, title = "权限与保活",
+                    subtitle = "通知监听、电池优化、自启动",
+                    onClick = onNavigateToPermissionGuide,
                 )
                 MenuDivider()
                 ProfileMenuItem(
@@ -285,4 +259,20 @@ private fun ProfileMenuItem(
         modifier = Modifier.clickable(onClick = onClick),
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
     )
+}
+
+@Preview(showBackground = true, heightDp = 700)
+@Composable
+private fun ProfileScreenPreview() {
+    AiBillTheme {
+        ProfileScreen(
+            onNavigateToSettings = {},
+            onNavigateToNotificationCenter = {},
+            onNavigateToPermissionGuide = {},
+            onNavigateToCategoryManage = {},
+            onNavigateToAccountManage = {},
+            onNavigateToTrash = {},
+            onLogout = {},
+        )
+    }
 }

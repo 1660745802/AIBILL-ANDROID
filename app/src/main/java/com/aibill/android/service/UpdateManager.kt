@@ -97,7 +97,12 @@ class UpdateManager @Inject constructor(
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             val downloadId = dm.enqueue(request)
             // 记录 downloadId，下载完成广播里触发安装
-            DownloadCompleteReceiver.pendingDownloads[downloadId] = fileName
+            DownloadCompleteReceiver.cleanupExpired() // 入队前 lazy 清理过期条目
+            DownloadCompleteReceiver.pendingDownloads[downloadId] =
+                DownloadCompleteReceiver.Companion.PendingEntry(
+                    fileName = fileName,
+                    registeredAt = System.currentTimeMillis(),
+                )
             Timber.d("UpdateManager: download started id=$downloadId")
         } catch (e: Exception) {
             Timber.e(e, "UpdateManager: download failed")

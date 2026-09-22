@@ -7,9 +7,11 @@ import com.aibill.android.data.remote.interceptor.TokenManager
 import com.aibill.android.presentation.navigation.Route
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -26,6 +28,25 @@ class MainViewModel @Inject constructor(
 
     private val _startupState = MutableStateFlow(StartupState())
     val startupState: StateFlow<StartupState> = _startupState.asStateFlow()
+
+    /**
+     * PR 修复 AppLock 冷启动竞态：appLockEnabled 提升为 StateFlow，
+     * 初始值 Eagerly 同步消费默认值 false，后续 DataStore 变化即时同步。
+     * MainActivity onCreate 可同步读 `.value` 避免异步 race。
+     */
+    val appLockEnabled: StateFlow<Boolean> = userPreferences.appLockEnabled.stateIn(
+        viewModelScope, SharingStarted.Eagerly, false,
+    )
+
+    /** 主题模式：system / light / dark */
+    val themeMode: StateFlow<String> = userPreferences.themeMode.stateIn(
+        viewModelScope, SharingStarted.Eagerly, "system",
+    )
+
+    /** 是否从最近任务中隐藏 */
+    val hideFromRecents: StateFlow<Boolean> = userPreferences.hideFromRecents.stateIn(
+        viewModelScope, SharingStarted.Eagerly, false,
+    )
 
     init {
         viewModelScope.launch {

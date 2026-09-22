@@ -6,15 +6,16 @@
 -keep class **JsonAdapter { *; }
 
 # --- Retrofit ---
+# Retrofit 自带 consumer-rules.pro（保留泛型签名 / Method），无需全量 keep
 -keepattributes Signature
 -keepattributes *Annotation*
 -keep,allowobfuscation interface * {
     @retrofit2.http.* <methods>;
 }
 -dontwarn retrofit2.**
--keep class retrofit2.** { *; }
 
 # --- Room ---
+# Room 自带 consumer-rules.pro
 -keep class * extends androidx.room.RoomDatabase
 -keep @androidx.room.Entity class *
 
@@ -40,25 +41,22 @@
     *** INSTANCE;
     kotlinx.serialization.KSerializer serializer(...);
 }
--keep class kotlinx.serialization.** { *; }
--dontwarn kotlinx.serialization.**
-
-# --- Navigation Compose ---
--keep class androidx.navigation.** { *; }
+-keepclassmembers class * {
+    kotlinx.serialization.KSerializer serializer(...);
+}
 
 # --- OkHttp ---
+# OkHttp 自带 consumer-rules.pro
 -dontwarn okhttp3.**
 -dontwarn okio.**
--keep class okhttp3.** { *; }
 
 # --- Biometric ---
 -keep class androidx.biometric.** { *; }
 
 # --- Glance (Widget) ---
--keep class androidx.glance.** { *; }
-
-# --- App 自身 domain model (防止 enum 被混淆) ---
--keep class com.aibill.android.domain.model.** { *; }
+# Glance 自带 consumer-rules.pro，仅保留必要反射入口
+-keep class androidx.glance.appwidget.GlanceAppWidget { *; }
+-keep class * extends androidx.glance.appwidget.GlanceAppWidgetReceiver { *; }
 
 # --- General ---
 -keepattributes SourceFile,LineNumberTable

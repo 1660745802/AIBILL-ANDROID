@@ -3,6 +3,7 @@ package com.aibill.android.service
 import android.content.ComponentName
 import android.content.Context
 import android.provider.Settings
+import kotlinx.coroutines.delay
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -60,6 +61,13 @@ class NlsHealthCheckWorker(
                 )
                 android.service.notification.NotificationListenerService.requestRebind(component)
                 Timber.d("NLS 心跳: 已请求 requestRebind 自动恢复")
+                // PR 修复：requestRebind 是异步的，等待 2s 后再判断，
+                // 避免误报"断连"通知（系统实际 rebind 成功）。
+                delay(2_000)
+                if (isNlsConnected()) {
+                    Timber.d("NLS 心跳: requestRebind 后已恢复，跳过通知")
+                    return Result.success()
+                }
             } catch (e: Exception) {
                 Timber.w(e, "NLS 心跳: requestRebind 失败")
             }

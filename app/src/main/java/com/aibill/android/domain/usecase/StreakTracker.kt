@@ -33,17 +33,15 @@ class StreakTracker @Inject constructor(
 
     /**
      * 记账后调用，更新连续天数和总笔数
+     * @return 更新后的 StreakInfo
      */
-    suspend fun onTransactionRecorded() {
-        streakRepository.recordTransaction()
-    }
+    suspend fun onTransactionRecorded(): StreakInfo = streakRepository.recordTransaction()
 
     /**
      * App 启动时调用：如果最后记账日期距今超过1天，重置连续天数
+     * @return 更新后的 StreakInfo
      */
-    suspend fun checkAndResetIfNeeded() {
-        streakRepository.resetIfExpired()
-    }
+    suspend fun checkAndResetIfNeeded(): StreakInfo = streakRepository.resetIfExpired()
 
     /**
      * 判断是否达到新里程碑
