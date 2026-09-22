@@ -223,11 +223,25 @@ fun SettingsScreen(
 
     // PR：发现新版本确认对话框（先确认再下载，避免误点直接下载）
     pendingUpdate?.let { info ->
+        // P0-2：forceUpdate=true 时禁止取消对话框，隐藏「稍后」按钮
         AlertDialog(
-            onDismissRequest = { pendingUpdate = null },
-            title = { Text("发现新版本 ${info.versionName}") },
+            onDismissRequest = { if (!info.forceUpdate) pendingUpdate = null },
+            title = {
+                Text(
+                    if (info.forceUpdate) "必须升级到 ${info.versionName}" else "发现新版本 ${info.versionName}",
+                    color = if (info.forceUpdate) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                )
+            },
             text = {
                 Column {
+                    if (info.forceUpdate) {
+                        Text(
+                            text = "服务端标记为强制升级，必须升级才能继续使用。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                     Text(
                         text = "当前版本 ${com.aibill.android.BuildConfig.VERSION_NAME} → ${info.versionName}",
                         style = MaterialTheme.typography.bodyMedium,
@@ -259,16 +273,19 @@ fun SettingsScreen(
             },
             confirmButton = {
                 AppTextButton(
-                    text = "立即更新",
+                    text = if (info.forceUpdate) "立即升级" else "立即更新",
                     onClick = {
                         viewModel.startUpdateDownload(context, info)
                         pendingUpdate = null
                     },
                 )
             },
-            dismissButton = {
-                AppTextButton(text = "稍后", onClick = { pendingUpdate = null })
-            }
+            // P0-2：forceUpdate=true 时不显示「稍后」按钮
+            dismissButton = if (info.forceUpdate) null else {
+                {
+                    AppTextButton(text = "稍后", onClick = { pendingUpdate = null })
+                }
+            },
         )
     }
 

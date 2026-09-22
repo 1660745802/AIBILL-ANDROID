@@ -821,6 +821,20 @@ data class UpdateInfo(
 **强制升级**：
 - billserver 下发 `force_update=true` 时忽略用户延迟，直接走下载流程
 - 仅按需启用（一般版本不强制）
+- 客户端实现（P0-2）：
+  * 通知：隐藏「稍后」按钮，设为 Ongoing（用户不能普通滑动取消），标题改「必须升级到 X.Y.Z」
+  * Settings 页 AlertDialog：强制升级时隐藏「稍后」按钮，禁止对话框 dismiss，标题红色「必须升级到 X.Y.Z」+ 顶部加「服务端标记为强制升级」说明
+  * UpdateInstallReceiver：接收 EXTRA_FORCE_UPDATE intent extra，ACTION_DISMISS 时若强制升级则忽略
+  * UpdateInfo 字段保留 forceUpdate，传递链路完整
+
+**手动检查反馈**（三态，P0-2 + 1737f1d）：
+- SettingsViewModel.checkUpdate 用 `UpdateManager.fetchLatestResult()` 三态（Success / NoUpdate / Failure）
+- 每个分支保证有用户可见 Toast（修复「点了没反应」永久沉默 bug）：
+  * Success + 版本更新 → `发现新版本 x.y.z` + 弹 AlertDialog（强制升级时隐藏「稍后」）
+  * Success + 版本不新 → `已是最新版本 vX.Y.Z`
+  * NoUpdate（billserver 权威说不需更新）→ `已是最新版本 vX.Y.Z（服务器无更新）`
+  * Failure（所有源都拿不到）→ `获取失败：billserver 不可达且 GitHub 拉取失败`
+- UpdateCheckWorker（后台）P1-1：异常返回 Result.retry() 而非无脑 success，WorkManager 指数退避（10s 起）
 
 **降级与回退**：
 - billserver 不可达 → GitHub Release（不影响使用）

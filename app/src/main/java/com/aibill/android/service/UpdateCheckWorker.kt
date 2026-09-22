@@ -35,7 +35,9 @@ class UpdateCheckWorker @AssistedInject constructor(
             Result.success()
         } catch (e: Exception) {
             Timber.w(e, "Update check failed")
-            Result.success() // 不 retry，等下个周期
+            // P1-1：transient 错误（网络 / 临时不可用）应 retry，避免下个周期才
+            // 重试造成不必要的 24h 延迟。WorkManager 默认指数退避（10s 起，上限 5h）。
+            Result.retry()
         }
     }
 

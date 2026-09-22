@@ -52,9 +52,9 @@ class UpdateManagerFallbackTest {
     fun `checkUpdate returns billserver when hasUpdate=true`() = runTest {
         coEvery { appUpdateApi.checkUpdate(any(), any()) } returns AppUpdateDto(
             hasUpdate = true,
-            latestVersion = "1.3.0",
-            latestVersionCode = 4,
-            apkUrl = "https://billserver/aibill-1.3.0.apk",
+            latestVersion = "1.4.0",
+            latestVersionCode = 5,
+            apkUrl = "https://billserver/aibill-1.4.0.apk",
             apkSize = 4500000L,
             changelog = "新功能",
         )
@@ -62,7 +62,7 @@ class UpdateManagerFallbackTest {
         val info = manager().checkUpdate()
 
         assertNotNull(info)
-        assertEquals("1.3.0", info!!.versionName)
+        assertEquals("1.4.0", info!!.versionName)
         assertEquals(UpdateManager.Source.BILLSERVER, info.source)
         coVerify(exactly = 0) { githubReleaseApi.getLatestRelease(any(), any()) }
     }
@@ -84,13 +84,16 @@ class UpdateManagerFallbackTest {
 
     @Test
     fun `checkUpdate falls back to github when billserver throws`() = runTest {
+        // GitHub release 版本需 > 当前 BuildConfig.VERSION_NAME（避免
+        // githubReleaseUpdate(forceLatest=false) 因版本对比返回 null）。
+        // build.gradle.kts 当前 1.3.1，所以 mock 一个更高版本。
         coEvery { appUpdateApi.checkUpdate(any(), any()) } throws RuntimeException("network error")
-        coEvery { githubReleaseApi.getLatestRelease(any(), any()) } returns gitRelease("v1.3.0")
+        coEvery { githubReleaseApi.getLatestRelease(any(), any()) } returns gitRelease("v1.4.0")
 
         val info = manager().checkUpdate()
 
         assertNotNull(info)
-        assertEquals("1.3.0", info!!.versionName)
+        assertEquals("1.4.0", info!!.versionName)
         assertEquals(UpdateManager.Source.GITHUB, info.source)
     }
 
@@ -111,11 +114,96 @@ class UpdateManagerFallbackTest {
     @Test
     fun `fetchLatest falls back to github only when billserver unreachable`() = runTest {
         coEvery { appUpdateApi.checkUpdate(any(), any()) } throws java.io.IOException("offline")
-        coEvery { githubReleaseApi.getLatestRelease(any(), any()) } returns gitRelease("v1.3.0")
+        coEvery { githubReleaseApi.getLatestRelease(any(), any()) } returns gitRelease("v1.4.0")
 
         val info = manager().fetchLatest()
 
         assertNotNull(info)
         assertEquals(UpdateManager.Source.GITHUB, info?.source)
+    }
+
+    // ---------- fetchLatestResult() 三态 (P1-3 新增) ----------
+
+    @Test
+    fun `fetchLatestResult returns Success from billserver when hasUpdate=true`() = runTest {
+        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns AppUpdateDto(
+            hasUpdate = true,
+            latestVersion = "1.4.0",
+            latestVersionCode = 5,
+            apkUrl = "https://billserver/aibill-1.4.0.apk",
+            apkSize = 4500000L,
+        )
+
+        val result = manager().fetchLatestResult()
+
+        assert(result is UpdateManager.FetchLatestResult.Success) {
+            "expected Success but got $result"
+        }
+        result as UpdateManager.FetchLatestResult.Success
+        assertEquals("1.4.0", result.info.versionName)
+        assertEquals(UpdateManager.Source.BILLSERVER, result.info.source)
+        coVerify(exactly = 0) { githubReleaseApi.getLatestRelease(any(), any()) }
+    }
+
+    @Test
+    fun `fetchLatestResult returns NoUpdate when billserver reachable says up-to-date`() = runTest {
+        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns AppUpdateDto(
+            hasUpdate = false,
+            latestVersion = "1.2.0",
+            latestVersionCode = 3,
+        )
+
+        val result = manager().fetchLatestResult()
+
+        // 关键语义：billserver 权威说不需更新 → NoUpdate，不 fallback GitHub
+        assert(result is UpdateManager.FetchLatestResult.NoUpdate) {
+            "expected NoUpdate but got $result"
+        }
+        coVerify(exactly = 0) { githubReleaseApi.getLatestRelease(any(), any()) }
+    }
+
+    @Test
+    fun `fetchLatestResult falls back to github when billserver throws and github succeeds`() = runTest {
+        coEvery { appUpdateApi.checkUpdate(any(), any()) } throws java.io.IOException("offline")
+        coEvery { githubReleaseApi.getLatestRelease(any(), any()) } returns gitRelease("v1.4.0")
+
+        val result = manager().fetchLatestResult()
+
+        assert(result is UpdateManager.FetchLatestResult.Success) {
+            "expected Success (from github fallback) but got $result"
+        }
+        result as UpdateManager.FetchLatestResult.Success
+        assertEquals(UpdateManager.Source.GITHUB, result.info.source)
+    }
+
+    @Test
+    fun `fetchLatestResult returns Failure when both billserver and github fail`() = runTest {
+        coEvery { appUpdateApi.checkUpdate(any(), any()) } throws java.io.IOException("offline")
+        coEvery { githubReleaseApi.getLatestRelease(any(), any()) } throws java.io.IOException("github offline")
+
+        val result = manager().fetchLatestResult()
+
+        assert(result is UpdateManager.FetchLatestResult.Failure) {
+            "expected Failure but got $result"
+        }
+        result as UpdateManager.FetchLatestResult.Failure
+        assert(result.message.isNotBlank()) { "Failure 应携带原因供 UI 提示" }
+    }
+
+    @Test
+    fun `fetchLatestResult returns Failure when github returns old version (forceLatest=true)`() = runTest {
+        // 边界：billserver 不可达 + GitHub 有但版本旧。fetchLatestResult 用
+        // forceLatest=true，理论上 githubReleaseUpdate 仍会返回；测试 GitHub
+        // release 完全没 apk asset 的场景（解析后返回 null）。
+        coEvery { appUpdateApi.checkUpdate(any(), any()) } throws java.io.IOException("offline")
+        coEvery { githubReleaseApi.getLatestRelease(any(), any()) } returns gitRelease("v0.0.0").copy(
+            assets = emptyList(),  // 没 apk asset → toUpdateInfo 返回 null
+        )
+
+        val result = manager().fetchLatestResult()
+
+        assert(result is UpdateManager.FetchLatestResult.Failure) {
+            "expected Failure but got $result"
+        }
     }
 }

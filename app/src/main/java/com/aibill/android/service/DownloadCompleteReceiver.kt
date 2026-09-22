@@ -37,7 +37,15 @@ class DownloadCompleteReceiver : BroadcastReceiver() {
         /** downloadId → (文件名, 注册时间)，用于超时清理避免 map 永久增长 */
         data class PendingEntry(val fileName: String, val registeredAt: Long)
 
-        /** 下载任务 → 注册条目 */
+        /**
+         * P2-2：全局 ConcurrentHashMap 而非 Hilt @Singleton。
+         * 理由：
+         * 1. DownloadCompleteReceiver 是 BroadcastReceiver，不能 @Inject
+         * 2. 仅下载场景使用，同时只有一个 APK 下载（多版本同下场景罕见）
+         * 3. cleanupExpired() 在每次新下载入队时触发，避免 map 无限增长
+         * 4. 进程重启后 map 清空是 acceptable——用户需重新点击「立即更新」
+         *    （DownloadManager 本身也是进程内服务，重启会丢下载状态）
+         */
         val pendingDownloads = ConcurrentHashMap<Long, PendingEntry>()
 
         /** 24 小时过期阈值 */

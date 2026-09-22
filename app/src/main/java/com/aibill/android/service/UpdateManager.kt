@@ -271,6 +271,9 @@ class UpdateManager @Inject constructor(
         /**
          * 语义化版本对比：remote 是否比 current 新。
          * 支持 1.4.2 / 1.4 / 1 格式，逐段数字比较。
+         *
+         * P2-3：非数字段（如 "1.4.0-beta" 里的 "-beta"）静默截断为 0，不参与比较。
+         * 这样 "1.4.0-beta" 与 "1.4.0" 视为相等，不误判为新版。
          */
         fun isNewerVersion(remote: String, current: String): Boolean {
             val r = remote.split(".").map { it.toIntOrNull() ?: 0 }

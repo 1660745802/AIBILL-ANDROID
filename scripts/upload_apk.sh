@@ -17,6 +17,13 @@
 #   - billserver 已实现 GET /api/app/update + POST /api/admin/updates
 #   - 安装了 curl 和 python3
 #   - --github：额外需要 gh CLI（https://cli.github.com/）且已登录
+#
+# P2-4 权限边界：
+#   billserver 容器内 APK 文件由 root 用户拥有（容器内 fastify-static / 上传
+#   handler 以 root 身份 fs.writeFile）。宿主机普通用户 rm 可能「权限不够」——
+#   清理时应：
+#     docker exec bill-app rm /app/data/updates/<file>.apk
+#   （容器默认以 root 运行，不需要 -u root）。
 
 set -e
 
