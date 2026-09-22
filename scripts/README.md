@@ -1,86 +1,89 @@
-# 通知记账规则云控
+# scripts 目录
 
-## 概述
+app 项目内用于和 billserver 后端交互的运维脚本集合。默认服务器地址 `http://localhost:3000`，可用环境变量 `AIBILL_SERVER_URL` 覆盖。
 
-通知自动记账的所有规则（排除词、关键词、包名白名单等）支持服务端下发，无需发版即可调整。
+## 脚本清单
 
-客户端启动时自动拉取最新规则，失败时 fallback 到硬编码默认值。
+| 脚本 | 方向 | 用途 | 鉴权 |
+|---|---|---|---|
+| `update_rules.sh` | 推送 | 把 `rules.json` 的通知规则推到 billserver 并激活 | admin |
+| `upload_apk.sh` | 推送 | 构建 release APK + 上传到 billserver + 自动激活 | admin |
+| `check_update.sh` | 拉取 | 在 app 项目内模拟客户端查/下载更新 | 无（公开） |
 
-## 快速更新规则
+## update_rules.sh — 推送通知解析规则
 
-### 1. 编辑规则文件
-
-修改 `scripts/rules.json`（**注意递增 version 字段**）。
-
-### 2. 执行更新脚本
+云控通知记账的关键词、排除词、商家映射等。客户端冷启动自动拉取最新规则，失败时 fallback 硬编码默认值。
 
 ```bash
-# Linux/Mac
-export AIBILL_SERVER_URL=http://你的服务器:3000
-export AIBILL_ADMIN_PASS=你的密码
+# 1. 编辑 scripts/rules.json（注意递增 version 字段）
+# 2. 执行推送
+export AIBILL_SERVER_URL=http://your-server:3000
+export AIBILL_ADMIN_PASS=your-admin-pass
 ./scripts/update_rules.sh scripts/rules.json
-
-# Windows (PowerShell)
-$env:AIBILL_SERVER_URL = "http://你的服务器:3000"
-$env:AIBILL_ADMIN_PASS = "你的密码"
-bash scripts/update_rules.sh scripts/rules.json
 ```
 
-### 3. 验证
+详情参见后端文档：`GET /api/config/notification-rules`、`POST /api/admin/notification-rules`。
+
+## upload_apk.sh — 发布 APK 到 billserver
+
+构建 release APK 并上传到 billserver，让客户端走 billserver 自托管下载（不走 GitHub Release）。
 
 ```bash
-curl $AIBILL_SERVER_URL/api/config/notification-rules | python3 -m json.tool
+# 前置：在根目录配置 keystore.properties（git 忽略）
+export AIBILL_SERVER_URL=http://your-server:3000
+export AIBILL_ADMIN_PASS=your-admin-pass
+
+# 可选参数
+# AIBILL_FORCE_UPDATE=true   强制升级（客户端弹不可关闭通知）
+# AIBILL_APK_PATH=/x/y.apk   指定已构建好的 APK（跳过 ./gradlew assembleRelease）
+
+./scripts/upload_apk.sh
 ```
 
-客户端下次冷启动时自动生效。
+**流程**：`./gradlew assembleRelease` → 读 `versionName/versionCode` → `POST /api/admin/updates`（multipart 上传）→ billserver 自动激活。
 
-## 手动 API 操作
+## check_update.sh — 在 app 项目内验证/下载更新
 
-### 查看当前生效规则（无需认证）
+不构建 APK，直接模拟客户端调 `GET /api/app/update` 验证服务端返回，可选下载最新 APK 到 `app/build/outputs/apk/updates/`。
 
 ```bash
-GET /api/config/notification-rules
+# 仅检查（不下载）—— 适合开发时调试服务端接口
+./scripts/check_update.sh
+
+# 检查 + 下载新版本（has_update=true 才下载）
+./scripts/check_update.sh --download
+
+# 强制下载最新版（忽略 has_update，回退测试用）
+./scripts/check_update.sh -d -f
 ```
 
-支持 ETag/304 缓存。
-
-### 创建新版本（需 admin）
-
+下载完成后可手动安装：
 ```bash
-POST /api/admin/notification-rules
-Authorization: Bearer <token>
-Content-Type: application/json
-
-# body 就是 rules.json 的内容
+adb install -r app/build/outputs/apk/updates/aibill-1.3.0-20260922_223000.apk
 ```
 
-### 激活指定版本（需 admin）
+脚本会自动校验下载文件是有效 APK（zip magic `PK\x03\x04`），失败时打印前 200 字节便于排查（HTML 错误页 / JSON 错误响应）。
 
-```bash
-PUT /api/admin/notification-rules/:id/activate
-Authorization: Bearer <token>
-```
+## 客户端降级 fallback
 
-### 查看历史版本（需 admin）
+客户端 [UpdateManager](../app/src/main/java/com/aibill/android/service/UpdateManager.kt) 的双源策略：
 
-```bash
-GET /api/admin/notification-rules
-Authorization: Bearer <token>
-```
+1. billserver 可达 → 信任 billserver 判定
+   - `has_update=true` → 下载该版本
+   - `has_update=false` → 显示"已是最新"，**不** fallback GitHub
+2. billserver 不可达（网络/5xx）→ fallback GitHub Release
+3. 全部失败 → 返回 null
 
-## 规则结构说明
+这意味着 billserver 临时挂掉时，旧版 App 仍能从 GitHub Release 升级；billserver 恢复后自动回到自托管优先链路。
 
-| 模块 | 用途 | 常见修改场景 |
-|------|------|-------------|
-| `nls` | 通知监听排除层 | 新增支付App、调整微信/支付宝放行规则 |
-| `a11y` | 无障碍识别层 | 新增/移除电商App监听、调整排除词 |
-| `sms` | 短信垃圾过滤 | 新增营销短信关键词 |
-| `source_mapping` | 包名→友好名称 | 新增App的展示名称 |
-| `processor` | AI处理器参数 | 调整评分窗口/去重时间/营销后缀 |
+## 公共环境变量
 
-## 客户端行为
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `AIBILL_SERVER_URL` | `http://localhost:3000` | billserver 地址 |
+| `AIBILL_ADMIN_USER` | `admin` | admin 账号（update_rules / upload_apk 用） |
+| `AIBILL_ADMIN_PASS` | （必填） | admin 密码 |
+| `AIBILL_APK_PATH` | `app/build/outputs/apk/release/app-release.apk` | upload_apk 的 APK 路径 |
+| `AIBILL_FORCE_UPDATE` | `false` | upload_apk 是否标记为强制升级 |
 
-- **拉取时机**：App 冷启动时异步拉取
-- **缓存**：内存 → SharedPreferences → 硬编码默认值
-- **ETag**：版本未变时返回 304，不重复下载
-- **容错**：网络失败/解析失败静默回退到默认值，不影响使用
+Windows (PowerShell) 用 `$env:AIBILL_SERVER_URL = "..."` 设置变量。

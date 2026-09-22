@@ -2,7 +2,7 @@
 
 > 本文档描述项目从架构到编码规范的完整设计。  
 > 对应代码：`app/src/main/java/com/aibill/android/`  
-> 适用版本：versionCode 2 / versionName 1.0.0 / minSdk 26 / targetSdk 35
+> 适用版本：versionCode 3 / versionName 1.2.0 / minSdk 26 / targetSdk 35
 
 ---
 
@@ -75,7 +75,7 @@ app/src/main/java/com/aibill/android/
 │   │   ├── dao/                 # 9 个 DAO
 │   │   └── datastore/           # UserPreferences + SyncLock
 │   └── remote/
-│       ├── api/                 # 9 个 Retrofit API
+│       ├── api/                 # 10 个 Retrofit API（含 AppUpdateApi）
 │       ├── dto/request|response/
 │       ├── interceptor/         # Auth/Retry/ServerUrl + TokenManager + AuthEventBus
 │       └── SafeApiCall.kt
@@ -777,13 +777,59 @@ git push origin v1.1.0
 #    用户收到温和的"有新版本"通知
 ```
 
-### B.4 自更新机制
+### B.4 自更新机制（双源 + 通知确认）
 
-发布后由 [UpdateCheckWorker](./ARCHITECTURE.md#六-离线同步) 检测 GitHub Release，下载新版 APK 后通过 [UpdateInstallReceiver](./ARCHITECTURE.md#七-通知监听-v3-架构) 触发系统安装器：
+发布后由 [UpdateCheckWorker](./ARCHITECTURE.md#六-离线同步) 调度 [UpdateManager](./ARCHITECTURE.md#六-离线同步)，通过系统安装器触发升级：
 
-- 用户无需打开 Play Store（自部署无需 Play Store）
-- 安全：APK 签名由系统安装器校验
-- 温和：仅在 Settings 页显示"有新版本"按钮，不强制升级
+**双源优先级策略**（[UpdateManager.checkUpdate()](./ARCHITECTURE.md#六-离线同步)）：
+
+1. **billserver 自托管**（[AppUpdateApi](./ARCHITECTURE.md#三-api-契约)，`GET /api/app/update`）—— 公司可控源，内网可达
+   - `has_update=true` → 返回该版本
+   - `has_update=false` → 返回"已是最新"，**不** fallback GitHub（避免误判）
+   - 网络/5xx 异常 → fallback GitHub
+2. **GitHub Release fallback**（[GithubReleaseApi](./ARCHITECTURE.md#三-api-契约)）—— 兜底
+   - 内网 billserver 不可达时启用
+   - 用 tag 名做语义化版本对比（[isNewerVersion](./ARCHITECTURE.md#六-离线同步)）
+3. 全部失败 → 返回 null（App 显示"获取失败"）
+
+**三态判定**（`BillserverResult` sealed class）：
+- `Success(info)`：billserver 可达且有版本
+- `NoUpdate`：billserver 可达且已是最新（**关键**：不 fallback）
+- `Failure(t)`：billserver 不可达
+
+**UpdateInfo 字段**：
+```kotlin
+data class UpdateInfo(
+    val versionName: String,    // "1.3.0"
+    val changelog: String,      // 版本说明
+    val apkUrl: String,         // 绝对 URL（billserver 或 GitHub）
+    val apkSize: Long,
+    val source: Source,         // BILLSERVER / GITHUB / UNKNOWN（诊断/统计用）
+    val forceUpdate: Boolean,   // billserver 可下发强制升级
+)
+```
+
+**下载与安装**（[UpdateManager.downloadAndInstall](./ARCHITECTURE.md#六-离线同步)）：
+- 系统 DownloadManager（带进度通知）
+- 完成 → [DownloadCompleteReceiver](./ARCHITECTURE.md#七-通知监听-v3-架构) → FileProvider → 系统安装器
+
+**通知确认流程**（避免误触下载）：
+- [UpdateNotifier](./ARCHITECTURE.md#七-通知监听-v3-架构) 通知带「立即更新」「稍后」两按钮
+- Settings 页检查到新版本时弹 [AlertDialog](./ARCHITECTURE.md#七-通知监听-v3-架构) 二次确认
+- `SettingsViewModel.checkUpdate` 返回三态：`Available / UpToDate / Failed`
+
+**强制升级**：
+- billserver 下发 `force_update=true` 时忽略用户延迟，直接走下载流程
+- 仅按需启用（一般版本不强制）
+
+**降级与回退**：
+- billserver 不可达 → GitHub Release（不影响使用）
+- 旧版 App（无 AppUpdateApi）走纯 GitHub 路径
+
+**安全**：
+- APK 签名由系统安装器校验
+- `apk_url` 必须是**绝对 URL**，由服务端控制（CORS/防盗链）
+- 不强制升级（除服务端主动下发 `force_update`）
 
 ### B.5 ProGuard / R8 规则
 

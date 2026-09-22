@@ -19,7 +19,7 @@ AI 驱动的智能记账 Android 原生应用，复用 [AIBILL 后端](https://g
 
 | 层 | 选型 |
 |---|---|
-| 语言 | Kotlin 17 |
+| 语言 | Kotlin 1.9.x（JVM 17） |
 | UI | Jetpack Compose + Material 3 |
 | 架构 | MVVM + Clean Architecture（UI / Domain / Data） |
 | DI | Hilt（含 `@HiltWorker`） |
@@ -69,13 +69,13 @@ app/src/main/java/com/aibill/android/
 │   └── usecase/       # CategoryLearningEngine / StreakTracker
 ├── data/              # 数据层
 │   ├── local/         # Room (9 Entity + 9 DAO) + DataStore
-│   └── remote/        # Retrofit (9 API) + Interceptor + SafeApiCall
+│   └── remote/        # Retrofit (10 API) + Interceptor + SafeApiCall
 ├── presentation/      # UI 层
 │   ├── navigation/    # Route + NavHost + BottomNavBar（类型安全路由）
 │   ├── theme/         # Material 3 主题
 │   ├── widget/        # Glance 桌面小组件
 │   └── ui/            # 10 个功能模块（home/transactions/statistics/...）
-├── service/           # 后台服务（NotificationMonitor/Accessibility/SmsReceiver/SyncWorker/...）
+├── service/           # 后台服务（NotificationMonitor/Accessibility/SmsReceiver/SyncWorker/UpdateManager/...）
 └── util/              # 全局工具（NetworkMonitor/AppLogger/通知解析/...）
 ```
 
@@ -84,11 +84,10 @@ app/src/main/java/com/aibill/android/
 ### 分支策略
 
 ```
-main          ← 生产分支，PR + CI 通过才能合并
-└── develop   ← 开发主线
-     ├── feat/*     ← 新功能
-     ├── fix/*      ← Bug 修复
-     └── refactor/* ← 重构
+main              ← 生产分支，PR + CI 通过才能合并
+├── feat/*        ← 新功能
+├── fix/*         ← Bug 修复
+└── refactor/*    ← 重构
 ```
 
 ### Commit 规范（Conventional Commits）
@@ -115,4 +114,9 @@ main          ← 生产分支，PR + CI 通过才能合并
 
 ## 🛠️ 工具与脚本
 
-- `scripts/rules.json` + `scripts/update_rules.sh` — 通知解析规则云控（详见 [scripts/README.md](scripts/README.md)）
+- `scripts/update_rules.sh` — 推送通知解析规则到 billserver（云控规则）
+- `scripts/upload_apk.sh` — 构建 + 上传 release APK 到 billserver（自托管更新）
+- `scripts/check_update.sh` — 在 app 项目内验证 `/api/app/update` + 可选下载最新 APK
+- `scripts/rules.json` — 通知规则定义（被 update_rules.sh 引用）
+
+详见 [scripts/README.md](scripts/README.md)。

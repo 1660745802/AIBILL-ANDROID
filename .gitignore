@@ -46,3 +46,4 @@ COMMIT_MSG.tmp
 # gradle/wrapper/gradle-wrapper.jar
 app/release/ 
 keystore.properties
+.herdr/
