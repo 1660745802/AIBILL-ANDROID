@@ -2,8 +2,10 @@ package com.aibill.android.service
 
 import android.content.Context
 import androidx.hilt.work.HiltWorker
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -32,7 +34,14 @@ class RulesSyncWorker @AssistedInject constructor(
         fun schedule(context: Context) {
             val request = PeriodicWorkRequestBuilder<RulesSyncWorker>(
                 INTERVAL_HOURS, TimeUnit.HOURS
-            ).build()
+            )
+                // PR 修复：拉取服务端规则需要联网，离线时直接跳过本周期
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                )
+                .build()
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,

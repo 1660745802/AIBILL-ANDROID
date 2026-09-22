@@ -5,7 +5,9 @@ import com.aibill.android.data.repository.AiRepositoryImpl
 import com.aibill.android.data.repository.AuthRepositoryImpl
 import com.aibill.android.data.repository.BudgetRepositoryImpl
 import com.aibill.android.data.repository.CategoryRepositoryImpl
+import com.aibill.android.data.repository.CategoryRuleRepositoryImpl
 import com.aibill.android.data.repository.StatsRepositoryImpl
+import com.aibill.android.data.repository.StreakRepositoryImpl
 import com.aibill.android.data.repository.TemplateRepositoryImpl
 import com.aibill.android.data.repository.TransactionRepositoryImpl
 import com.aibill.android.domain.repository.AccountRepository
@@ -13,7 +15,9 @@ import com.aibill.android.domain.repository.AiRepository
 import com.aibill.android.domain.repository.AuthRepository
 import com.aibill.android.domain.repository.BudgetRepository
 import com.aibill.android.domain.repository.CategoryRepository
+import com.aibill.android.domain.repository.CategoryRuleRepository
 import com.aibill.android.domain.repository.StatsRepository
+import com.aibill.android.domain.repository.StreakRepository
 import com.aibill.android.domain.repository.TemplateRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import dagger.Binds
@@ -58,4 +62,14 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindStatsRepository(impl: StatsRepositoryImpl): StatsRepository
+
+    // PR 重构：CategoryLearningEngine 不再直接持有 DAO
+    @Binds
+    @Singleton
+    abstract fun bindCategoryRuleRepository(impl: CategoryRuleRepositoryImpl): CategoryRuleRepository
+
+    // PR 重构：StreakTracker 不再持有 Context/DataStore
+    @Binds
+    @Singleton
+    abstract fun bindStreakRepository(impl: StreakRepositoryImpl): StreakRepository
 }

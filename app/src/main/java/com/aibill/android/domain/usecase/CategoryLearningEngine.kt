@@ -1,7 +1,7 @@
 package com.aibill.android.domain.usecase
 
-import com.aibill.android.data.local.dao.CategoryRuleDao
-import com.aibill.android.data.local.entity.CategoryRuleEntity
+import com.aibill.android.domain.model.CategoryRule
+import com.aibill.android.domain.repository.CategoryRuleRepository
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -16,7 +16,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class CategoryLearningEngine @Inject constructor(
-    private val categoryRuleDao: CategoryRuleDao,
+    private val categoryRuleRepository: CategoryRuleRepository,
 ) {
 
     /**
@@ -27,15 +27,15 @@ class CategoryLearningEngine @Inject constructor(
         val keyword = description.trim().lowercase()
         if (keyword.isBlank()) return
 
-        val existing = categoryRuleDao.findByKeyword(keyword)
+        val existing = categoryRuleRepository.findByKeyword(keyword)
         if (existing != null) {
             // 如果分类相同，仅增加命中次数
             if (existing.categoryId == categoryId) {
-                categoryRuleDao.incrementHitCount(keyword)
+                categoryRuleRepository.incrementHitCount(keyword)
             } else {
                 // 分类改变，覆盖旧规则
-                categoryRuleDao.insertOrUpdate(
-                    CategoryRuleEntity(
+                categoryRuleRepository.upsert(
+                    CategoryRule(
                         keyword = keyword,
                         categoryId = categoryId,
                         hitCount = 1,
@@ -44,8 +44,8 @@ class CategoryLearningEngine @Inject constructor(
                 )
             }
         } else {
-            categoryRuleDao.insertOrUpdate(
-                CategoryRuleEntity(
+            categoryRuleRepository.upsert(
+                CategoryRule(
                     keyword = keyword,
                     categoryId = categoryId,
                     hitCount = 1,
@@ -72,22 +72,22 @@ class CategoryLearningEngine @Inject constructor(
         if (input.isBlank()) return null
 
         // 1. 精确匹配
-        val exactMatch = categoryRuleDao.findByKeyword(input)
+        val exactMatch = categoryRuleRepository.findByKeyword(input)
         if (exactMatch != null) {
-            categoryRuleDao.incrementHitCount(input)
+            categoryRuleRepository.incrementHitCount(input)
             Timber.d("精确匹配: [$input] → categoryId=${exactMatch.categoryId}")
             return exactMatch.categoryId
         }
 
         // 2. 包含匹配：按 hitCount DESC + keyword 长度 DESC 优先
         //    （更长的关键词更具体，避免「信用」错误命中「信用卡」规则）
-        val allRules = categoryRuleDao.getAll()
+        val allRules = categoryRuleRepository.getAll()
             .sortedByDescending { it.keyword.length }
         val containsMatch = allRules.firstOrNull { rule ->
             input.containsWordBoundary(rule.keyword)
         }
         if (containsMatch != null) {
-            categoryRuleDao.incrementHitCount(containsMatch.keyword)
+            categoryRuleRepository.incrementHitCount(containsMatch.keyword)
             Timber.d("包含匹配: [$input] 命中规则 [${containsMatch.keyword}] → categoryId=${containsMatch.categoryId}")
             return containsMatch.categoryId
         }

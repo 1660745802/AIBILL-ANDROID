@@ -9,10 +9,14 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.glance.appwidget.updateAll
+import com.aibill.android.di.ApplicationScope
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.presentation.widget.MonthlySummaryWidget
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -25,8 +29,25 @@ private val Context.widgetDataStore: DataStore<Preferences>
 /**
  * Widget 数据更新器
  * 通过 DataStore 缓存月度收支数据，供 MonthlySummaryWidget 读取
+ *
+ * PR 修复：保留 [object] 形态（避免改动 7 处调用方），
+ * 内部通过 Hilt [EntryPoint] 拉取进程级 [ApplicationScope]，
+ * 替代之前 `notifyTransactionAdded` 每次调用都 `CoroutineScope(IO).launch` 导致的泄漏。
  */
 object WidgetDataUpdater {
+
+    @EntryPoint
+    @InstallIn(SingletonComponent::class)
+    interface WidgetScopeEntryPoint {
+        @ApplicationScope
+        fun applicationScope(): CoroutineScope
+    }
+
+    private fun applicationScope(context: Context): CoroutineScope =
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            WidgetScopeEntryPoint::class.java,
+        ).applicationScope()
 
     object Keys {
         val MONTHLY_EXPENSE = intPreferencesKey("monthly_expense")
@@ -78,7 +99,7 @@ object WidgetDataUpdater {
         if (date != null && transactionMonthTag != currentMonthTag()) return
         // TRANSFER 不计入月度收支，提前 return 避免无谓的 IO + DataStore 写入。
         if (type == TransactionType.TRANSFER) return
-        CoroutineScope(Dispatchers.IO).launch {
+        applicationScope(context).launch {
             try {
                 val monthTag = currentMonthTag()
                 context.widgetDataStore.edit { prefs ->

@@ -45,7 +45,15 @@ class QuickEntryService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY
+        // PR 修复：START_NOT_STICKY — Android 12+ 前台服务启动受限，
+        // 系统不再保证重启；改由 Settings 显式 start 控制生命周期。
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        // PR 修复：清理前台通知，避免残留。
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        super.onDestroy()
     }
 
     private fun buildNotification(): Notification {

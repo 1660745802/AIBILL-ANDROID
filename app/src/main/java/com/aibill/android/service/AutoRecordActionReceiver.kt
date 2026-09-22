@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import com.aibill.android.data.local.dao.PendingTransactionDao
+import com.aibill.android.di.ApplicationScope
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.presentation.MainActivity
 import com.aibill.android.util.AppLogger
@@ -13,7 +14,6 @@ import com.aibill.android.util.NotificationHelper
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -31,7 +31,8 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
     @Inject lateinit var transactionRepository: TransactionRepository
     @Inject lateinit var appLogger: AppLogger
 
-    private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // PR 修复：注入进程级 ApplicationScope，避免每次 Receiver 实例化都泄漏一个 Scope。
+    @Inject @ApplicationScope lateinit var receiverScope: CoroutineScope
 
     companion object {
         const val ACTION_UNDO = "com.aibill.android.ACTION_AUTO_RECORD_UNDO"

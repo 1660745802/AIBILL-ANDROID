@@ -206,7 +206,9 @@ fun AiBillNavHost(
                 ProfileScreen(
                     onNavigateToSettings = { navController.navigate(Route.Settings) },
                     onNavigateToNotification = {
-                        navController.navigate(Route.PermissionGuide)
+                        // PR 修复：原回调跳到 PermissionGuide 是误命名/误实现，
+                        // 应跳到 NotificationCenter。
+                        navController.navigate(Route.NotificationCenter)
                     },
                     onNavigateToCategoryManage = {
                         navController.navigate(Route.CategoryManage)

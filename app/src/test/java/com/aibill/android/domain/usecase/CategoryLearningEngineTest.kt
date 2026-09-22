@@ -1,7 +1,7 @@
 package com.aibill.android.domain.usecase
 
-import com.aibill.android.data.local.dao.CategoryRuleDao
-import com.aibill.android.data.local.entity.CategoryRuleEntity
+import com.aibill.android.domain.model.CategoryRule
+import com.aibill.android.domain.repository.CategoryRuleRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -32,14 +32,14 @@ import org.junit.jupiter.api.Test
  */
 class CategoryLearningEngineTest {
 
-    private val dao: CategoryRuleDao = mockk(relaxed = true)
-    private val engine = CategoryLearningEngine(dao)
+    private val repository: CategoryRuleRepository = mockk(relaxed = true)
+    private val engine = CategoryLearningEngine(repository)
 
     private fun rule(
         keyword: String,
         categoryId: Int = 7,
         hitCount: Int = 1,
-    ): CategoryRuleEntity = CategoryRuleEntity(
+    ): CategoryRule = CategoryRule(
         keyword = keyword,
         categoryId = categoryId,
         hitCount = hitCount,
@@ -52,32 +52,32 @@ class CategoryLearningEngineTest {
     fun `learnFromCorrection - blank keyword is no-op`() = runTest {
         engine.learnFromCorrection("", 5)
         engine.learnFromCorrection("   ", 5)
-        coVerify(exactly = 0) { dao.findByKeyword(any()) }
-        coVerify(exactly = 0) { dao.insertOrUpdate(any()) }
-        coVerify(exactly = 0) { dao.incrementHitCount(any()) }
+        coVerify(exactly = 0) { repository.findByKeyword(any()) }
+        coVerify(exactly = 0) { repository.upsert(any()) }
+        coVerify(exactly = 0) { repository.incrementHitCount(any()) }
     }
 
     @Test
     fun `learnFromCorrection - keyword is trimmed and lowercased`() = runTest {
-        coEvery { dao.findByKeyword("星巴克") } returns null
+        coEvery { repository.findByKeyword("星巴克") } returns null
 
         engine.learnFromCorrection("  星巴克  ", 5)
 
-        coVerify(exactly = 1) { dao.findByKeyword("星巴克") }
-        val captured = slot<CategoryRuleEntity>()
-        coVerify(exactly = 1) { dao.insertOrUpdate(capture(captured)) }
+        coVerify(exactly = 1) { repository.findByKeyword("星巴克") }
+        val captured = slot<CategoryRule>()
+        coVerify(exactly = 1) { repository.upsert(capture(captured)) }
         assertEquals("星巴克", captured.captured.keyword)
         assertEquals(5, captured.captured.categoryId)
     }
 
     @Test
     fun `learnFromCorrection - new keyword - insert with hitCount=1`() = runTest {
-        coEvery { dao.findByKeyword("星巴克") } returns null
+        coEvery { repository.findByKeyword("星巴克") } returns null
 
         engine.learnFromCorrection("星巴克", 7)
 
-        val captured = slot<CategoryRuleEntity>()
-        coVerify(exactly = 1) { dao.insertOrUpdate(capture(captured)) }
+        val captured = slot<CategoryRule>()
+        coVerify(exactly = 1) { repository.upsert(capture(captured)) }
         assertEquals("星巴克", captured.captured.keyword)
         assertEquals(7, captured.captured.categoryId)
         assertEquals(1, captured.captured.hitCount)
@@ -85,25 +85,25 @@ class CategoryLearningEngineTest {
 
     @Test
     fun `learnFromCorrection - same keyword same categoryId - incrementHitCount (not reset)`() = runTest {
-        coEvery { dao.findByKeyword("星巴克") } returns rule("星巴克", categoryId = 7, hitCount = 3)
+        coEvery { repository.findByKeyword("星巴克") } returns rule("星巴克", categoryId = 7, hitCount = 3)
 
         engine.learnFromCorrection("星巴克", 7)
 
-        // 关键：hitCount=3 不重置为 1，incrementHitCount 而非 insertOrUpdate
-        coVerify(exactly = 0) { dao.insertOrUpdate(any()) }
-        coVerify(exactly = 1) { dao.incrementHitCount("星巴克", any<Long>()) }
+        // 关键：hitCount=3 不重置为 1，incrementHitCount 而非 upsert
+        coVerify(exactly = 0) { repository.upsert(any()) }
+        coVerify(exactly = 1) { repository.incrementHitCount("星巴克", any<Long>()) }
     }
 
     @Test
     fun `learnFromCorrection - same keyword different categoryId - reset hitCount=1`() = runTest {
         // 用户修正：「星巴克」从 catId=7 改到 catId=8
-        coEvery { dao.findByKeyword("星巴克") } returns rule("星巴克", categoryId = 7, hitCount = 5)
+        coEvery { repository.findByKeyword("星巴克") } returns rule("星巴克", categoryId = 7, hitCount = 5)
 
         engine.learnFromCorrection("星巴克", 8)
 
-        coVerify(exactly = 0) { dao.incrementHitCount(any()) }
-        val captured = slot<CategoryRuleEntity>()
-        coVerify(exactly = 1) { dao.insertOrUpdate(capture(captured)) }
+        coVerify(exactly = 0) { repository.incrementHitCount(any()) }
+        val captured = slot<CategoryRule>()
+        coVerify(exactly = 1) { repository.upsert(capture(captured)) }
         assertEquals(8, captured.captured.categoryId)
         assertEquals(1, captured.captured.hitCount) // 修正时重置
     }
@@ -114,22 +114,22 @@ class CategoryLearningEngineTest {
     fun `matchCategory - blank input returns null`() = runTest {
         assertNull(engine.matchCategory(""))
         assertNull(engine.matchCategory("   "))
-        coVerify(exactly = 0) { dao.findByKeyword(any()) }
+        coVerify(exactly = 0) { repository.findByKeyword(any()) }
     }
 
     @Test
     fun `matchCategory - exact match returns categoryId and increments hit count`() = runTest {
-        coEvery { dao.findByKeyword("星巴克") } returns rule("星巴克", categoryId = 7, hitCount = 2)
+        coEvery { repository.findByKeyword("星巴克") } returns rule("星巴克", categoryId = 7, hitCount = 2)
 
         val result = engine.matchCategory("星巴克")
 
         assertEquals(7, result)
-        coVerify(exactly = 1) { dao.incrementHitCount("星巴克", any<Long>()) }
+        coVerify(exactly = 1) { repository.incrementHitCount("星巴克", any<Long>()) }
     }
 
     @Test
     fun `matchCategory - exact match is case-insensitive`() = runTest {
-        coEvery { dao.findByKeyword("starbucks") } returns rule("starbucks", categoryId = 9)
+        coEvery { repository.findByKeyword("starbucks") } returns rule("starbucks", categoryId = 9)
 
         val result = engine.matchCategory("StarBucks")
 
@@ -138,8 +138,8 @@ class CategoryLearningEngineTest {
 
     @Test
     fun `matchCategory - no match returns null`() = runTest {
-        coEvery { dao.findByKeyword(any()) } returns null
-        coEvery { dao.getAll() } returns emptyList()
+        coEvery { repository.findByKeyword(any()) } returns null
+        coEvery { repository.getAll() } returns emptyList()
 
         assertNull(engine.matchCategory("nonexistent"))
     }
@@ -147,8 +147,8 @@ class CategoryLearningEngineTest {
     @Test
     fun `matchCategory - contains match with non-Chinese right boundary returns categoryId`() = runTest {
         // 「午餐.星巴克」中 keyword「星巴克」右边是「.」（非汉字），匹配
-        coEvery { dao.findByKeyword("午餐.星巴克") } returns null
-        coEvery { dao.getAll() } returns listOf(rule("星巴克", categoryId = 9))
+        coEvery { repository.findByKeyword("午餐.星巴克") } returns null
+        coEvery { repository.getAll() } returns listOf(rule("星巴克", categoryId = 9))
 
         val result = engine.matchCategory("午餐.星巴克")
 
@@ -160,8 +160,8 @@ class CategoryLearningEngineTest {
         // 之前 contains() 会匹配「星巴克」在「超星巴克店」中（错）
         // M5 修复：containsWordBoundary 要求 keyword 两侧不是汉字
         // 「超星巴克店」中「星巴克」左边是「超」（汉字），不匹配
-        coEvery { dao.findByKeyword("超星巴克店") } returns null
-        coEvery { dao.getAll() } returns listOf(rule("星巴克", categoryId = 9))
+        coEvery { repository.findByKeyword("超星巴克店") } returns null
+        coEvery { repository.getAll() } returns listOf(rule("星巴克", categoryId = 9))
 
         val result = engine.matchCategory("超星巴克店")
 
@@ -173,8 +173,8 @@ class CategoryLearningEngineTest {
     fun `matchCategory - M5 fix, keyword at end of string matches (right boundary = end)`() = runTest {
         // 「信用卡」在「星巴克,信用卡」末尾，右边是字符串结尾（允许）
         // 左边是逗号（非汉字），也允许 → 匹配
-        coEvery { dao.findByKeyword("星巴克,信用卡") } returns null
-        coEvery { dao.getAll() } returns listOf(rule("信用卡", categoryId = 12))
+        coEvery { repository.findByKeyword("星巴克,信用卡") } returns null
+        coEvery { repository.getAll() } returns listOf(rule("信用卡", categoryId = 12))
 
         val result = engine.matchCategory("星巴克,信用卡")
 
@@ -186,8 +186,8 @@ class CategoryLearningEngineTest {
         // 「信用卡」在「信用卡还款」开头，左边是字符串开头（允许）
         // 右边是「还」（汉字），不匹配 → 实际不匹配
         // M5 实际行为是 right boundary 也要非汉字，所以纯汉字连续不匹配
-        coEvery { dao.findByKeyword("信用卡还款") } returns null
-        coEvery { dao.getAll() } returns listOf(rule("信用卡", categoryId = 12))
+        coEvery { repository.findByKeyword("信用卡还款") } returns null
+        coEvery { repository.getAll() } returns listOf(rule("信用卡", categoryId = 12))
 
         val result = engine.matchCategory("信用卡还款")
 
@@ -199,8 +199,8 @@ class CategoryLearningEngineTest {
     fun `matchCategory - longer keyword wins (sortedByDescending length)`() = runTest {
         // 规则「信用」catId=10,「信用卡」catId=11（更具体）
         // 输入「星巴克信用卡还款」应该命中「信用卡」catId=11
-        coEvery { dao.findByKeyword("星巴克信用卡还款") } returns null
-        coEvery { dao.getAll() } returns listOf(
+        coEvery { repository.findByKeyword("星巴克信用卡还款") } returns null
+        coEvery { repository.getAll() } returns listOf(
             rule("信用", categoryId = 10, hitCount = 5),
             rule("信用卡", categoryId = 11, hitCount = 1),
         )
@@ -216,8 +216,8 @@ class CategoryLearningEngineTest {
     @Test
     fun `matchCategory - non-Chinese boundary character allows match`() = runTest {
         // 「星巴克,信用卡」中 keyword「信用卡」左边是逗号（非汉字），匹配
-        coEvery { dao.findByKeyword("星巴克,信用卡") } returns null
-        coEvery { dao.getAll() } returns listOf(rule("信用卡", categoryId = 12))
+        coEvery { repository.findByKeyword("星巴克,信用卡") } returns null
+        coEvery { repository.getAll() } returns listOf(rule("信用卡", categoryId = 12))
 
         val result = engine.matchCategory("星巴克,信用卡")
 

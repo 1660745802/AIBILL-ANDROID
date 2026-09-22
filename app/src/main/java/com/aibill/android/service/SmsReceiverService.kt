@@ -4,11 +4,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
+import com.aibill.android.di.ApplicationScope
 import com.aibill.android.util.NotificationParser
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
@@ -26,6 +25,9 @@ class SmsReceiverService : BroadcastReceiver() {
     @Inject lateinit var notificationParser: NotificationParser
     @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
     @Inject lateinit var rulesManager: NotificationRulesManager
+
+    // PR 修复：注入进程级 ApplicationScope，避免每次 SMS 接收都泄漏一个 SupervisorJob。
+    @Inject @ApplicationScope lateinit var scope: CoroutineScope
 
     /** 缓存的支付特征 Regex + 对应的规则代际，避免每次 SMS 都重新编译 */
     @Volatile
@@ -47,7 +49,7 @@ class SmsReceiverService : BroadcastReceiver() {
 
         val pendingResult = goAsync()
 
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+        scope.launch {
             try {
                 handleSms(sender, fullText)
             } catch (e: Exception) {

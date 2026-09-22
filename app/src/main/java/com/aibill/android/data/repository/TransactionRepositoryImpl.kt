@@ -1,5 +1,6 @@
 package com.aibill.android.data.repository
 
+import android.content.Context
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.remote.api.TransactionApi
@@ -14,6 +15,7 @@ import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.domain.repository.TransactionPage
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.service.SyncScheduler
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,6 +24,7 @@ import javax.inject.Singleton
 class TransactionRepositoryImpl @Inject constructor(
     private val transactionApi: TransactionApi,
     private val pendingTransactionDao: PendingTransactionDao,
+    @ApplicationContext private val context: Context,
 ) : TransactionRepository {
 
     override suspend fun createTransactions(items: List<Transaction>): Result<List<Transaction>> {
@@ -120,7 +123,17 @@ class TransactionRepositoryImpl @Inject constructor(
     override fun observePendingCount(): Flow<Int> =
         pendingTransactionDao.observePendingCount()
 
-    override suspend fun syncPending(): Result<Unit> = Result.Success(Unit)
+    override suspend fun syncPending(): Result<Unit> {
+        // PR 修复：原实现是空 stub，直接返回 Success 但啥也不做，导致
+        // HomeViewModel.triggerSync() 误以为同步完成。真实同步在 [SyncWorker] 中执行，
+        // 此处通过 [SyncScheduler] 入队 WorkManager，状态由 WorkInfo 流转。
+        return try {
+            SyncScheduler.scheduleSyncIfNeeded(context)
+            Result.Success(Unit)
+        } catch (e: Exception) {
+            Result.Error(-2, "触发同步失败: ${e.message}")
+        }
+    }
 
     override suspend fun getTags(): Result<List<String>> {
         return safeApiCall { transactionApi.getTags() }.map { it.items }

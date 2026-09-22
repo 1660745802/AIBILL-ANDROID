@@ -7,12 +7,11 @@ import android.content.Intent
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.PendingTransactionEntity
+import com.aibill.android.di.ApplicationScope
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.util.NotificationHelper
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -31,7 +30,9 @@ class NotificationActionReceiver : BroadcastReceiver() {
     @Inject lateinit var pendingTransactionDao: PendingTransactionDao
     @Inject lateinit var categoryLearningEngine: com.aibill.android.domain.usecase.CategoryLearningEngine
 
-    private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // PR 修复：使用 Hilt 注入的进程级 ApplicationScope，
+    // 替代之前"每次实例化 new SupervisorJob+IO"的内存泄漏。
+    @Inject @ApplicationScope lateinit var receiverScope: CoroutineScope
 
     companion object {
         const val ACTION_CONFIRM = "com.aibill.android.ACTION_CONFIRM_RECORD"
