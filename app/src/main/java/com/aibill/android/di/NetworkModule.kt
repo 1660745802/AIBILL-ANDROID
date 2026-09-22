@@ -134,10 +134,4 @@ object NetworkModule {
             .build()
             .create(com.aibill.android.data.remote.api.GithubReleaseApi::class.java)
     }
-
-    @Provides
-    @Singleton
-    fun provideAppUpdateApi(retrofit: Retrofit): com.aibill.android.data.remote.api.AppUpdateApi =
-        // 复用主 Retrofit（ServerUrlInterceptor 动态改 baseUrl 到 billserver）
-        retrofit.create(com.aibill.android.data.remote.api.AppUpdateApi::class.java)
 }

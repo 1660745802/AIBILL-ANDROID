@@ -6,173 +6,65 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.aibill.android.BuildConfig
-import com.aibill.android.data.remote.api.AppUpdateApi
-import com.aibill.android.data.remote.api.AppUpdateDto
 import com.aibill.android.data.remote.api.GithubReleaseApi
-import com.aibill.android.data.remote.api.GithubReleaseDto
-import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * APK 自动更新管理器（PR：billserver 自管链接 + GitHub fallback）。
+ * APK 自动更新管理器（GitHub Release）。
  *
- * 优先级策略（双源）：
- * 1. 优先调 billserver 的 `GET /api/app/update`（自托管，内网可达）
- * 2. billserver 失败（无 serverUrl / 网络错误 / 4xx 5xx）→ fallback GitHub Release
- * 3. 全部失败 → 返回 null（App 显示"已是最新"或"获取失败"）
+ * 流程：checkUpdate() 查 GitHub 最新 Release → 版本对比 →
+ * downloadAndInstall() 用 DownloadManager 下载 → FileProvider 触发系统安装器。
  *
- * 兼容性：旧版 App（无 AppUpdateApi）走纯 GitHub 路径；新版 App 同时支持两路。
+ * 静默处理所有异常，网络失败不影响 App 正常使用。
  */
 @Singleton
 class UpdateManager @Inject constructor(
-    @ApplicationContext private val context: Context,
-    private val githubReleaseApi: GithubReleaseApi,
-    private val appUpdateApi: AppUpdateApi,
+    private val api: GithubReleaseApi,
 ) {
     data class UpdateInfo(
         val versionName: String,
         val changelog: String,
         val apkUrl: String,
         val apkSize: Long,
-        val source: Source = Source.UNKNOWN,
-        val forceUpdate: Boolean = false,
     )
 
-    /** 更新源标识（诊断 / 未来统计用） */
-    enum class Source { BILLSERVER, GITHUB, UNKNOWN }
-
     /**
-     * billserver 检查结果三态：
-     * - Success(info)：billserver 可达且 hasUpdate=true
-     * - NoUpdate：billserver 可达且 hasUpdate=false（不 fallback GitHub）
-     * - Failure(throwable)：billserver 不可达（fallback GitHub）
-     *
-     * 用 sealed class 而非 nullable，区分"无版本"和"查询失败"。
-     */
-    private sealed class BillserverResult {
-        data class Success(val info: UpdateInfo) : BillserverResult()
-        data object NoUpdate : BillserverResult()
-        data class Failure(val throwable: Throwable) : BillserverResult()
-    }
-
-    /**
-     * 检查更新（带双源 fallback）。
-     *
-     * 优先级策略：
-     * 1. billserver 可达（无论 hasUpdate）→ 信任 billserver 判定（公司可控源）
-     *    - hasUpdate=true → 返回该版本
-     *    - hasUpdate=false → 返回 null（"已是最新"，不 fallback GitHub）
-     * 2. billserver 不可达（异常）→ fallback GitHub
+     * 检查更新。返回 null 表示已是最新或检查失败。
      */
     suspend fun checkUpdate(): UpdateInfo? {
-        // 第一优先级：billserver 自管更新
-        return when (val result = queryBillserver()) {
-            is BillserverResult.Success -> result.info.copy(source = Source.BILLSERVER)
-            is BillserverResult.NoUpdate -> {
-                Timber.d("UpdateManager: billserver says up-to-date")
-                null  // 已是最新，不 fallback GitHub
-            }
-            is BillserverResult.Failure -> {
-                Timber.w(result.throwable, "UpdateManager: billserver unavailable, fallback to GitHub")
-                githubReleaseUpdate()?.copy(source = Source.GITHUB)
-            }
-        }
-    }
-
-    /**
-     * 获取最新版本（不做版本对比），手动"检查更新"用。
-     *
-     * 优先级：
-     * 1. billserver 自托管更新（可信源，公司可控）
-     *    - hasUpdate=true → 返回该版本
-     *    - hasUpdate=false → 返回"已是最新"（不 fallback GitHub，避免误判）
-     *    - 网络异常 → fallback GitHub
-     * 2. GitHub Release（兜底）
-     */
-    suspend fun fetchLatest(): UpdateInfo? {
-        return when (val result = queryBillserver()) {
-            is BillserverResult.Success -> result.info.copy(source = Source.BILLSERVER)
-            is BillserverResult.NoUpdate -> {
-                Timber.d("UpdateManager: billserver reachable, no update available")
-                null
-            }
-            is BillserverResult.Failure -> {
-                Timber.w(result.throwable, "UpdateManager: billserver check failed, fallback to GitHub")
-                val fromGithub = githubReleaseUpdate(forceLatest = true)
-                fromGithub?.copy(source = Source.GITHUB)
-            }
-        }
-    }
-
-    /**
-     * 调 billserver 自托管更新 API，返回三态 [BillserverResult]。
-     */
-    private suspend fun queryBillserver(): BillserverResult {
-        return runCatching {
-            appUpdateApi.checkUpdate(
-                currentVersionName = BuildConfig.VERSION_NAME,
-                currentVersionCode = BuildConfig.VERSION_CODE,
-            )
-        }.fold(
-            onSuccess = { dto ->
-                if (dto.hasUpdate && dto.apkUrl != null) {
-                    val info = dto.toUpdateInfo(source = Source.BILLSERVER)
-                    if (info != null) BillserverResult.Success(info)
-                    else BillserverResult.NoUpdate  // DTO 字段缺失视为"无更新"
-                } else {
-                    BillserverResult.NoUpdate
-                }
-            },
-            onFailure = { e ->
-                BillserverResult.Failure(e)
-            },
-        )
-    }
-
-    /**
-     * 调 billserver 自托管更新 API（向后兼容的 nullable 版本，供内部调用）。
-     *
-     * 返回 null 时可能表示"无新版本"或"不可达"——调用方需要 [queryBillserver] 区分。
-     */
-    private suspend fun billserverUpdate(): UpdateInfo? = null  // PR: 已迁移到 [queryBillserver]
-
-    /**
-     * GitHub Release fallback。forceLatest=true 时不做版本对比（手动检查用）。
-     */
-    private suspend fun githubReleaseUpdate(forceLatest: Boolean = false): UpdateInfo? {
         return try {
-            val release = githubReleaseApi.getLatestRelease(OWNER, REPO)
+            val release = api.getLatestRelease(OWNER, REPO)
             if (release.prerelease) return null
             val tag = release.tagName?.removePrefix("v")?.trim() ?: return null
-            if (!forceLatest && !isNewerVersion(tag, BuildConfig.VERSION_NAME)) return null
+            // 版本对比：语义化 versionName（如 1.4.2）
+            if (!isNewerVersion(tag, BuildConfig.VERSION_NAME)) return null
             toUpdateInfo(release, tag)
         } catch (e: Exception) {
-            Timber.w(e, "UpdateManager: github fallback failed")
+            Timber.w(e, "UpdateManager: check failed")
             null
         }
     }
 
     /**
-     * DTO → UpdateInfo 映射
+     * 获取最新版本（不做版本对比）。手动"检查更新"用，
+     * 允许强制重装/回滚到 GitHub 最新 Release。
      */
-    private fun AppUpdateDto.toUpdateInfo(source: Source): UpdateInfo? {
-        val url = apkUrl ?: return null
-        val version = latestVersion ?: return null
-        return UpdateInfo(
-            versionName = version,
-            changelog = changelog?.trim().orEmpty(),
-            apkUrl = url,
-            apkSize = apkSize,
-            source = source,
-            forceUpdate = forceUpdate,
-        )
+    suspend fun fetchLatest(): UpdateInfo? {
+        return try {
+            val release = api.getLatestRelease(OWNER, REPO)
+            val tag = release.tagName?.removePrefix("v")?.trim() ?: return null
+            toUpdateInfo(release, tag)
+        } catch (e: Exception) {
+            Timber.w(e, "UpdateManager: fetchLatest failed")
+            null
+        }
     }
 
     private fun toUpdateInfo(
-        release: GithubReleaseDto,
+        release: com.aibill.android.data.remote.api.GithubReleaseDto,
         tag: String,
     ): UpdateInfo? {
         val apk = release.assets?.firstOrNull { it.name?.endsWith(".apk") == true } ?: return null
@@ -182,8 +74,6 @@ class UpdateManager @Inject constructor(
             changelog = release.body?.trim().orEmpty(),
             apkUrl = url,
             apkSize = apk.size,
-            source = Source.GITHUB,
-            forceUpdate = false,
         )
     }
 
@@ -213,7 +103,7 @@ class UpdateManager @Inject constructor(
                     fileName = fileName,
                     registeredAt = System.currentTimeMillis(),
                 )
-            Timber.d("UpdateManager: download started id=$downloadId version=${info.versionName} source=${info.source}")
+            Timber.d("UpdateManager: download started id=$downloadId")
         } catch (e: Exception) {
             Timber.e(e, "UpdateManager: download failed")
         }
