@@ -7,6 +7,7 @@ import com.aibill.android.data.repository.BudgetRepositoryImpl
 import com.aibill.android.data.repository.CategoryRepositoryImpl
 import com.aibill.android.data.repository.CategoryRuleRepositoryImpl
 import com.aibill.android.data.repository.NotificationRecordRepositoryImpl
+import com.aibill.android.data.repository.PendingTransactionRepositoryImpl
 import com.aibill.android.data.repository.StatsRepositoryImpl
 import com.aibill.android.data.repository.StreakRepositoryImpl
 import com.aibill.android.data.repository.TemplateRepositoryImpl
@@ -18,6 +19,7 @@ import com.aibill.android.domain.repository.BudgetRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.CategoryRuleRepository
 import com.aibill.android.domain.repository.NotificationRecordRepository
+import com.aibill.android.domain.repository.PendingTransactionRepository
 import com.aibill.android.domain.repository.StatsRepository
 import com.aibill.android.domain.repository.StreakRepository
 import com.aibill.android.domain.repository.TemplateRepository
@@ -78,4 +80,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindNotificationRecordRepository(impl: NotificationRecordRepositoryImpl): NotificationRecordRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindPendingTransactionRepository(impl: PendingTransactionRepositoryImpl): PendingTransactionRepository
 }

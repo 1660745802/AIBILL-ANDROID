@@ -1,0 +1,114 @@
+# Detekt 静态分析配置
+# 文档：https://detekt.dev/docs/configuration/
+
+build:
+  # 排除 build/ 与生成的代码 + 测试目录
+  excludes:
+    - '**/build/**'
+    - '**/generated/**'
+    - '**/test/**'
+    - '**/androidTest/**'
+    - '**/*.kts'
+
+config:
+  validation: true
+  warningsAsErrors: false
+  checkExhaustiveness: false
+
+# ============ 复杂度 ============
+complexity:
+  LongMethod:
+    threshold: 80  # 单个方法 < 80 行（Compose Composable 经常较长）
+  LongParameterList:
+    functionThreshold: 8
+    constructorThreshold: 8
+  ComplexCondition:
+    threshold: 5
+  NestedBlockDepth:
+    threshold: 4
+  TooManyFunctions:
+    active: false  # Composable 文件允许较多函数（误报多）
+  CyclomaticComplexMethod:
+    threshold: 15
+
+# ============ 代码风格 ============
+style:
+  MagicNumber:
+    active: true
+    ignoreNumbers:
+      - '-1'
+      - '0'
+      - '1'
+      - '2'
+      - '100'
+      - '1000'
+      - '24'
+      - '60'
+      - '3600'
+      - '86_400_000'
+      - '127'
+  WildcardImport:
+    active: true
+    excludeImports:
+      - 'java.util.*'
+  ReturnCount:
+    max: 4
+  MaxLineLength:
+    maxLineLength: 140
+  UnusedPrivateMember:
+    active: false  # Compose 私有 Composable 经常被间接引用
+  RedundantVisibilityModifierRule:
+    active: false
+
+# ============ 潜在 Bug ============
+potential-bugs:
+  UnsafeCallOnNullableType:
+    active: true
+  CastToNullableType:
+    active: true
+
+# ============ 性能 ============
+performance:
+  SpreadOperator:
+    active: false  # Compose 频繁使用 spread operator
+
+# ============ 协程 ============
+coroutines:
+  active: true
+  GlobalCoroutineUsage:
+    active: true
+  SuspendFunWithFlowReturnType:
+    active: true
+  SleepInsteadOfDelay:
+    active: true
+
+# ============ 空块 ============
+empty-blocks:
+  active: true
+  EmptyCatchBlock:
+    allowedExceptionNameRegex: '_|(ignore|expected).*'
+
+# ============ 异常 ============
+exceptions:
+  SwallowedException:
+    ignoredExceptionTypes:
+      - 'InterruptedException'
+      - 'NumberFormatException'
+      - 'ParseException'
+      - 'MalformedURLException'
+
+# ============ 命名 ============
+naming:
+  active: true
+  ConstructorParameterNaming:
+    active: false  # Compose 命名有 _ 前缀（如 _uiState）
+  FunctionNaming:
+    active: true
+    functionPattern: '[a-z][a-zA-Z0-9]*'
+  VariableNaming:
+    active: true
+    variablePattern: '[a-z][a-zA-Z0-9]*'
+  PackageNaming:
+    active: true
+    packagePattern: '[a-z]+(\.[a-z][a-zA-Z0-9]*)*'
+

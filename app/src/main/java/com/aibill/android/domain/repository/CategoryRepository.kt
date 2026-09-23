@@ -13,4 +13,7 @@ interface CategoryRepository {
     suspend fun createCategory(name: String, type: String, icon: String, sortOrder: Int): Result<Unit>
     suspend fun updateCategory(id: Int, name: String, icon: String, sortOrder: Int): Result<Unit>
     suspend fun deleteCategory(id: Int): Result<Unit>
+
+    /** 删除所有本地缓存分类（切换服务器时调用） */
+    suspend fun deleteAll()
 }

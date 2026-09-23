@@ -62,3 +62,53 @@ val WarningGradient: Brush = Brush.linearGradient(
 
 /** 通知隐私模式下金额显示 */
 val PrivacyMask = "¥***"
+
+// ============ Material 3 Tonal Palette（Light） ============
+// 用于 Theme.kt ColorScheme 定义。命名遵循 M3 规范：
+// {Brand}{Role}{Variant}，其中 Variant = Light/Dark（来自 ColorScheme 主题）。
+internal val TealContainerLight = Color(0xFFB2DFDB)
+internal val TealOnContainerLight = Color(0xFF00332E)
+internal val TealSecondaryContainerLight = Color(0xFFCCE8E4)
+internal val TealOnSecondaryContainerLight = Color(0xFF00201C)
+internal val TertiaryLight = Color(0xFF4A6360)
+internal val ErrorContainerLight = Color(0xFFFFDAD6)
+internal val OnErrorContainerLight = Color(0xFF410002)
+internal val BackgroundLight = Color(0xFFF7F9F9)
+internal val OnBackgroundLight = Color(0xFF191C1C)
+internal val OnSurfaceLight = Color(0xFF191C1C)
+internal val SurfaceVariantLight = Color(0xFFDAE5E2)
+internal val OnSurfaceVariantLight = Color(0xFF3F4947)
+internal val SurfaceContainerLowestLight = Color.White
+internal val SurfaceContainerLowLight = Color(0xFFF1F5F4)
+internal val SurfaceContainerLight = Color(0xFFEBF0EF)
+internal val SurfaceContainerHighLight = Color(0xFFE5EBEA)
+internal val SurfaceContainerHighestLight = Color(0xFFDFE5E4)
+internal val OutlineLight = Color(0xFF6F7977)
+internal val OutlineVariantLight = Color(0xFFBEC9C6)
+
+// ============ Material 3 Tonal Palette（Dark） ============
+internal val OnPrimaryDark = Color(0xFF00382F)
+internal val TealOnContainerDark = Color(0xFFB2DFDB)
+internal val SecondaryDark = Color(0xFF80CBC4)
+internal val OnSecondaryDark = Color(0xFF00201C)
+internal val SecondaryContainerDark = Color(0xFF004D40)
+internal val TealOnSecondaryContainerDark = Color(0xFFCCE8E4)
+internal val TertiaryDark = Color(0xFFB1CCC8)
+internal val ErrorDark = Color(0xFFEF5350)
+internal val OnErrorDark = Color(0xFF690005)
+internal val ErrorContainerDark = Color(0xFF93000A)
+internal val OnErrorContainerDark = Color(0xFFFFDAD6)
+internal val BackgroundDark = Color(0xFF0F1413)
+internal val OnBackgroundDark = Color(0xFFDEE4E2)
+internal val SurfaceDark = Color(0xFF141A19)
+internal val OnSurfaceDark = Color(0xFFDEE4E2)
+internal val SurfaceVariantDark = Color(0xFF3F4947)
+internal val OnSurfaceVariantDark = Color(0xFFBEC9C6)
+internal val SurfaceContainerLowestDark = Color(0xFF0A0F0E)
+internal val SurfaceContainerLowDark = Color(0xFF181D1C)
+internal val SurfaceContainerDark = Color(0xFF1C2120)
+internal val SurfaceContainerHighDark = Color(0xFF262B2A)
+internal val SurfaceContainerHighestDark = Color(0xFF313635)
+internal val OutlineDark = Color(0xFF899391)
+internal val OutlineVariantDark = Color(0xFF3F4947)
+

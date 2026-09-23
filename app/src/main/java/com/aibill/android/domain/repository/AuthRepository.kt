@@ -9,6 +9,9 @@ interface AuthRepository {
 
     suspend fun register(username: String, password: String, inviteCode: String, nickname: String?): Result<User>
 
+    /** 修改密码 */
+    suspend fun changePassword(oldPassword: String, newPassword: String): Result<Unit>
+
     suspend fun validateToken(): Result<User>
 
     suspend fun logout()

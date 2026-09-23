@@ -4,11 +4,11 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.datastore.UserPreferences
-import com.aibill.android.data.remote.api.AuthApi
-import com.aibill.android.data.remote.api.SettingsApi
-import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.repository.AuthRepository
 import com.aibill.android.service.QuickEntryService
+import com.aibill.android.service.UpdateManager
+import com.aibill.android.util.AppLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,12 +22,11 @@ import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val settingsApi: SettingsApi,
-    private val authApi: AuthApi,
+    private val authRepository: AuthRepository,
     private val userPreferences: UserPreferences,
-    private val appLogger: com.aibill.android.util.AppLogger,
+    private val appLogger: AppLogger,
     private val notificationRulesManager: com.aibill.android.service.NotificationRulesManager,
-    private val updateManager: com.aibill.android.service.UpdateManager,
+    private val updateManager: UpdateManager,
 ) : ViewModel() {
 
     data class UiState(
@@ -119,11 +118,7 @@ class SettingsViewModel @Inject constructor(
     fun onChangePassword(oldPassword: String, newPassword: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            val result = safeApiCall {
-                authApi.changePassword(
-                    mapOf("old_password" to oldPassword, "new_password" to newPassword)
-                )
-            }
+            val result = authRepository.changePassword(oldPassword, newPassword)
             _uiState.update { it.copy(isLoading = false) }
             when (result) {
                 is Result.Success -> _events.send("密码修改成功")

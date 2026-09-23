@@ -75,13 +75,6 @@ class NotificationProcessor @Inject constructor(
         val receivedAt: Long = System.currentTimeMillis(),
     )
 
-    companion object {
-        /** 后置去重窗口：同 amount + N秒 内视为同一笔（跨渠道冗余通知） */
-        private const val DEFAULT_DEDUP_WINDOW_MS = 60_000L
-        /** 评分窗口：N秒 内同金额的 AI 结果比较 score，取最优入库 */
-        private const val DEFAULT_SCORE_WINDOW_MS = 10_000L
-    }
-
     private val dedupWindowMs: Long
         get() = rulesManager.getRules().processor.dedupWindowSeconds * 1000L
 

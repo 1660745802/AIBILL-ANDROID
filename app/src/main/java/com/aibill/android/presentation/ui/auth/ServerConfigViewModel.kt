@@ -2,10 +2,10 @@ package com.aibill.android.presentation.ui.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aibill.android.data.local.dao.AccountDao
-import com.aibill.android.data.local.dao.CategoryDao
-import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.UserPreferences
+import com.aibill.android.domain.repository.AccountRepository
+import com.aibill.android.domain.repository.CategoryRepository
+import com.aibill.android.domain.repository.PendingTransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,22 +28,26 @@ data class ServerConfigUiState(
     val pendingCount: Int = 0,
 )
 
+/**
+ * 服务器配置 ViewModel。**已重构**：移除 3 个 DAO 直接依赖，全部走 Repository。
+ *
+ * 保留 UserPreferences（DataStore facade，按项目惯例允许直接使用）。
+ */
 @HiltViewModel
 class ServerConfigViewModel @Inject constructor(
     private val userPreferences: UserPreferences,
-    private val pendingTransactionDao: PendingTransactionDao,
-    private val categoryDao: CategoryDao,
-    private val accountDao: AccountDao,
+    private val pendingTransactionRepository: PendingTransactionRepository,
+    private val categoryRepository: CategoryRepository,
+    private val accountRepository: AccountRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerConfigUiState())
     val uiState: StateFlow<ServerConfigUiState> = _uiState.asStateFlow()
 
     init {
-        // 加载已保存的服务器地址 + 当前未同步数量
         viewModelScope.launch {
             val savedUrl = userPreferences.serverUrl.first()
-            val count = pendingTransactionDao.getPendingCount()
+            val count = pendingTransactionRepository.getPendingCount()
             _uiState.update {
                 it.copy(
                     serverUrl = savedUrl.orEmpty(),
@@ -85,30 +89,23 @@ class ServerConfigViewModel @Inject constructor(
     }
 
     /**
-     * PR #42：切换服务器前清空本地缓存，避免旧服务器数据污染新服务器视图。
      * @param clearLocalCache true 清空 pending/categories/accounts；首次配置可传 false。
      */
     fun onSave(clearLocalCache: Boolean = true) {
         viewModelScope.launch {
             val url = normalizeUrl(_uiState.value.serverUrl)
             if (clearLocalCache) {
-                // PR M4：仅当真正清空缓存时才重置 pendingCount=0，
-                // 之前无条件置 0 会与 DB 实际行数不一致
-                pendingTransactionDao.deleteAll()
-                categoryDao.deleteAll()
-                accountDao.deleteAll()
+                pendingTransactionRepository.deleteAll()
+                categoryRepository.deleteAll()
+                accountRepository.deleteAll()
                 _uiState.update { it.copy(pendingCount = 0) }
             }
             userPreferences.setServerUrl(url)
         }
     }
 
-    /** 是否有未同步的离线交易，UI 据此弹提示对话框 */
     fun hasPendingData(): Boolean = _uiState.value.pendingCount > 0
 
-    /**
-     * 标准化 URL：自动补全协议和 API 路径
-     */
     private fun normalizeUrl(input: String): String {
         var url = input.trim()
         if (!url.startsWith("http://") && !url.startsWith("https://")) {

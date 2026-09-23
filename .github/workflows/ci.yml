@@ -35,11 +35,23 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Unit test + Kover coverage gate
-        run: ./gradlew :app:testDebugUnitTest :app:koverHtmlReport --no-daemon
+      # ===== 静态分析（detekt）=====
+      # TODO: 修复存量 issues 后将 ignoreFailures 改为 false 真正阻断 CI
+      - name: Detekt static analysis
+        run: ./gradlew :app:detekt --no-daemon
+        continue-on-error: true
 
-      - name: Assemble Debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+      - name: Upload detekt report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: detekt-report
+          path: app/build/reports/detekt/
+          retention-days: 14
+
+      # ===== 测试 + 覆盖率 =====
+      - name: Unit test + Kover coverage gate (≥50%)
+        run: ./gradlew :app:testDebugUnitTest :app:koverHtmlReport :app:koverVerify --no-daemon
 
       - name: Upload coverage report
         if: always()
@@ -48,6 +60,10 @@ jobs:
           name: coverage-report
           path: app/build/reports/kover/html/
           retention-days: 14
+
+      # ===== 构建 APK =====
+      - name: Assemble Debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
 
       - name: Upload APK
         if: always()

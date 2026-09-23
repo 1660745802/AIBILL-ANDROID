@@ -143,4 +143,12 @@ class AuthRepositoryImpl @Inject constructor(
         private const val MAX_WAIT_MS = 3_000L
         private const val WAIT_INTERVAL_MS = 50L
     }
+
+    override suspend fun changePassword(oldPassword: String, newPassword: String): Result<Unit> {
+        return safeApiCall<Unit> {
+            authApi.changePassword(
+                mapOf("old_password" to oldPassword, "new_password" to newPassword),
+            )
+        }
+    }
 }

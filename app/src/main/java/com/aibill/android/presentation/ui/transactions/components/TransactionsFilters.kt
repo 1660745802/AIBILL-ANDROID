@@ -30,7 +30,6 @@ import com.aibill.android.domain.model.Category
 import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.theme.Tokens
-import java.time.YearMonth
 
 /**
  * 流水筛选区：日期范围 + 类型 + 分类 + 标签 + 合计
@@ -184,10 +183,7 @@ private fun DateFilterRow(
         )
         FilterChip(
             selected = filterDateLabel == "上月",
-            onClick = {
-                val ym = YearMonth.now().minusMonths(1)
-                onSelectLastMonth()
-            },
+            onClick = onSelectLastMonth,
             label = { Text("上月") },
         )
         FilterChip(

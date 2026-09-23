@@ -32,7 +32,6 @@ class ManualRecordViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val accountRepository: com.aibill.android.domain.repository.AccountRepository,
     private val templateRepository: com.aibill.android.domain.repository.TemplateRepository,
-    private val transactionApi: com.aibill.android.data.remote.api.TransactionApi,
     private val aiRepository: com.aibill.android.domain.repository.AiRepository,
     private val streakTracker: com.aibill.android.domain.usecase.StreakTracker,
     savedStateHandle: SavedStateHandle,

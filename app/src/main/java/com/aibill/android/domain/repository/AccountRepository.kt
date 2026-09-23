@@ -16,4 +16,7 @@ interface AccountRepository {
         id: Int, name: String, icon: String, initialBalance: Int,
     ): Result<Unit>
     suspend fun deleteAccount(id: Int): Result<Unit>
+
+    /** 删除所有本地缓存账户（切换服务器时调用） */
+    suspend fun deleteAll()
 }

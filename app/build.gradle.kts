@@ -9,6 +9,7 @@ plugins {
     alias(libs.plugins.hilt)
     alias(libs.plugins.room)
     alias(libs.plugins.kover)
+    alias(libs.plugins.detekt)
 }
 
 // 读取签名配置（keystore.properties 不提交到 git）
@@ -198,4 +199,12 @@ tasks.configureEach {
     if (name.contains("Assets") || name.contains("Lint") || name.contains("lint")) {
         dependsOn("syncDefaultRules")
     }
+}
+
+// Detekt 静态分析配置
+detekt {
+    config.setFrom(rootProject.file("config/detekt.yml"))
+    buildUponDefaultConfig = true
+    autoCorrect = false
+    ignoreFailures = true  // TODO: 修复存量问题后改为 false 阻断 CI
 }
