@@ -132,9 +132,6 @@ dependencies {
     // Serialization (Navigation type-safe routes)
     implementation(libs.serialization.json)
 
-    // Image
-    implementation(libs.coil.compose)
-
     // WorkManager
     implementation(libs.work.runtime)
     implementation(libs.hilt.work)

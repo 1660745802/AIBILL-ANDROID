@@ -9,30 +9,12 @@ import kotlin.math.roundToInt
 object AmountUtils {
 
     /**
-     * 元转分（使用 Math.round 防止浮点精度丢失）
-     * @param yuan 金额（元）
-     * @return 金额（分）
-     */
-    fun yuanToFen(yuan: Double): Int {
-        return (yuan * 100).roundToInt()
-    }
-
-    /**
      * 分转元字符串（保留2位小数）
      * @param fen 金额（分）
      * @return 格式化的元字符串，如 "12.50"
      */
     fun fenToYuan(fen: Int): String {
         return "%.2f".format(fen / 100.0)
-    }
-
-    /**
-     * 带¥符号的展示格式
-     * @param fen 金额（分）
-     * @return 格式化字符串，如 "¥12.50"
-     */
-    fun formatDisplay(fen: Int): String {
-        return "¥${fenToYuan(fen)}"
     }
 
     /**
@@ -47,7 +29,7 @@ object AmountUtils {
             val trimmed = expr.trim()
             if (trimmed.isEmpty()) return null
             val result = evaluate(trimmed) ?: return null
-            yuanToFen(result)
+            (result * 100).roundToInt()
         } catch (_: Exception) {
             null
         }
@@ -137,8 +119,3 @@ object AmountUtils {
         return true
     }
 }
-
-/**
- * Int 扩展函数：将分转为带¥符号的展示字符串
- */
-fun Int.toYuanDisplay(): String = AmountUtils.formatDisplay(this)

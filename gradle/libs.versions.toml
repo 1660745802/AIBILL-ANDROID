@@ -36,10 +36,6 @@ coroutines = "1.9.0"
 # PR：升级 Coil 2.x → 3.x（破坏性变更，artifact group 改为 io.coil-kt.coil3）
 coil = "3.1.0"
 
-# Charts
-# PR：Vico beta → 2.2.0 stable（chart 渲染稳定性 + 新 API）
-vico = "2.2.0"
-
 # WorkManager
 work = "2.10.0"
 hilt-work = "1.2.0"
@@ -125,7 +121,6 @@ serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serializ
 # Image
 # PR：Coil 2.x → 3.x 破坏性变更：artifact group 从 io.coil-kt 改为 io.coil-kt.coil3
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
-coil-network = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 
 # WorkManager
 work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }

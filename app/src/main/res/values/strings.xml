@@ -7,8 +7,6 @@
     <string name="shortcut_quick_record_long">打开手动记账</string>
     <string name="shortcut_ai_record">AI 记账</string>
     <string name="shortcut_ai_record_long">AI 智能记账</string>
-    <string name="shortcut_voice_record">语音记账</string>
-    <string name="shortcut_voice_record_long">语音输入记账</string>
 
     <!-- Widgets -->
     <string name="widget_quick_record_desc">快速记账小组件，点击打开记账页面</string>
