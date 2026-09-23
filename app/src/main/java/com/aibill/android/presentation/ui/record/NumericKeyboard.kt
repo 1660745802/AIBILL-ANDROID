@@ -18,8 +18,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -33,6 +31,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aibill.android.domain.model.Category
+import com.aibill.android.presentation.theme.PrimaryButton
+import com.aibill.android.presentation.theme.Tokens
 
 @Composable
 fun NumericKeyboard(
@@ -42,7 +42,6 @@ fun NumericKeyboard(
     isSaving: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    // 纯数值输入键盘（无计算功能）
     val keys = listOf(
         listOf("7", "8", "9"),
         listOf("4", "5", "6"),
@@ -52,13 +51,13 @@ fun NumericKeyboard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(horizontal = Tokens.Spacing.md, vertical = Tokens.Spacing.xs),
+        verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs + Tokens.Spacing.xs),
     ) {
         keys.forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs + Tokens.Spacing.xs),
             ) {
                 row.forEach { key ->
                     KeyboardButton(
@@ -76,24 +75,13 @@ fun NumericKeyboard(
                 }
             }
         }
-        Spacer(modifier = Modifier.height(6.dp))
-        Button(
+        Spacer(modifier = Modifier.height(Tokens.Spacing.xs + Tokens.Spacing.xs))
+        PrimaryButton(
+            text = if (isSaving) "保存中..." else "保存",
             onClick = onSave,
             enabled = !isSaving,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp),
-            shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-            ),
-        ) {
-            Text(
-                text = if (isSaving) "保存中..." else "保存",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-            )
-        }
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -105,17 +93,15 @@ private fun KeyboardButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val bgColor = if (!enabled) {
-        MaterialTheme.colorScheme.surfaceContainerLow
-    } else if (isOperator) {
-        MaterialTheme.colorScheme.surfaceContainerHighest
-    } else {
-        MaterialTheme.colorScheme.surfaceContainerHigh
+    val bgColor = when {
+        !enabled -> MaterialTheme.colorScheme.surfaceContainerLow
+        isOperator -> MaterialTheme.colorScheme.surfaceContainerHighest
+        else -> MaterialTheme.colorScheme.surfaceContainerHigh
     }
     Box(
         modifier = modifier
-            .height(46.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .height(Tokens.TouchTarget.normal - 2.dp)
+            .clip(RoundedCornerShape(Tokens.Radius.md))
             .background(bgColor)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -124,12 +110,10 @@ private fun KeyboardButton(
             text = label,
             fontSize = 22.sp,
             fontWeight = if (isOperator) FontWeight.Bold else FontWeight.Medium,
-            color = if (!enabled) {
-                MaterialTheme.colorScheme.outline
-            } else if (isOperator) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurface
+            color = when {
+                !enabled -> MaterialTheme.colorScheme.outline
+                isOperator -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.onSurface
             },
         )
     }
@@ -146,10 +130,10 @@ internal fun RecordCategoryGrid(
         columns = GridCells.Fixed(4),
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 8.dp, start = 4.dp, end = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = Tokens.Spacing.md),
+        contentPadding = PaddingValues(vertical = Tokens.Spacing.sm),
+        verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
     ) {
         items(categories, key = { it.id }) { category ->
             RecordCategoryItem(
@@ -175,9 +159,9 @@ private fun RecordCategoryItem(
     }
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(Tokens.Radius.md))
             .clickable(onClick = onClick)
-            .padding(vertical = 6.dp),
+            .padding(vertical = Tokens.Spacing.xs + Tokens.Spacing.xs),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Surface(
@@ -196,11 +180,8 @@ private fun RecordCategoryItem(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
-            color = if (isSelected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
+            color = if (isSelected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurface,
         )
     }
 }

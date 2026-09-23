@@ -1,12 +1,12 @@
 package com.aibill.android.presentation.navigation
 
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.FloatingActionButton
@@ -14,6 +14,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
@@ -22,10 +23,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import com.aibill.android.presentation.ui.account.AccountManageScreen
 import com.aibill.android.presentation.ui.auth.LoginScreen
 import com.aibill.android.presentation.ui.auth.RegisterScreen
 import com.aibill.android.presentation.ui.auth.ServerConfigScreen
-import com.aibill.android.presentation.ui.account.AccountManageScreen
 import com.aibill.android.presentation.ui.category.CategoryManageScreen
 import com.aibill.android.presentation.ui.home.HomeScreen
 import com.aibill.android.presentation.ui.notification.NotificationCenterScreen
@@ -38,6 +39,13 @@ import com.aibill.android.presentation.ui.transactions.TransactionDetailScreen
 import com.aibill.android.presentation.ui.transactions.TransactionsScreen
 import com.aibill.android.presentation.ui.trash.TrashScreen
 
+private val BottomBarRouteNames = listOf(
+    Route.Home::class.qualifiedName,
+    Route.Transactions::class.qualifiedName,
+    Route.Statistics::class.qualifiedName,
+    Route.Profile::class.qualifiedName,
+)
+
 @Composable
 fun AiBillNavHost(
     startDestination: Route,
@@ -48,59 +56,25 @@ fun AiBillNavHost(
     onAiInputConsumed: () -> Unit = {},
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val showBottomBar = BottomBarRouteNames.any { currentRoute?.startsWith(it ?: "") == true }
 
-    // 处理来自通知的跳转请求（一次性消费，避免解锁/重建时误跳）
-    androidx.compose.runtime.LaunchedEffect(navigateTo) {
-        when (navigateTo) {
-            "notification_center" -> navController.navigate(Route.NotificationCenter)
-            "transactions" -> navController.navigate(Route.Transactions()) {
-                // P2 修复：通知深链保留 Tab 滚动位置
-                popUpTo(Route.Home) { inclusive = false; saveState = true }
-                launchSingleTop = true
-                restoreState = true
-            }
-            "manual_record" -> navController.navigate(Route.ManualRecord())
-            "home" -> {
-                // 外部 Intent（Tasker/AI_PARSE）跳首页
-                navController.navigate(Route.Home) {
-                    popUpTo(Route.Home) { inclusive = true }
-                    launchSingleTop = true
-                }
-            }
-            "login_force" -> {
-                // 401 全局处理：清栈跳登录
-                navController.navigate(Route.Login) {
-                    popUpTo(0) { inclusive = true }
-                    launchSingleTop = true
-                }
-            }
-            else -> {}
-        }
+    // 处理来自通知/外部 Intent 的跳转请求（一次性消费，避免解锁/重建时误跳）
+    LaunchedEffect(navigateTo) {
         if (navigateTo != null) {
+            navController.handleDeepLink(navigateTo)
             onNavigationHandled()
         }
     }
 
-    val bottomBarRoutes = listOf(
-        Route.Home::class.qualifiedName,
-        Route.Transactions::class.qualifiedName,
-        Route.Statistics::class.qualifiedName,
-        Route.Profile::class.qualifiedName,
-    )
-    val currentRoute = navBackStackEntry?.destination?.route
-    val showBottomBar = bottomBarRoutes.any { currentRoute?.startsWith(it ?: "") == true }
-
     Scaffold(
         bottomBar = {
-            if (showBottomBar) {
-                BottomNavBar(navController = navController)
-            }
+            if (showBottomBar) BottomNavBar(navController)
         },
         floatingActionButton = {
-            // PRD §5.1：FAB 快速记账入口属于主框架，4 个 Tab 都可见
             if (showBottomBar) {
                 FloatingActionButton(
-                    onClick = { navController.navigate(Route.ManualRecord()) },
+                    onClick = { navController.navigateToManualRecord() },
                     containerColor = MaterialTheme.colorScheme.primary,
                 ) {
                     Icon(
@@ -110,7 +84,7 @@ fun AiBillNavHost(
                     )
                 }
             }
-        }
+        },
     ) { innerPadding ->
         NavHost(
             navController = navController,
@@ -118,7 +92,6 @@ fun AiBillNavHost(
             modifier = Modifier
                 .padding(innerPadding)
                 .consumeWindowInsets(innerPadding),
-            // 统一轻量转场：快速淡入 + 轻微横移，避免默认 700ms 长动画卡顿
             enterTransition = {
                 fadeIn(tween(200)) + slideInHorizontally(tween(220)) { it / 14 }
             },
@@ -128,52 +101,32 @@ fun AiBillNavHost(
                 fadeOut(tween(160)) + slideOutHorizontally(tween(200)) { it / 14 }
             },
         ) {
-            // --- 认证流程 ---
+            // ===== 认证流程 =====
             composable<Route.ServerConfig> {
                 ServerConfigScreen(
-                    onConfigured = {
-                        navController.navigate(Route.Login) {
-                            popUpTo(Route.ServerConfig) { inclusive = true }
-                        }
-                    }
+                    onConfigured = { navController.navigateToLoginAfterServerConfig() },
                 )
             }
             composable<Route.Login> {
                 LoginScreen(
-                    onNavigateToHome = {
-                        navController.navigate(Route.Home) {
-                            popUpTo(Route.Login) { inclusive = true }
-                        }
-                    },
+                    onNavigateToHome = { navController.navigateToHomeAfterAuth() },
                     onNavigateToRegister = { navController.navigate(Route.Register) },
-                    onNavigateToServerConfig = {
-                        navController.navigate(Route.ServerConfig)
-                    }
+                    onNavigateToServerConfig = { navController.navigate(Route.ServerConfig) },
                 )
             }
             composable<Route.Register> {
                 RegisterScreen(
-                    onRegisterSuccess = {
-                        navController.navigate(Route.Home) {
-                            popUpTo(Route.Register) { inclusive = true }
-                        }
-                    },
-                    onNavigateBack = { navController.popBackStack() }
+                    onRegisterSuccess = { navController.navigateToHomeAfterRegister() },
+                    onNavigateBack = { navController.popBackStack() },
                 )
             }
 
-            // --- 主 Tab 页面 ---
+            // ===== 主 Tab =====
             composable<Route.Home> {
                 HomeScreen(
-                    onNavigateToNotification = { navController.navigate(Route.NotificationCenter) },
-                    onNavigateToStatistics = {
-                        navController.navigate(Route.Statistics) {
-                            popUpTo(Route.Home) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
-                    onNavigateToDetail = { id -> navController.navigate(Route.TransactionDetail(id)) },
+                    onNavigateToNotification = { navController.navigateToNotificationCenter() },
+                    onNavigateToStatistics = { navController.navigateTo(Route.Statistics) },
+                    onNavigateToDetail = { id -> navController.navigateToDetail(id) },
                 )
             }
             composable<Route.Transactions> { backStackEntry ->
@@ -183,78 +136,54 @@ fun AiBillNavHost(
                     initialType = route.type,
                     initialStartDate = route.startDate,
                     initialEndDate = route.endDate,
-                    onNavigateToDetail = { id ->
-                        navController.navigate(Route.TransactionDetail(id))
-                    }
+                    onNavigateToDetail = { id -> navController.navigateToDetail(id) },
                 )
             }
             composable<Route.Statistics> {
                 StatisticsScreen(
                     onNavigateToCategoryTransactions = { categoryId, type, year, month ->
                         val ym = java.time.YearMonth.of(year, month)
-                        navController.navigate(Route.Transactions(
+                        navController.navigateToTransactionsFiltered(
                             categoryId = categoryId,
                             type = type,
                             startDate = ym.atDay(1).toString(),
                             endDate = ym.atEndOfMonth().toString(),
-                        )) {
-                            popUpTo(Route.Home) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = false
-                        }
-                    }
+                        )
+                    },
                 )
             }
             composable<Route.Profile> {
                 ProfileScreen(
-                    onNavigateToSettings = { navController.navigate(Route.Settings) },
-                    onNavigateToNotificationCenter = {
-                        // 通知中心：查看待确认的自动记账
-                        navController.navigate(Route.NotificationCenter)
-                    },
-                    onNavigateToPermissionGuide = {
-                        // 权限与保活：通知监听/电池优化/自启动
-                        navController.navigate(Route.PermissionGuide)
-                    },
-                    onNavigateToCategoryManage = {
-                        navController.navigate(Route.CategoryManage)
-                    },
-                    onNavigateToAccountManage = {
-                        navController.navigate(Route.AccountManage)
-                    },
-                    onNavigateToTrash = {
-                        navController.navigate(Route.Trash)
-                    },
-                    onLogout = {
-                        navController.navigate(Route.Login) {
-                            popUpTo(Route.Home) { inclusive = true }
-                        }
-                    }
+                    onNavigateToSettings = { navController.navigateToSettings() },
+                    onNavigateToNotificationCenter = { navController.navigateToNotificationCenter() },
+                    onNavigateToPermissionGuide = { navController.navigateToPermissionGuide() },
+                    onNavigateToCategoryManage = { navController.navigateToCategoryManage() },
+                    onNavigateToAccountManage = { navController.navigateToAccountManage() },
+                    onNavigateToTrash = { navController.navigateToTrash() },
+                    onLogout = { navController.navigateToLoginAfterLogout() },
                 )
             }
 
-            // --- 独立页面 ---
+            // ===== 独立页面 =====
             composable<Route.ManualRecord> {
                 ManualRecordScreen(
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() },
                 )
             }
             composable<Route.TransactionDetail> {
                 TransactionDetailScreen(
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() },
                 )
             }
             composable<Route.NotificationCenter> {
                 NotificationCenterScreen(
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.popBackStack() },
                 )
             }
             composable<Route.Settings> {
                 SettingsScreen(
                     onBack = { navController.popBackStack() },
-                    onNavigateToPermissionGuide = {
-                        navController.navigate(Route.PermissionGuide)
-                    },
+                    onNavigateToPermissionGuide = { navController.navigateToPermissionGuide() },
                 )
             }
             composable<Route.PermissionGuide> {

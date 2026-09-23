@@ -17,8 +17,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aibill.android.presentation.components.AmountFormat
 import com.aibill.android.presentation.theme.AppTextButton
-import com.aibill.android.presentation.utils.toYuanDisplay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -166,7 +166,7 @@ private fun TrashItem(
             // 金额
             val prefix = if (transaction.type == com.aibill.android.domain.model.TransactionType.EXPENSE) "-" else "+"
             Text(
-                text = "$prefix${transaction.amount.toYuanDisplay()}",
+                text = "$prefix${AmountFormat.toYuanDisplay(transaction.amount)}",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = if (transaction.type == com.aibill.android.domain.model.TransactionType.EXPENSE) {

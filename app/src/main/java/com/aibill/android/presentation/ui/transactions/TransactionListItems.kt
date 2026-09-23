@@ -41,9 +41,10 @@ import androidx.compose.ui.unit.sp
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionType
 import kotlinx.coroutines.launch
+import com.aibill.android.presentation.components.AmountFormat
 import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.IncomeColor
-import com.aibill.android.presentation.utils.toYuanDisplay
+import com.aibill.android.presentation.theme.Tokens
 
 @Composable
 internal fun DateHeader(
@@ -75,14 +76,14 @@ internal fun DateHeader(
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (expenseTotal > 0) {
                 Text(
-                    text = "支出 ${expenseTotal.toYuanDisplay()}",
+                    text = "支出 ${AmountFormat.toYuanDisplay(expenseTotal)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = ExpenseColor,
                 )
             }
             if (incomeTotal > 0) {
                 Text(
-                    text = "收入 ${incomeTotal.toYuanDisplay()}",
+                    text = "收入 ${AmountFormat.toYuanDisplay(incomeTotal)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = IncomeColor,
                 )
@@ -115,7 +116,7 @@ internal fun TransactionItem(
                 .align(Alignment.CenterEnd)
                 .width(revealWidth)
                 .fillMaxHeight()
-                .background(Color(0xFFE53935))
+                .background(ExpenseColor)
                 .clickable { transaction.id?.let { onDelete(it) } },
             contentAlignment = Alignment.Center,
         ) {
@@ -229,7 +230,7 @@ internal fun TransactionItem(
                         TransactionType.TRANSFER -> ""
                     }
                     Text(
-                        text = "$prefix${transaction.amount.toYuanDisplay()}",
+                        text = "$prefix${AmountFormat.toYuanDisplay(transaction.amount)}",
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Bold,
                         color = amountColor,

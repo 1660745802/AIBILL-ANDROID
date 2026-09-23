@@ -21,6 +21,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.aibill.android.presentation.theme.PrimaryButton
 import com.aibill.android.presentation.theme.SecondaryButton
+import com.aibill.android.presentation.theme.SuccessColor
 import com.aibill.android.util.BatteryOptimizationHelper
 
 /**
@@ -233,7 +234,7 @@ private fun PermissionItem(
                 true -> Icon(
                     imageVector = Icons.Default.CheckCircle,
                     contentDescription = null,
-                    tint = Color(0xFF4CAF50),
+                    tint = SuccessColor,
                     modifier = Modifier.size(24.dp)
                 )
                 false -> Icon(

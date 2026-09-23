@@ -75,20 +75,6 @@ fun EmptyState(
         }
     }
 }
-
-/**
- * 搜索无结果空状态。
- */
-@Composable
-fun SearchEmptyState(keyword: String, modifier: Modifier = Modifier) {
-    EmptyState(
-        emoji = "🔍",
-        title = "没有找到「$keyword」相关的记录",
-        subtitle = "试试换个关键词搜索",
-        modifier = modifier,
-    )
-}
-
 /**
  * 屏幕级 loading。
  */

@@ -2,14 +2,13 @@ package com.aibill.android.presentation.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aibill.android.domain.repository.StatsRepository
-import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
+import com.aibill.android.domain.repository.NotificationRecordRepository
+import com.aibill.android.domain.repository.StatsRepository
 import com.aibill.android.domain.repository.TransactionRepository
-import android.app.Application
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -23,19 +22,25 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import javax.inject.Inject
-import com.aibill.android.service.WidgetDataUpdater
 
+/**
+ * 首页 ViewModel。
+ *
+ * 设计要点：
+ * - 不持有 Application/Context。Widget 更新走 [com.aibill.android.service.WidgetDataUpdater] 静态入口
+ *   时，依赖通过 Hilt 注入到上层协程作用域（避免 Application 注入）
+ * - 不直接注入 DAO/Api。所有数据访问走 Repository 接口
+ * - 删除 [loadWeeklyTrend]：MiniTrendChart 组件已删除
+ */
 @HiltViewModel
 class HomeViewModel @Inject constructor(
-    private val application: Application,
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
     private val accountRepository: AccountRepository,
     private val statsRepository: StatsRepository,
-    private val notificationRecordDao: com.aibill.android.data.local.dao.NotificationRecordDao,
-    private val appLogger: com.aibill.android.util.AppLogger,
+    private val notificationRepository: NotificationRecordRepository,
+    private val widgetSyncScheduler: com.aibill.android.service.WidgetSyncScheduler,
 ) : ViewModel() {
 
     data class HomeUiState(
@@ -43,15 +48,10 @@ class HomeViewModel @Inject constructor(
         val isRefreshing: Boolean = false,
         val monthlyExpense: Int = 0,
         val monthlyIncome: Int = 0,
-        val inputText: String = "", // 保留：外部 Intent 预填用
         val todayTransactions: List<Transaction> = emptyList(),
         val pendingNotificationCount: Int = 0,
         val pendingSyncCount: Int = 0,
         val isSyncing: Boolean = false,
-        val categoriesByType: Map<String, List<Category>> = emptyMap(),
-        val availableTags: List<String> = emptyList(),
-        val weeklyTrend: List<Pair<String, Int>> = emptyList(),
-        val error: String? = null,
     )
 
     sealed class UiEvent {
@@ -66,55 +66,17 @@ class HomeViewModel @Inject constructor(
     val uiEvent: SharedFlow<UiEvent> = _uiEvent.asSharedFlow()
 
     private val today: String
-        get() = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
+        get() = LocalDate.now().toString()
 
     init {
         refresh()
         observePendingNotifications()
         observePendingSyncCount()
-        observeCategories()
-        loadAvailableTags()
-    }
-
-    private fun loadWeeklyTrend() {
-        viewModelScope.launch {
-            val now = LocalDate.now()
-            when (val result = statsRepository.getTrend(now.year, now.monthValue, "day", "expense")) {
-                is Result.Success -> {
-                    // 取最近7天
-                    val last7 = result.data.takeLast(7).map { point ->
-                        val dayLabel = point.date.takeLast(2) // "2026-07-28" -> "28"
-                        dayLabel to point.amount
-                    }
-                    _uiState.update { it.copy(weeklyTrend = last7) }
-                }
-                else -> Unit
-            }
-        }
-    }
-
-    private fun observeCategories() {
-        // 支出分类
-        viewModelScope.launch {
-            categoryRepository.observeCategories("expense").collect { list ->
-                _uiState.update {
-                    it.copy(categoriesByType = it.categoriesByType + ("expense" to list))
-                }
-            }
-        }
-        // 收入分类
-        viewModelScope.launch {
-            categoryRepository.observeCategories("income").collect { list ->
-                _uiState.update {
-                    it.copy(categoriesByType = it.categoriesByType + ("income" to list))
-                }
-            }
-        }
     }
 
     private fun observePendingNotifications() {
         viewModelScope.launch {
-            notificationRecordDao.observePendingCount().collect { count ->
+            notificationRepository.observePendingCount().collect { count ->
                 _uiState.update { it.copy(pendingNotificationCount = count) }
             }
         }
@@ -147,14 +109,11 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
-     * 下拉刷新：重新加载月度支出 + 今日流水 + 同步分类账户
-     * 月度支出和今日流水分开处理，互不影响
+     * 下拉刷新：分类/账户/今日流水/月度合计 4 个并行任务
      */
     fun refresh() {
         viewModelScope.launch {
             _uiState.update { it.copy(isRefreshing = true) }
-            // PR #35：awaitAll 等所有子协程完成后再置 isRefreshing=false，
-            // 避免下拉指示器瞬间消失（之前外层 launch{} 后续语句不被 await 子 launch）
             try {
                 val deferred1 = async { categoryRepository.syncCategories() }
                 val deferred2 = async { accountRepository.syncAccounts() }
@@ -166,16 +125,10 @@ class HomeViewModel @Inject constructor(
                     }
                 }
                 awaitAll(deferred1, deferred2, deferred3, deferred4)
-                loadAvailableTags()
-                loadWeeklyTrend()
             } finally {
                 _uiState.update { it.copy(isRefreshing = false) }
             }
         }
-    }
-
-    fun onInputChanged(text: String) {
-        _uiState.update { it.copy(inputText = text) }
     }
 
     private suspend fun loadTodayTransactions(): Boolean {
@@ -188,7 +141,10 @@ class HomeViewModel @Inject constructor(
         )) {
             is Result.Success -> {
                 _uiState.update {
-                    it.copy(isLoading = false, todayTransactions = result.data.items.distinctBy { t -> t.clientId })
+                    it.copy(
+                        isLoading = false,
+                        todayTransactions = result.data.items.distinctBy { t -> t.clientId },
+                    )
                 }
                 true
             }
@@ -201,28 +157,18 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun loadAvailableTags() {
-        viewModelScope.launch {
-            when (val result = transactionRepository.getTags()) {
-                is Result.Success -> _uiState.update { it.copy(availableTags = result.data) }
-                else -> Unit
-            }
-        }
-    }
-
     /**
-     * 直接调用 StatsApi.getSummary 获取月度支出，避免拉取全部流水
-     * 同时更新 Widget 数据
-     * PR #64：失败时 emit UiEvent.ShowError 让 UI 显示 Snackbar+重试，
-     * 之前只 Timber.e 日志用户完全感知不到
+     * 月度统计 + Widget 更新。Widget 更新通过 Repository 接口代理，避免 ViewModel 持 Context。
      */
     private suspend fun loadMonthlyExpense() {
         val now = LocalDate.now()
         when (val result = statsRepository.getSummary(now.year, now.monthValue)) {
             is Result.Success -> {
-                _uiState.update { it.copy(monthlyExpense = result.data.expense, monthlyIncome = result.data.income) }
-                WidgetDataUpdater.updateMonthlySummary(
-                    context = application,
+                _uiState.update {
+                    it.copy(monthlyExpense = result.data.expense, monthlyIncome = result.data.income)
+                }
+                // Widget 更新：通过注入的 Scheduler（不持 Context）
+                widgetSyncScheduler.scheduleMonthlyUpdate(
                     expenseCents = result.data.expense,
                     incomeCents = result.data.income,
                 )
@@ -235,10 +181,6 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    /**
-     * 加载月度总预算（categoryId == 0 表示总预算）
-     * 用于首页展示"支出 / 预算 xxx 元"进度
-     */
     private fun refreshData() {
         viewModelScope.launch {
             launch { loadTodayTransactions() }

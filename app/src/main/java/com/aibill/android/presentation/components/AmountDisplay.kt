@@ -24,11 +24,8 @@ import com.aibill.android.presentation.theme.TransferColor
  * 隐私模式（[privacy] = true）下显示 `¥***`。
  */
 object AmountFormat {
-    /** 分 → "32.00" */
-    fun toYuan(amountFen: Int): String = String.format("%.2f", amountFen / 100.0)
-
     /** 分 → "¥32.00" */
-    fun toYuanDisplay(amountFen: Int): String = "¥${toYuan(amountFen)}"
+    fun toYuanDisplay(amountFen: Int): String = "¥${String.format("%.2f", amountFen / 100.0)}"
 
     /** 分 → 完整带符号显示 "+¥32.00" / "-¥32.00" / "¥32.00" */
     fun toSignedDisplay(amountFen: Int, type: TransactionType): String {

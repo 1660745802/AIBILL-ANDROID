@@ -72,10 +72,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aibill.android.presentation.components.AmountFormat
 import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.theme.PrimaryButton
-import com.aibill.android.presentation.utils.toYuanDisplay
 import kotlinx.coroutines.delay
 
 private val TYPE_TABS = listOf("expense" to "支出", "income" to "收入", "transfer" to "转账")

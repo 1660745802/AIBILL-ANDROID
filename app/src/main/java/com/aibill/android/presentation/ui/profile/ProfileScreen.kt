@@ -25,7 +25,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -33,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,9 +42,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -53,11 +50,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.components.AppTopBar
+import com.aibill.android.presentation.components.ConfirmDialog
 import com.aibill.android.presentation.theme.AiBillTheme
-
-private val GradientStart = Color(0xFF00897B)
-private val GradientEnd = Color(0xFF4DB6AC)
+import com.aibill.android.presentation.theme.BrandGradient
+import com.aibill.android.presentation.theme.Tokens
 
 @Composable
 fun ProfileScreen(
@@ -72,89 +69,91 @@ fun ProfileScreen(
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    val displayName by viewModel.displayName.collectAsStateWithLifecycle()
 
     if (showLogoutConfirm) {
-        AlertDialog(
-            onDismissRequest = { showLogoutConfirm = false },
-            title = { Text("退出登录") },
-            text = { Text("退出后需重新登录才能继续记账，本地未同步的数据不会丢失。确定退出吗？") },
-            confirmButton = {
-                AppTextButton(
-                    text = "退出",
-                    isDestructive = true,
-                    onClick = {
-                        showLogoutConfirm = false
-                        viewModel.logout(onLogout)
-                    },
-                )
+        ConfirmDialog(
+            title = "退出登录",
+            message = "退出后需重新登录才能继续记账，本地未同步的数据不会丢失。确定退出吗？",
+            confirmText = "退出",
+            isDestructive = true,
+            onConfirm = {
+                showLogoutConfirm = false
+                viewModel.logout(onLogout)
             },
-            dismissButton = {
-                AppTextButton(text = "取消", onClick = { showLogoutConfirm = false })
-            }
+            onDismiss = { showLogoutConfirm = false },
         )
     }
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item { UserHeaderCard(displayName = viewModel.displayName.collectAsStateWithLifecycle().value) }
-        item { SectionLabel("管理") }
-        item {
-            MenuCard {
-                ProfileMenuItem(
-                    icon = Icons.Default.Category, title = "分类管理",
-                    subtitle = "自定义收支分类",
-                    onClick = onNavigateToCategoryManage,
-                )
-                MenuDivider()
-                ProfileMenuItem(
-                    icon = Icons.Default.AccountBalance, title = "账户管理",
-                    subtitle = "管理你的钱包和银行卡",
-                    onClick = onNavigateToAccountManage,
-                )
-                MenuDivider()
-                ProfileMenuItem(
-                    icon = Icons.Default.Delete, title = "回收站",
-                    subtitle = "查看和恢复已删除的记录",
-                    onClick = onNavigateToTrash,
-                )
+    Scaffold(
+        modifier = modifier,
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { AppTopBar(title = "我的") },
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(Tokens.Spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
+        ) {
+            item { UserHeaderCard(displayName = displayName) }
+            item { SectionLabel("管理") }
+            item {
+                MenuCard {
+                    ProfileMenuItem(
+                        icon = Icons.Default.Category, title = "分类管理",
+                        subtitle = "自定义收支分类",
+                        onClick = onNavigateToCategoryManage,
+                    )
+                    MenuDivider()
+                    ProfileMenuItem(
+                        icon = Icons.Default.AccountBalance, title = "账户管理",
+                        subtitle = "管理你的钱包和银行卡",
+                        onClick = onNavigateToAccountManage,
+                    )
+                    MenuDivider()
+                    ProfileMenuItem(
+                        icon = Icons.Default.Delete, title = "回收站",
+                        subtitle = "查看和恢复已删除的记录",
+                        onClick = onNavigateToTrash,
+                    )
+                }
             }
-        }
-        item { SectionLabel("设置") }
-        item {
-            MenuCard {
-                ProfileMenuItem(
-                    icon = Icons.Default.Notifications, title = "通知中心",
-                    subtitle = "查看待确认的自动记账",
-                    onClick = onNavigateToNotificationCenter,
-                )
-                MenuDivider()
-                ProfileMenuItem(
-                    icon = Icons.Default.Shield, title = "权限与保活",
-                    subtitle = "通知监听、电池优化、自启动",
-                    onClick = onNavigateToPermissionGuide,
-                )
-                MenuDivider()
-                ProfileMenuItem(
-                    icon = Icons.Default.Settings, title = "通用设置",
-                    subtitle = "主题、隐私、服务器",
-                    onClick = onNavigateToSettings,
-                )
+            item { SectionLabel("设置") }
+            item {
+                MenuCard {
+                    ProfileMenuItem(
+                        icon = Icons.Default.Notifications, title = "通知中心",
+                        subtitle = "查看待确认的自动记账",
+                        onClick = onNavigateToNotificationCenter,
+                    )
+                    MenuDivider()
+                    ProfileMenuItem(
+                        icon = Icons.Default.Shield, title = "权限与保活",
+                        subtitle = "通知监听、电池优化、自启动",
+                        onClick = onNavigateToPermissionGuide,
+                    )
+                    MenuDivider()
+                    ProfileMenuItem(
+                        icon = Icons.Default.Settings, title = "通用设置",
+                        subtitle = "主题、隐私、服务器",
+                        onClick = onNavigateToSettings,
+                    )
+                }
             }
-        }
-        item {
-            MenuCard {
-                ProfileMenuItem(
-                    icon = Icons.AutoMirrored.Filled.Logout, title = "退出登录",
-                    tint = MaterialTheme.colorScheme.error,
-                    iconBg = MaterialTheme.colorScheme.errorContainer,
-                    onClick = { showLogoutConfirm = true },
-                )
+            item {
+                MenuCard {
+                    ProfileMenuItem(
+                        icon = Icons.AutoMirrored.Filled.Logout, title = "退出登录",
+                        tint = MaterialTheme.colorScheme.error,
+                        iconBg = MaterialTheme.colorScheme.errorContainer,
+                        onClick = { showLogoutConfirm = true },
+                    )
+                }
             }
+            item { Spacer(modifier = Modifier.height(Tokens.Spacing.xxl)) }
         }
-        item { Spacer(modifier = Modifier.height(24.dp)) }
     }
 }
 
@@ -162,21 +161,14 @@ fun ProfileScreen(
 private fun UserHeaderCard(displayName: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(Tokens.Radius.xl),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    brush = Brush.linearGradient(
-                        colors = listOf(GradientStart, GradientEnd),
-                        start = Offset.Zero,
-                        end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
-                    ),
-                    shape = RoundedCornerShape(20.dp),
-                )
-                .padding(24.dp),
+                .background(brush = BrandGradient, shape = RoundedCornerShape(Tokens.Radius.xl))
+                .padding(Tokens.Spacing.xxl),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Surface(
@@ -188,11 +180,18 @@ private fun UserHeaderCard(displayName: String) {
                     Text(text = "👤", fontSize = 32.sp)
                 }
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(displayName, style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold, color = Color.White)
-            Text("AIBILL · 智能记账", style = MaterialTheme.typography.bodySmall,
-                color = Color.White.copy(alpha = 0.7f))
+            Spacer(modifier = Modifier.height(Tokens.Spacing.md))
+            Text(
+                displayName,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
+            Text(
+                "AIBILL · 智能记账",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.7f),
+            )
         }
     }
 }
@@ -200,61 +199,75 @@ private fun UserHeaderCard(displayName: String) {
 @Composable
 private fun SectionLabel(title: String) {
     Text(
-        text = title, style = MaterialTheme.typography.labelLarge,
+        text = title,
+        style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 4.dp),
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(start = Tokens.Spacing.xs),
     )
 }
 
 @Composable
 private fun MenuCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
-    ) { Column(content = content) }
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(Tokens.Radius.xl),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = Tokens.Elevation.low),
+    ) {
+        Column(content = content)
+    }
 }
 
 @Composable
 private fun MenuDivider() {
     HorizontalDivider(
-        modifier = Modifier.padding(start = 64.dp, end = 16.dp),
+        modifier = Modifier.padding(start = 64.dp, end = Tokens.Spacing.lg),
         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-        thickness = 0.5.dp,
+        thickness = Tokens.Border.thin,
     )
 }
 
 @Composable
 private fun ProfileMenuItem(
-    icon: ImageVector, title: String, subtitle: String? = null,
+    icon: ImageVector,
+    title: String,
+    subtitle: String? = null,
     iconBg: Color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-    tint: Color = MaterialTheme.colorScheme.primary, onClick: () -> Unit = {},
+    tint: Color = MaterialTheme.colorScheme.primary,
+    onClick: () -> Unit = {},
 ) {
     ListItem(
         headlineContent = {
             Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
         },
         supportingContent = if (subtitle != null) {
-            { Text(subtitle, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         } else null,
         leadingContent = {
             Surface(
-                shape = RoundedCornerShape(10.dp), color = iconBg,
-                modifier = Modifier.size(40.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = iconBg,
+                modifier = Modifier.size(Tokens.Avatar.md),
             ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Icon(icon, contentDescription = null, tint = tint,
-                        modifier = Modifier.size(20.dp))
+                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
                 }
             }
         },
         trailingContent = {
-            Icon(Icons.Default.ChevronRight, contentDescription = null,
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                modifier = Modifier.size(18.dp))
+                modifier = Modifier.size(Tokens.IconSize.sm),
+            )
         },
         modifier = Modifier.clickable(onClick = onClick),
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -265,14 +278,6 @@ private fun ProfileMenuItem(
 @Composable
 private fun ProfileScreenPreview() {
     AiBillTheme {
-        ProfileScreen(
-            onNavigateToSettings = {},
-            onNavigateToNotificationCenter = {},
-            onNavigateToPermissionGuide = {},
-            onNavigateToCategoryManage = {},
-            onNavigateToAccountManage = {},
-            onNavigateToTrash = {},
-            onLogout = {},
-        )
+        ProfileScreen()
     }
 }

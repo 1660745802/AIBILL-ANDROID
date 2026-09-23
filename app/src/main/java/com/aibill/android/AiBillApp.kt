@@ -3,16 +3,15 @@ package com.aibill.android
 import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import com.aibill.android.di.ApplicationScope
+import com.aibill.android.service.A11yHealthCheckWorker
 import com.aibill.android.service.InsightWorker
 import com.aibill.android.service.NlsHealthCheckWorker
-import com.aibill.android.service.A11yHealthCheckWorker
 import com.aibill.android.service.NotificationRulesManager
 import com.aibill.android.service.RulesSyncWorker
 import com.aibill.android.service.UpdateCheckWorker
-import com.aibill.android.util.NetworkMonitor
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
@@ -24,15 +23,15 @@ class AiBillApp : Application(), Configuration.Provider {
     lateinit var workerFactory: HiltWorkerFactory
 
     @Inject
-    lateinit var networkMonitor: NetworkMonitor
+    lateinit var notificationRulesManager: NotificationRulesManager
 
     @Inject
-    lateinit var notificationRulesManager: NotificationRulesManager
+    @ApplicationScope
+    lateinit var applicationScope: CoroutineScope
 
     override fun onCreate() {
         super.onCreate()
         initTimber()
-        networkMonitor.isOnline
         scheduleWorkers()
         fetchNotificationRules()
     }
@@ -50,8 +49,6 @@ class AiBillApp : Application(), Configuration.Provider {
         RulesSyncWorker.schedule(this)
         UpdateCheckWorker.schedule(this)
     }
-
-    private val applicationScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
 
     private fun fetchNotificationRules() {
         applicationScope.launch {
