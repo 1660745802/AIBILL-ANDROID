@@ -14,14 +14,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,6 +30,13 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.aibill.android.presentation.theme.SecondaryButton
+import com.aibill.android.presentation.ui.statistics.components.CategoryDonutChart
+import com.aibill.android.presentation.ui.statistics.components.CategoryStatItem
+import com.aibill.android.presentation.ui.statistics.components.IncomeExpenseCompareBar
+import com.aibill.android.presentation.ui.statistics.components.MonthSelector
+import com.aibill.android.presentation.ui.statistics.components.StatsTabRow
+import com.aibill.android.presentation.ui.statistics.components.SummaryCard
+import com.aibill.android.presentation.ui.statistics.components.TrendChartPlaceholder
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -196,81 +197,5 @@ fun StatisticsScreen(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun MonthSelector(
-    year: Int,
-    month: Int,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-    onJumpToCurrent: () -> Unit = {},
-    modifier: Modifier = Modifier,
-) {
-    val isCurrent = year == java.time.LocalDate.now().year &&
-        month == java.time.LocalDate.now().monthValue
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(
-            onClick = onPrevious,
-            colors = IconButtonDefaults.iconButtonColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            ),
-            modifier = Modifier.size(36.dp),
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                contentDescription = "上个月",
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        // 中间月份：非当前月时点击跳回本月（PRD §5.3 + CONTRIBUTING §11.6 禁用空 onClick）
-        SecondaryButton(
-            text = if (isCurrent) "本月" else "${year}年${month}月",
-            onClick = onJumpToCurrent,
-            modifier = Modifier.padding(horizontal = 12.dp),
-        )
-        IconButton(
-            onClick = onNext,
-            colors = IconButtonDefaults.iconButtonColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            ),
-            modifier = Modifier.size(36.dp),
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = "下个月",
-                modifier = Modifier.size(20.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun StatsTabRow(
-    selectedTab: String,
-    onTabChanged: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Start,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        FilterChip(
-            selected = selectedTab == "expense",
-            onClick = { onTabChanged("expense") },
-            label = { Text("支出") },
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        FilterChip(
-            selected = selectedTab == "income",
-            onClick = { onTabChanged("income") },
-            label = { Text("收入") },
-        )
     }
 }
