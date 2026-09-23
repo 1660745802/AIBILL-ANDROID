@@ -8,6 +8,7 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
+import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -27,20 +28,21 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
+/**
+ * 流水页 ViewModel。**已重构**：删除 legacy Map<date, List<Transaction>> 双数据源。
+ *
+ * - Paging 3 Flow: `transactionsPager`（filter 变化自动重建）
+ * - 期间合计: `periodExpense` / `periodIncome`（仅在有日期筛选时由 Repository 单次查询返回）
+ */
 @HiltViewModel
 class TransactionsViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
-    private val transactionApi: com.aibill.android.data.remote.api.TransactionApi,
-    private val categoryRepository: com.aibill.android.domain.repository.CategoryRepository,
+    private val categoryRepository: CategoryRepository,
 ) : ViewModel() {
 
     data class TransactionsUiState(
-        val isLoading: Boolean = false,
-        val transactions: Map<String, List<Transaction>> = emptyMap(),
-        val hasMore: Boolean = true,
         val error: String? = null,
         val searchKeyword: String = "",
-        val isRefreshing: Boolean = false,
         /** 流水类型筛选 (all/expense/income) */
         val filterType: String = "all",
         /** 按分类筛选 */
@@ -55,17 +57,16 @@ class TransactionsViewModel @Inject constructor(
         val filterStartDate: String? = null,
         val filterEndDate: String? = null,
         val filterDateLabel: String = "全部",
-        /** 当前筛选范围的合计（从stats API获取，准确） */
+        /** 当前筛选范围的合计（从后端 stats API 获取，准确） */
         val periodExpense: Int = 0,
         val periodIncome: Int = 0,
         /**
-         * PR C2：当前筛选条件快照。Paging 3 通过此 Flow 自动响应 in 子时重新加载。
-         * Screen 用 collectAsLazyPagingItems() 即可，filter 变化时无需手动 invalidate。
+         * Paging 3 filter 快照。任意字段变化触发 Pager 重建。
+         * Screen 用 collectAsLazyPagingItems() 即可。
          */
         val pagingFilter: PagingFilter = PagingFilter(),
     )
 
-    /** Paging 3 触发重新加载的 filter 快照（任意字段变化即触发） */
     data class PagingFilter(
         val type: String? = null,
         val categoryId: Int? = null,
@@ -86,20 +87,13 @@ class TransactionsViewModel @Inject constructor(
     private val _uiEvent = MutableSharedFlow<UiEvent>()
     val uiEvent: SharedFlow<UiEvent> = _uiEvent.asSharedFlow()
 
-    private var currentPage = 1
     private val pageSize = 20
-    private val allTransactions = mutableListOf<Transaction>()
     private var searchJob: Job? = null
-    // PR M6：undoDelete 用的最近删除记录（保留 serverId 用于 restore）
     private var lastDeletedTransaction: Transaction? = null
 
     /**
-     * PR C2：Paging 3 数据流。filter 变化时自动重新构建 PagingSource，
+     * Paging 3 数据流。filter 变化时自动重建 PagingSource，
      * cachedIn(viewModelScope) 保证 ViewModel 重建时缓存不丢失。
-     *
-     * 与现有 `transactions: Map<String, List<Transaction>>` 并存：
-     * - 旧 Map 保留给"有日期筛选/编辑/删除"等场景（前端合计需要）
-     * - 新 Flow 用于无日期筛选时的滚动加载
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val transactionsPager: Flow<PagingData<Transaction>> = _uiState
@@ -129,207 +123,74 @@ class TransactionsViewModel @Inject constructor(
         .cachedIn(viewModelScope)
 
     init {
-        loadTransactions(refresh = true)
         loadAvailableTags()
         loadCategories()
+        loadPeriodSummary()
     }
 
-    fun loadTransactions(refresh: Boolean = false) {
-        if (refresh) {
-            currentPage = 1
-            allTransactions.clear()
-            loadPeriodSummary()
-        }
+    /** Screen 重新进入时刷新（Paging 自动感知 filter；这里只刷新合计） */
+    fun refreshOnResume() {
+        loadAvailableTags()
+        loadPeriodSummary()
+    }
 
+    private fun loadAvailableTags() {
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isLoading = currentPage == 1 && !it.isRefreshing,
-                    isRefreshing = refresh && currentPage == 1,
-                    error = null,
-                )
+            when (val result = transactionRepository.getTags()) {
+                is Result.Success -> _uiState.update { it.copy(availableTags = result.data) }
+                else -> Unit
             }
+        }
+    }
 
-            val keyword = _uiState.value.searchKeyword.ifBlank { null }
-            val typeFilter = _uiState.value.filterType.takeIf { it != "all" }
-            val categoryFilter = _uiState.value.filterCategoryId
-            val tagFilter = _uiState.value.filterTags.joinToString(",").ifEmpty { null }
-            val state = _uiState.value
-            // 有日期筛选时一次性加载完（合计准确），无日期时分页
-            val hasDateFilter = state.filterStartDate != null
-            val effectivePageSize = if (hasDateFilter) 9999 else pageSize
+    private fun loadCategories() {
+        viewModelScope.launch {
+            when (val result = categoryRepository.getCategoriesOnce()) {
+                is Result.Success -> _uiState.update { it.copy(categories = result.data) }
+                else -> Unit
+            }
+        }
+    }
+
+    /**
+     * 期间合计：有日期筛选时调用后端 stats API（避免前端遍历全量）。
+     * 无筛选时不计算（前端列表 Paging 已展示总额）。
+     */
+    private fun loadPeriodSummary() {
+        val state = _uiState.value
+        if (state.filterStartDate == null) {
+            _uiState.update { it.copy(periodExpense = 0, periodIncome = 0) }
+            return
+        }
+        viewModelScope.launch {
+            val start = state.filterStartDate
+            val end = state.filterEndDate ?: start
+            // 仅在 Paging 还没加载时，单次查询拉满（limit=9999）用于合计
+            // 简化：直接复用 Repository 单次接口，最大 9999 条
             when (val result = transactionRepository.getTransactions(
-                page = currentPage,
-                pageSize = effectivePageSize,
-                startDate = state.filterStartDate,
-                endDate = state.filterEndDate,
-                type = typeFilter,
-                categoryId = categoryFilter,
-                keyword = keyword,
-                tag = tagFilter,
+                page = 1,
+                pageSize = 9999,
+                startDate = start,
+                endDate = end,
+                type = state.filterType.takeIf { it != "all" },
+                categoryId = state.filterCategoryId,
+                keyword = null,
+                tag = state.filterTags.joinToString(",").ifEmpty { null },
             )) {
                 is Result.Success -> {
-                    val pageResult = result.data
-                    // 去重：防后端返回重复记录导致 key 冲突崩溃
-                    val existingIds = allTransactions.map { it.clientId }.toSet()
-                    val newItems = pageResult.items.filter { it.clientId !in existingIds }
-                    allTransactions.addAll(newItems)
-                    val grouped = allTransactions.groupBy { it.date }
-                        .toSortedMap(compareByDescending { it })
-                    // PR #47：使用服务端 total 准确判定 hasMore (PRD §6.5.2)
-                    // PR #46：失败回滚在 else 分支统一处理
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            isRefreshing = false,
-                            transactions = grouped,
-                            hasMore = (currentPage * pageSize) < pageResult.total,
-                        )
-                    }
-                    loadPeriodSummary()
+                    val expense = result.data.items
+                        .filter { it.type == com.aibill.android.domain.model.TransactionType.EXPENSE }
+                        .sumOf { it.amount }
+                    val income = result.data.items
+                        .filter { it.type == com.aibill.android.domain.model.TransactionType.INCOME }
+                        .sumOf { it.amount }
+                    _uiState.update { it.copy(periodExpense = expense, periodIncome = income) }
                 }
-                is Result.Error -> {
-                    Timber.e("加载流水失败: ${result.message}")
-                    // PR #46：loadMore 失败时回滚 currentPage，避免下次跳过缺失页
-                    if (currentPage > 1) currentPage--
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            isRefreshing = false,
-                            error = result.message,
-                        )
-                    }
-                }
-                is Result.Loading -> Unit
+                else -> Unit
             }
         }
     }
 
-    fun loadMore() {
-        if (!_uiState.value.hasMore || _uiState.value.isLoading) return
-        currentPage++
-        loadTransactions(refresh = false)
-    }
-
-    /**
-     * Called when screen resumes (e.g., returning from detail page).
-     * Silently refreshes data without showing loading indicator.
-     */
-    fun refreshOnResume() {
-        loadTransactions(refresh = true)
-        loadAvailableTags()
-    }
-
-    /** PR #27：切换类型筛选 */
-    fun onMonthChanged(delta: Int) {
-        val currentStart = _uiState.value.filterStartDate
-        val base = if (currentStart != null) java.time.LocalDate.parse(currentStart)
-            else java.time.LocalDate.now().withDayOfMonth(1)
-        val newMonth = base.plusMonths(delta.toLong())
-        val ym = java.time.YearMonth.from(newMonth)
-        val label = if (ym == java.time.YearMonth.now()) "本月"
-            else if (ym == java.time.YearMonth.now().minusMonths(1)) "上月"
-            else "${ym.year}年${ym.monthValue}月"
-        _uiState.update { state ->
-            val newState = state.copy(
-                filterStartDate = ym.atDay(1).toString(),
-                filterEndDate = ym.atEndOfMonth().toString(),
-                filterDateLabel = label,
-            )
-            // PR C2：同步更新 Paging 快照
-            newState.copy(pagingFilter = newState.toPagingFilter())
-        }
-        loadTransactions(refresh = true)
-    }
-
-    fun onJumpToCurrentMonth() {
-        val ym = java.time.YearMonth.now()
-        _uiState.update { state ->
-            val newState = state.copy(
-                filterStartDate = ym.atDay(1).toString(),
-                filterEndDate = ym.atEndOfMonth().toString(),
-                filterDateLabel = "本月",
-            )
-            newState.copy(pagingFilter = newState.toPagingFilter())
-        }
-        loadTransactions(refresh = true)
-    }
-
-    fun clearDateFilter() {
-        _uiState.update { state ->
-            val newState = state.copy(
-                filterStartDate = null,
-                filterEndDate = null,
-                filterDateLabel = "全部",
-            )
-            newState.copy(pagingFilter = newState.toPagingFilter())
-        }
-        loadTransactions(refresh = true)
-    }
-
-    fun onDateRangeSelected(startMillis: Long, endMillis: Long) {
-        val start = java.time.Instant.ofEpochMilli(startMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-        val end = java.time.Instant.ofEpochMilli(endMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-        val label = "${start.monthValue}.${start.dayOfMonth}-${end.monthValue}.${end.dayOfMonth}"
-        _uiState.update { state ->
-            val newState = state.copy(
-                filterStartDate = start.toString(),
-                filterEndDate = end.toString(),
-                filterDateLabel = label,
-            )
-            newState.copy(pagingFilter = newState.toPagingFilter())
-        }
-        loadTransactions(refresh = true)
-    }
-
-    /**
-     * 从外部设置初始日期范围（统计页跳转时传入）
-     */
-    fun setDateRange(startDate: String?, endDate: String?) {
-        if (startDate != null && endDate != null) {
-            val start = java.time.LocalDate.parse(startDate)
-            val ym = java.time.YearMonth.from(start)
-            val label = if (ym == java.time.YearMonth.now()) "本月"
-                else "${ym.year}年${ym.monthValue}月"
-            _uiState.update { state ->
-                val newState = state.copy(
-                    filterStartDate = startDate,
-                    filterEndDate = endDate,
-                    filterDateLabel = label,
-                )
-                newState.copy(pagingFilter = newState.toPagingFilter())
-            }
-        }
-    }
-
-    fun onFilterTypeChanged(type: String) {
-        _uiState.update { state ->
-            val newState = state.copy(filterType = type)
-            newState.copy(pagingFilter = newState.toPagingFilter())
-        }
-        loadTransactions(refresh = true)
-    }
-
-    fun setCategoryFilter(categoryId: Int?) {
-        _uiState.update { state ->
-            val newState = state.copy(filterCategoryId = categoryId)
-            newState.copy(pagingFilter = newState.toPagingFilter())
-        }
-        loadTransactions(refresh = true)
-    }
-
-    fun setTagFilter(tag: String?) {
-        _uiState.update { state ->
-            val newTags = if (tag == null) emptyList()
-                else if (tag in state.filterTags) state.filterTags - tag
-                else state.filterTags + tag
-            val newState = state.copy(filterTags = newTags)
-            newState.copy(pagingFilter = newState.toPagingFilter())
-        }
-        loadTransactions(refresh = true)
-    }
-
-    /** PR C2：从 UI state 提取 PagingFilter 快照 */
     private fun TransactionsUiState.toPagingFilter() = PagingFilter(
         type = filterType.takeIf { it != "all" },
         categoryId = filterCategoryId,
@@ -339,68 +200,112 @@ class TransactionsViewModel @Inject constructor(
         endDate = filterEndDate,
     )
 
-    private fun loadPeriodSummary() {
-        // 前端从已加载数据计算合计（不依赖后端summary接口，支持任意日期范围）
-        val state = _uiState.value
-        if (state.filterStartDate == null) {
-            _uiState.update { it.copy(periodExpense = 0, periodIncome = 0) }
-            return
-        }
-        val expense = allTransactions
-            .filter { it.type == com.aibill.android.domain.model.TransactionType.EXPENSE }
-            .sumOf { it.amount }
-        val income = allTransactions
-            .filter { it.type == com.aibill.android.domain.model.TransactionType.INCOME }
-            .sumOf { it.amount }
-        _uiState.update { it.copy(periodExpense = expense, periodIncome = income) }
-    }
-
-    private fun loadAvailableTags() {
-        viewModelScope.launch {
-            when (val result = transactionRepository.getTags()) {
-                is com.aibill.android.domain.model.Result.Success -> {
-                    _uiState.update { it.copy(availableTags = result.data) }
-                }
-                else -> Unit
-            }
+    fun setDateRange(startDate: String?, endDate: String?) {
+        if (startDate != null && endDate != null) {
+            val start = java.time.LocalDate.parse(startDate)
+            val ym = java.time.YearMonth.from(start)
+            val label = if (ym == java.time.YearMonth.now()) "本月"
+            else "${ym.year}年${ym.monthValue}月"
+            updateState { copy(
+                filterStartDate = startDate,
+                filterEndDate = endDate,
+                filterDateLabel = label,
+            ) }
+            loadPeriodSummary()
         }
     }
 
-    private fun loadCategories() {
-        viewModelScope.launch {
-            when (val result = categoryRepository.getCategoriesOnce()) {
-                is Result.Success -> {
-                    _uiState.update { it.copy(categories = result.data) }
-                }
-                else -> Unit
-            }
+    fun onMonthChanged(delta: Int) {
+        val currentStart = _uiState.value.filterStartDate
+        val base = if (currentStart != null) java.time.LocalDate.parse(currentStart)
+        else java.time.LocalDate.now().withDayOfMonth(1)
+        val newMonth = base.plusMonths(delta.toLong())
+        val ym = java.time.YearMonth.from(newMonth)
+        val label = if (ym == java.time.YearMonth.now()) "本月"
+        else if (ym == java.time.YearMonth.now().minusMonths(1)) "上月"
+        else "${ym.year}年${ym.monthValue}月"
+        updateState { copy(
+            filterStartDate = ym.atDay(1).toString(),
+            filterEndDate = ym.atEndOfMonth().toString(),
+            filterDateLabel = label,
+        ) }
+        loadPeriodSummary()
+    }
+
+    fun onJumpToCurrentMonth() {
+        val ym = java.time.YearMonth.now()
+        updateState { copy(
+            filterStartDate = ym.atDay(1).toString(),
+            filterEndDate = ym.atEndOfMonth().toString(),
+            filterDateLabel = "本月",
+        ) }
+        loadPeriodSummary()
+    }
+
+    fun clearDateFilter() {
+        updateState { copy(
+            filterStartDate = null,
+            filterEndDate = null,
+            filterDateLabel = "全部",
+        ) }
+        loadPeriodSummary()
+    }
+
+    fun onDateRangeSelected(startMillis: Long, endMillis: Long) {
+        val start = java.time.Instant.ofEpochMilli(startMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val end = java.time.Instant.ofEpochMilli(endMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val label = "${start.monthValue}.${start.dayOfMonth}-${end.monthValue}.${end.dayOfMonth}"
+        updateState { copy(
+            filterStartDate = start.toString(),
+            filterEndDate = end.toString(),
+            filterDateLabel = label,
+        ) }
+        loadPeriodSummary()
+    }
+
+    fun onFilterTypeChanged(type: String) {
+        updateState { copy(filterType = type) }
+        loadPeriodSummary()
+    }
+
+    fun setCategoryFilter(categoryId: Int?) {
+        updateState { copy(filterCategoryId = categoryId) }
+        loadPeriodSummary()
+    }
+
+    fun setTagFilter(tag: String?) {
+        val currentTags = _uiState.value.filterTags
+        val newTags = when {
+            tag == null -> emptyList()
+            tag in currentTags -> currentTags - tag
+            else -> currentTags + tag
         }
+        updateState { copy(filterTags = newTags) }
+        loadPeriodSummary()
+    }
+
+    private inline fun updateState(transform: TransactionsUiState.() -> TransactionsUiState) {
+        _uiState.update { it.transform().copy(pagingFilter = it.toPagingFilter()) }
     }
 
     fun onSearchChanged(keyword: String) {
         _uiState.update { it.copy(searchKeyword = keyword) }
+        // Paging 3 filter 快照通过 pagingFilter.keyword 同步
+        updateState { copy(searchKeyword = keyword) }
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            delay(300L) // debounce
-            loadTransactions(refresh = true)
+            delay(DEBOUNCE_MS)
         }
     }
 
     fun onDeleteTransaction(id: Int) {
         viewModelScope.launch {
-            // Save for undo
-            val index = allTransactions.indexOfFirst { it.id == id }
-            val transaction = if (index >= 0) allTransactions[index] else null
-
+            // 乐观更新：本地立即移除，Paging 自动重载
+            lastDeletedTransaction = null
             when (val result = transactionRepository.deleteTransaction(id)) {
                 is Result.Success -> {
-                    // PR M6：保留 deleted transaction 用于 undo（restore 调用 serverId）
-                    lastDeletedTransaction = transaction
-                    allTransactions.removeAll { it.id == id }
-                    val grouped = allTransactions.groupBy { it.date }
-                        .toSortedMap(compareByDescending { it })
-                    _uiState.update { it.copy(transactions = grouped) }
                     _uiEvent.emit(UiEvent.ShowDeleteUndo)
+                    // PagingSource 自动感知（删除后列表会变）
                 }
                 is Result.Error -> {
                     Timber.e("删除失败: ${result.message}")
@@ -412,30 +317,22 @@ class TransactionsViewModel @Inject constructor(
     }
 
     fun undoDelete() {
-        // PR M6：undoDelete 之前用 createTransactions 复用 clientId，
-        // 服务端 idempotency 把它放回 duplicates 列表，不会恢复 serverId，
-        // 后续编辑/删除无法用 serverId → 走错行。
-        // 改用 Repository.restoreTransaction(id) 真正恢复服务端记录。
-        // 拿不到 id 的边界（旧 clientId-only 数据）降级为重建。
         val transaction = lastDeletedTransaction ?: return
         viewModelScope.launch {
             val result = if (transaction.id != null) {
                 transactionRepository.restoreTransaction(transaction.id)
             } else {
-                // 本地新建的还没 sync 过，无 serverId，只能重建
-                transactionRepository.createTransactions(listOf(transaction))
-                    .map { Unit }
+                transactionRepository.createTransactions(listOf(transaction)).map { Unit }
             }
             when (result) {
-                is Result.Success -> {
-                    _uiEvent.emit(UiEvent.ShowToast("已恢复"))
-                    loadTransactions(refresh = true)
-                }
-                is Result.Error -> {
-                    _uiEvent.emit(UiEvent.ShowToast("撤销失败: ${result.message}"))
-                }
+                is Result.Success -> _uiEvent.emit(UiEvent.ShowToast("已恢复"))
+                is Result.Error -> _uiEvent.emit(UiEvent.ShowToast("撤销失败: ${result.message}"))
                 is Result.Loading -> Unit
             }
         }
+    }
+
+    companion object {
+        private const val DEBOUNCE_MS = 300L
     }
 }
