@@ -78,7 +78,7 @@ if [ "$HTTP_STATUS" != "200" ]; then
   echo ""
   echo "可能原因:"
   echo "  - billserver 未启动（默认 http://localhost:3000）"
-  echo "  - /api/app/update 端点未实现（参见 docs/billserver-update-api.md）"
+  echo "  - /api/app/update 端点未实现（参见 docs/RELEASE.md §双源策略）"
   echo "  - CORS / 防火墙拦截"
   exit 1
 fi
