@@ -23,9 +23,9 @@ import com.aibill.android.presentation.theme.TransferColor
  *
  * 隐私模式（[privacy] = true）下显示 `¥***`。
  */
-object AmountFormat {
+object AmountFormatter {
     /** 分 → "¥32.00" */
-    fun toYuanDisplay(amountFen: Int): String = "¥${String.format("%.2f", amountFen / 100.0)}"
+    fun toYuanDisplay(amountFen: Int): String = "¥${String.format(java.util.Locale.US, "%.2f", amountFen / 100.0)}"
 
     /** 分 → 完整带符号显示 "+¥32.00" / "-¥32.00" / "¥32.00" */
     fun toSignedDisplay(amountFen: Int, type: TransactionType): String {
@@ -62,9 +62,9 @@ fun AmountText(
     showSign: Boolean = true,
 ) {
     val text = when {
-        privacy -> AmountFormat.PRIVACY_MASK
-        type != null && showSign -> AmountFormat.toSignedDisplay(amount, type)
-        else -> AmountFormat.toYuanDisplay(amount)
+        privacy -> AmountFormatter.PRIVACY_MASK
+        type != null && showSign -> AmountFormatter.toSignedDisplay(amount, type)
+        else -> AmountFormatter.toYuanDisplay(amount)
     }
     val finalColor = color ?: when (type) {
         TransactionType.EXPENSE -> ExpenseColor

@@ -31,7 +31,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.presentation.components.AppTopBar
 import com.aibill.android.presentation.theme.PrimaryButton
-import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.ui.auth.components.AuthTextField
 
 /**

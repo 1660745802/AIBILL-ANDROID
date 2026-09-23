@@ -1,7 +1,6 @@
 package com.aibill.android.service
 
 import android.app.Application
-import android.content.Context
 import android.content.SharedPreferences
 import com.aibill.android.data.remote.api.NotificationRulesApi
 import com.aibill.android.data.remote.dto.response.NotificationRulesData

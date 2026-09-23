@@ -38,7 +38,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.data.local.entity.NotificationRecordEntity
@@ -46,8 +45,6 @@ import com.aibill.android.presentation.components.AppTopBar
 import com.aibill.android.presentation.components.AmountText
 import com.aibill.android.presentation.components.ConfirmDialog
 import com.aibill.android.presentation.components.EmptyState
-import com.aibill.android.presentation.theme.ExpenseColor
-import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.theme.PrimaryButton
 import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.Tokens
@@ -87,10 +84,11 @@ fun NotificationCenterScreen(
         val categoriesByType by viewModel.categoriesByType.collectAsStateWithLifecycle()
         val availableTags by viewModel.availableTags.collectAsStateWithLifecycle()
         com.aibill.android.presentation.ui.common.TransactionEditDialog(
-            initialAmount = item.parsedAmount ?: 0,
-            initialType = item.parsedType ?: "expense",
-            initialCategoryId = null,
-            initialDescription = item.parsedDescription,
+            initial = com.aibill.android.presentation.ui.common.TransactionEditDialogInitial(
+                amount = item.parsedAmount ?: 0,
+                type = item.parsedType ?: "expense",
+                description = item.parsedDescription,
+            ),
             categoriesByType = categoriesByType,
             availableTags = availableTags,
             accounts = emptyList(),

@@ -160,14 +160,7 @@ class UpdateManager @Inject constructor(
         )
     }
 
-    /**
-     * 调 billserver 自托管更新 API（向后兼容的 nullable 版本，供内部调用）。
-     *
-     * 返回 null 时可能表示"无新版本"或"不可达"——调用方需要 [queryBillserver] 区分。
-     */
-    private suspend fun billserverUpdate(): UpdateInfo? = null  // PR: 已迁移到 [queryBillserver]
-
-    /**
+/**
      * GitHub Release fallback。forceLatest=true 时不做版本对比（手动检查用）。
      */
     private suspend fun githubReleaseUpdate(forceLatest: Boolean = false): UpdateInfo? {

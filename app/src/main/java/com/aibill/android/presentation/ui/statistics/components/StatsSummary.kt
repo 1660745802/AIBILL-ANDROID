@@ -14,17 +14,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aibill.android.domain.repository.StatsSummary
-import com.aibill.android.presentation.components.AmountFormat
+import com.aibill.android.presentation.components.AmountFormatter
 import com.aibill.android.presentation.components.GradientSummaryCard
 import com.aibill.android.presentation.components.Metric
 import com.aibill.android.presentation.theme.ExpenseColor
@@ -67,15 +63,15 @@ fun SummaryCard(
             }
             if (summary != null && (summary.expense > 0 || summary.income > 0)) {
                 if (selectedTab == "expense" && summary.income > 0) {
-                    add(Metric("收入", AmountFormat.toYuanDisplay(summary.income)))
+                    add(Metric("收入", AmountFormatter.toYuanDisplay(summary.income)))
                 } else if (selectedTab == "income" && summary.expense > 0) {
-                    add(Metric("支出", AmountFormat.toYuanDisplay(summary.expense)))
+                    add(Metric("支出", AmountFormatter.toYuanDisplay(summary.expense)))
                 }
                 if (summary.balance != 0) {
                     val balanceText = if (summary.balance < 0) {
-                        "-${AmountFormat.toYuanDisplay(-summary.balance)}"
+                        "-${AmountFormatter.toYuanDisplay(-summary.balance)}"
                     } else {
-                        AmountFormat.toYuanDisplay(summary.balance)
+                        AmountFormatter.toYuanDisplay(summary.balance)
                     }
                     add(Metric("结余", balanceText))
                 }
@@ -108,12 +104,12 @@ fun IncomeExpenseCompareBar(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    "支出 ${AmountFormat.toYuanDisplay(expense)}",
+                    "支出 ${AmountFormatter.toYuanDisplay(expense)}",
                     style = MaterialTheme.typography.labelMedium,
                     color = ExpenseColor,
                 )
                 Text(
-                    "收入 ${AmountFormat.toYuanDisplay(income)}",
+                    "收入 ${AmountFormatter.toYuanDisplay(income)}",
                     style = MaterialTheme.typography.labelMedium,
                     color = IncomeColor,
                 )

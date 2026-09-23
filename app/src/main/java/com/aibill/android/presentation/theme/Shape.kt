@@ -1,6 +1,5 @@
 package com.aibill.android.presentation.theme
 
-import com.aibill.android.presentation.theme.Tokens
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Shapes

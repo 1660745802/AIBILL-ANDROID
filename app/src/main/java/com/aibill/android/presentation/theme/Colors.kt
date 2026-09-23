@@ -61,7 +61,7 @@ val WarningGradient: Brush = Brush.linearGradient(
 // ============ 通知隐私遮罩 ============
 
 /** 通知隐私模式下金额显示 */
-val PrivacyMask = "¥***"
+const val PRIVACY_MASK = "¥***"
 
 // ============ Material 3 Tonal Palette（Light） ============
 // 用于 Theme.kt ColorScheme 定义。命名遵循 M3 规范：

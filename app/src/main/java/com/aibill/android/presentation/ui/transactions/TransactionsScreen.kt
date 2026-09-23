@@ -20,6 +20,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
+import com.aibill.android.presentation.ui.transactions.components.TransactionsFiltersCallbacks
 import com.aibill.android.presentation.ui.transactions.components.TransactionsFilters
 import com.aibill.android.presentation.ui.transactions.components.TransactionsPagingList
 import java.time.YearMonth
@@ -89,28 +90,24 @@ fun TransactionsScreen(
     ) { innerPadding ->
         Column(modifier = modifier.fillMaxSize().padding(innerPadding)) {
             TransactionsFilters(
-                filterDateLabel = uiState.filterDateLabel,
-                filterType = uiState.filterType,
-                filterCategoryId = uiState.filterCategoryId,
-                filterTags = uiState.filterTags,
-                filterStartDate = uiState.filterStartDate,
-                periodExpense = uiState.periodExpense,
-                periodIncome = uiState.periodIncome,
+                state = uiState,
                 categories = uiState.categories,
                 availableTags = uiState.availableTags,
-                onClearDate = viewModel::clearDateFilter,
-                onJumpToCurrentMonth = viewModel::onJumpToCurrentMonth,
-                onSelectLastMonth = {
-                    val ym = YearMonth.now().minusMonths(1)
-                    viewModel.onDateRangeSelected(
-                        ym.atDay(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
-                        ym.atEndOfMonth().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
-                    )
-                },
-                onSelectCustomDate = viewModel::onDateRangeSelected,
-                onTypeChanged = viewModel::onFilterTypeChanged,
-                onCategoryChanged = viewModel::setCategoryFilter,
-                onTagToggled = viewModel::setTagFilter,
+                callbacks = TransactionsFiltersCallbacks(
+                    onClearDate = viewModel::clearDateFilter,
+                    onJumpToCurrentMonth = viewModel::onJumpToCurrentMonth,
+                    onSelectLastMonth = {
+                        val ym = YearMonth.now().minusMonths(1)
+                        viewModel.onDateRangeSelected(
+                            ym.atDay(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                            ym.atEndOfMonth().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                        )
+                    },
+                    onSelectCustomDate = viewModel::onDateRangeSelected,
+                    onTypeChanged = viewModel::onFilterTypeChanged,
+                    onCategoryChanged = viewModel::setCategoryFilter,
+                    onTagToggled = viewModel::setTagFilter,
+                ),
             )
 
             PullToRefreshBox(

@@ -1,6 +1,5 @@
 package com.aibill.android.util
 
-import android.os.Handler
 import android.os.Looper
 import io.mockk.every
 import io.mockk.mockk

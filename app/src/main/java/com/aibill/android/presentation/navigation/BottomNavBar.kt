@@ -17,17 +17,17 @@ import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
 
-data class BottomNavItem(
+data class BottomBarNavigationItem(
     val label: String,
     val icon: ImageVector,
     val route: Route,
 )
 
 private val bottomNavItems = listOf(
-    BottomNavItem("首页", Icons.Default.Home, Route.Home),
-    BottomNavItem("流水", Icons.Default.List, Route.Transactions()),
-    BottomNavItem("统计", Icons.Default.PieChart, Route.Statistics),
-    BottomNavItem("我的", Icons.Default.Person, Route.Profile),
+    BottomBarNavigationItem("首页", Icons.Default.Home, Route.Home),
+    BottomBarNavigationItem("流水", Icons.Default.List, Route.Transactions()),
+    BottomBarNavigationItem("统计", Icons.Default.PieChart, Route.Statistics),
+    BottomBarNavigationItem("我的", Icons.Default.Person, Route.Profile),
 )
 
 @Composable

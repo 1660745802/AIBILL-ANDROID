@@ -25,7 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import com.aibill.android.presentation.theme.BrandGradient
 import com.aibill.android.presentation.theme.ExpenseGradient
 import com.aibill.android.presentation.theme.IncomeGradient
@@ -77,7 +76,7 @@ fun GradientSummaryCard(
                     )
                     Spacer(Modifier.height(Tokens.Spacing.sm))
                     Text(
-                        text = AmountFormat.toYuanDisplay(amountFen),
+                        text = AmountFormatter.toYuanDisplay(amountFen),
                         style = MaterialTheme.typography.headlineLarge.copy(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = androidx.compose.ui.unit.TextUnit(-0.5f, androidx.compose.ui.unit.TextUnitType.Sp),

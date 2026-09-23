@@ -225,7 +225,7 @@ fun SettingsScreen(
                     title = "检查更新",
                     subtitle = "当前版本 ${com.aibill.android.BuildConfig.VERSION_NAME}",
                     onClick = {
-                        viewModel.checkUpdate(context) { result ->
+                        viewModel.checkUpdate { result ->
                             if (result is SettingsViewModel.UpdateCheckResult.Available) {
                                 pendingUpdate = result.info
                             }

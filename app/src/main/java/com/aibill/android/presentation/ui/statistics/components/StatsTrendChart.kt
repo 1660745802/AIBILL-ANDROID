@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -25,7 +24,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.aibill.android.domain.repository.TrendPoint
-import com.aibill.android.presentation.components.AmountFormat
+import com.aibill.android.presentation.components.AmountFormatter
 import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.theme.Tokens
@@ -141,14 +140,14 @@ fun TrendChartPlaceholder(
                 ) {
                     maxPoint?.let {
                         Text(
-                            text = "↑ 最高 ${AmountFormat.toYuanDisplay(it.amount)} (${it.date.takeLast(2)}日)",
+                            text = "↑ 最高 ${AmountFormatter.toYuanDisplay(it.amount)} (${it.date.takeLast(2)}日)",
                             style = MaterialTheme.typography.labelSmall,
                             color = ExpenseColor,
                         )
                     }
                     minPoint?.let {
                         Text(
-                            text = "↓ 最低 ${AmountFormat.toYuanDisplay(it.amount)} (${it.date.takeLast(2)}日)",
+                            text = "↓ 最低 ${AmountFormatter.toYuanDisplay(it.amount)} (${it.date.takeLast(2)}日)",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

@@ -9,6 +9,7 @@ import androidx.paging.cachedIn
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.repository.CategoryRepository
+import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -109,12 +110,14 @@ class TransactionsViewModel @Inject constructor(
                 pagingSourceFactory = {
                     TransactionsPagingSource(
                         repository = transactionRepository,
-                        startDate = filter.startDate,
-                        endDate = filter.endDate,
-                        type = filter.type,
-                        categoryId = filter.categoryId,
-                        keyword = filter.keyword,
-                        tag = filter.tag,
+                        filter = PagingFilterSnapshot(
+                            startDate = filter.startDate,
+                            endDate = filter.endDate,
+                            type = filter.type,
+                            categoryId = filter.categoryId,
+                            keyword = filter.keyword,
+                            tag = filter.tag,
+                        ),
                         pageSize = pageSize,
                     )
                 },
@@ -168,14 +171,16 @@ class TransactionsViewModel @Inject constructor(
             // 仅在 Paging 还没加载时，单次查询拉满（limit=9999）用于合计
             // 简化：直接复用 Repository 单次接口，最大 9999 条
             when (val result = transactionRepository.getTransactions(
-                page = 1,
-                pageSize = 9999,
-                startDate = start,
-                endDate = end,
-                type = state.filterType.takeIf { it != "all" },
-                categoryId = state.filterCategoryId,
-                keyword = null,
-                tag = state.filterTags.joinToString(",").ifEmpty { null },
+                TransactionQuery(
+                    page = 1,
+                    pageSize = 9999,
+                    startDate = start,
+                    endDate = end,
+                    type = state.filterType.takeIf { it != "all" },
+                    categoryId = state.filterCategoryId,
+                    keyword = null,
+                    tag = state.filterTags.joinToString(",").ifEmpty { null },
+                ),
             )) {
                 is Result.Success -> {
                     val expense = result.data.items

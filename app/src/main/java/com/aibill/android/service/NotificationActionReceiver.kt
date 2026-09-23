@@ -105,8 +105,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
         val pendingTransaction = PendingTransactionEntity(
             clientId = clientId,
-            type = record.parsedType ?: "expense",
             amount = record.parsedAmount ?: 0,
+            type = record.parsedType ?: "expense",
             categoryId = predictedCategoryId,
             description = description,
             date = dateFormat.format(now),
@@ -139,7 +139,6 @@ class NotificationActionReceiver : BroadcastReceiver() {
             amount = record.parsedAmount ?: 0,
             description = record.parsedDescription,
             source = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
-            type = record.parsedType ?: "expense",
             privacyMode = false,
         )
     }
@@ -201,7 +200,6 @@ class NotificationActionReceiver : BroadcastReceiver() {
             amount = record.parsedAmount ?: 0,
             description = description,
             source = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
-            type = record.parsedType ?: "expense",
         )
     }
 }

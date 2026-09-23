@@ -4,7 +4,6 @@ import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.SyncLock
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.remote.api.TransactionApi
-import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.data.remote.dto.response.CreateTransactionResponse
 import com.aibill.android.data.remote.dto.response.TransactionDto

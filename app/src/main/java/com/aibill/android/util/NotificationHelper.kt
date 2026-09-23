@@ -306,7 +306,6 @@ object NotificationHelper {
         amount: Int,
         description: String?,
         source: String,
-        type: String = "expense",
         privacyMode: Boolean = false,
         autoDismissMs: Long? = null,
         clientId: String? = null,

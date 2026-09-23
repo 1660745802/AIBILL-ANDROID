@@ -4,13 +4,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,35 +31,33 @@ import com.aibill.android.presentation.theme.Tokens
 /**
  * 流水筛选区：日期范围 + 类型 + 分类 + 标签 + 合计
  */
+data class TransactionsFiltersCallbacks(
+    val onClearDate: () -> Unit = {},
+    val onJumpToCurrentMonth: () -> Unit = {},
+    val onSelectLastMonth: () -> Unit = {},
+    val onSelectCustomDate: (Long, Long) -> Unit = { _, _ -> },
+    val onTypeChanged: (String) -> Unit = {},
+    val onCategoryChanged: (Int?) -> Unit = {},
+    val onTagToggled: (String) -> Unit = {},
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransactionsFilters(
-    filterDateLabel: String,
-    filterType: String,
-    filterCategoryId: Int?,
-    filterTags: List<String>,
-    filterStartDate: String?,
-    periodExpense: Int,
-    periodIncome: Int,
+    state: com.aibill.android.presentation.ui.transactions.TransactionsViewModel.TransactionsUiState,
     categories: List<Category>,
     availableTags: List<String>,
-    onClearDate: () -> Unit,
-    onJumpToCurrentMonth: () -> Unit,
-    onSelectLastMonth: () -> Unit,
-    onSelectCustomDate: (Long, Long) -> Unit,
-    onTypeChanged: (String) -> Unit,
-    onCategoryChanged: (Int?) -> Unit,
-    onTagToggled: (String) -> Unit,
+    callbacks: TransactionsFiltersCallbacks = TransactionsFiltersCallbacks(),
     modifier: Modifier = Modifier,
 ) {
     var showDatePicker by remember { mutableStateOf(false) }
 
     Column(modifier = modifier.fillMaxWidth()) {
         DateFilterRow(
-            filterDateLabel = filterDateLabel,
-            onClearDate = onClearDate,
-            onJumpToCurrentMonth = onJumpToCurrentMonth,
-            onSelectLastMonth = onSelectLastMonth,
+            filterDateLabel = state.filterDateLabel,
+            onClearDate = callbacks.onClearDate,
+            onJumpToCurrentMonth = callbacks.onJumpToCurrentMonth,
+            onSelectLastMonth = callbacks.onSelectLastMonth,
             onShowCustomDatePicker = { showDatePicker = true },
         )
 
@@ -70,7 +65,7 @@ fun TransactionsFilters(
             DateRangePickerDialog(
                 onDismiss = { showDatePicker = false },
                 onConfirm = { start, end ->
-                    onSelectCustomDate(start, end)
+                    callbacks.onSelectCustomDate(start, end)
                     showDatePicker = false
                 },
             )
@@ -85,25 +80,25 @@ fun TransactionsFilters(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             FilterChip(
-                selected = filterType == "all",
-                onClick = { onTypeChanged("all") },
+                selected = state.filterType == "all",
+                onClick = { callbacks.onTypeChanged("all") },
                 label = { Text("全部") },
             )
             FilterChip(
-                selected = filterType == "expense",
-                onClick = { onTypeChanged("expense") },
+                selected = state.filterType == "expense",
+                onClick = { callbacks.onTypeChanged("expense") },
                 label = { Text("支出") },
             )
             FilterChip(
-                selected = filterType == "income",
-                onClick = { onTypeChanged("income") },
+                selected = state.filterType == "income",
+                onClick = { callbacks.onTypeChanged("income") },
                 label = { Text("收入") },
             )
             if (categories.isNotEmpty()) {
                 CategoryFilterDropdown(
                     categories = categories,
-                    selectedCategoryId = filterCategoryId,
-                    onCategorySelected = onCategoryChanged,
+                    selectedCategoryId = state.filterCategoryId,
+                    onCategorySelected = callbacks.onCategoryChanged,
                 )
             }
         }
@@ -119,31 +114,31 @@ fun TransactionsFilters(
             ) {
                 availableTags.forEach { tag ->
                     FilterChip(
-                        selected = tag in filterTags,
-                        onClick = { onTagToggled(tag) },
+                        selected = tag in state.filterTags,
+                        onClick = { callbacks.onTagToggled(tag) },
                         label = { Text("#$tag") },
                     )
                 }
             }
         }
 
-        if (filterStartDate != null && (periodExpense > 0 || periodIncome > 0)) {
+        if (state.filterStartDate != null && (state.periodExpense > 0 || state.periodIncome > 0)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = Tokens.Spacing.xl, vertical = Tokens.Spacing.xs),
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
             ) {
-                if (periodExpense > 0) {
+                if (state.periodExpense > 0) {
                     Text(
-                        text = "支出 ¥${"%.2f".format(periodExpense / 100.0)}",
+                        text = "支出 ¥${"%.2f".format(state.periodExpense / 100.0)}",
                         style = MaterialTheme.typography.labelMedium,
                         color = ExpenseColor,
                     )
                 }
-                if (periodIncome > 0) {
+                if (state.periodIncome > 0) {
                     Text(
-                        text = "收入 ¥${"%.2f".format(periodIncome / 100.0)}",
+                        text = "收入 ¥${"%.2f".format(state.periodIncome / 100.0)}",
                         style = MaterialTheme.typography.labelMedium,
                         color = IncomeColor,
                     )

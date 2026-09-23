@@ -10,9 +10,6 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.math.RoundingMode
 import java.util.concurrent.ConcurrentHashMap
@@ -307,11 +304,11 @@ class PaymentAccessibilityService : AccessibilityService() {
 
         // 内嵌支付 App：只在可能的支付/订单页面上响应 CONTENT_CHANGED
         val lower = activity.lowercase()
-        return PAYMENT_ACTIVITY_HINTS.any { lower.contains(it) }
+        return paymentActivityHints.any { lower.contains(it) }
     }
 
     /** 内嵌 App 中可能是支付结果页的 Activity 类名关键词 */
-    private val PAYMENT_ACTIVITY_HINTS = listOf(
+    private val paymentActivityHints = listOf(
         "pay", "payment", "cashier", "order", "result", "success",
         "trade", "checkout", "confirm", "receipt", "bill", "transaction"
     )

@@ -8,6 +8,7 @@ import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.NotificationRecordRepository
 import com.aibill.android.domain.repository.StatsRepository
+import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.async
@@ -134,10 +135,12 @@ class HomeViewModel @Inject constructor(
     private suspend fun loadTodayTransactions(): Boolean {
         _uiState.update { it.copy(isLoading = true) }
         return when (val result = transactionRepository.getTransactions(
-            page = 1,
-            pageSize = 50,
-            startDate = today,
-            endDate = today,
+            TransactionQuery(
+                page = 1,
+                pageSize = 50,
+                startDate = today,
+                endDate = today,
+            ),
         )) {
             is Result.Success -> {
                 _uiState.update {

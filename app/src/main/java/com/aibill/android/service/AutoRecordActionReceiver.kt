@@ -7,6 +7,7 @@ import android.content.Intent
 import android.widget.Toast
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.di.ApplicationScope
+import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.presentation.MainActivity
 import com.aibill.android.util.AppLogger
@@ -80,7 +81,9 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
             }
         } else {
             // Already synced to server — query server by keyword (clientId) to find serverId, then delete
-            val searchResult = transactionRepository.getTransactions(keyword = clientId)
+            val searchResult = transactionRepository.getTransactions(
+                TransactionQuery(keyword = clientId),
+            )
             when {
                 searchResult is com.aibill.android.domain.model.Result.Success && searchResult.data.items.isNotEmpty() -> {
                     val serverId = searchResult.data.items.first().id

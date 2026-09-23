@@ -128,7 +128,7 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun onExportLogs(context: Context) {
+    fun onExportLogs(@Suppress("UNUSED_PARAMETER") context: Context) {
         viewModelScope.launch {
             try {
                 val logText = appLogger.exportAsText()
@@ -175,7 +175,7 @@ class SettingsViewModel @Inject constructor(
         data class Failed(val message: String) : UpdateCheckResult()
     }
 
-    fun checkUpdate(context: android.content.Context, onResult: (UpdateCheckResult) -> Unit) {
+    fun checkUpdate(onResult: (UpdateCheckResult) -> Unit) {
         viewModelScope.launch {
             _events.send("正在获取最新版本…")
             val current = com.aibill.android.BuildConfig.VERSION_NAME

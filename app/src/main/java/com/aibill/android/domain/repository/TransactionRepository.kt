@@ -14,17 +14,7 @@ interface TransactionRepository {
      * PR #47：返回包装类 TransactionPage（含 items + total），
      * 调用方按 PRD §6.5.2 (page * page_size) < total 准确判定 hasMore。
      */
-    suspend fun getTransactions(
-        page: Int = 1,
-        pageSize: Int = 20,
-        startDate: String? = null,
-        endDate: String? = null,
-        type: String? = null,
-        categoryId: Int? = null,
-        accountId: Int? = null,
-        keyword: String? = null,
-        tag: String? = null,
-    ): Result<TransactionPage>
+    suspend fun getTransactions(query: TransactionQuery): Result<TransactionPage>
 
     suspend fun deleteTransaction(id: Int): Result<Unit>
 
@@ -49,6 +39,21 @@ interface TransactionRepository {
 /**
  * 分页结果包装类，保留 total 用于 hasMore 判定。
  */
+/**
+ * 流水查询条件。集中 9 个参数为 data class，避免 LongParameterList。
+ */
+data class TransactionQuery(
+    val page: Int = 1,
+    val pageSize: Int = 20,
+    val startDate: String? = null,
+    val endDate: String? = null,
+    val type: String? = null,
+    val categoryId: Int? = null,
+    val accountId: Int? = null,
+    val keyword: String? = null,
+    val tag: String? = null,
+)
+
 data class TransactionPage(
     val items: List<Transaction>,
     val total: Int,

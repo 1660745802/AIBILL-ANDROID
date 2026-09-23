@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
@@ -30,7 +29,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -41,7 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionType
 import kotlinx.coroutines.launch
-import com.aibill.android.presentation.components.AmountFormat
+import com.aibill.android.presentation.components.AmountFormatter
 import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.theme.Tokens
@@ -76,14 +74,14 @@ internal fun DateHeader(
         Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.md)) {
             if (expenseTotal > 0) {
                 Text(
-                    text = "支出 ${AmountFormat.toYuanDisplay(expenseTotal)}",
+                    text = "支出 ${AmountFormatter.toYuanDisplay(expenseTotal)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = ExpenseColor,
                 )
             }
             if (incomeTotal > 0) {
                 Text(
-                    text = "收入 ${AmountFormat.toYuanDisplay(incomeTotal)}",
+                    text = "收入 ${AmountFormatter.toYuanDisplay(incomeTotal)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = IncomeColor,
                 )
@@ -230,7 +228,7 @@ internal fun TransactionItem(
                         TransactionType.TRANSFER -> ""
                     }
                     Text(
-                        text = "$prefix${AmountFormat.toYuanDisplay(transaction.amount)}",
+                        text = "$prefix${AmountFormatter.toYuanDisplay(transaction.amount)}",
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Bold,
                         color = amountColor,

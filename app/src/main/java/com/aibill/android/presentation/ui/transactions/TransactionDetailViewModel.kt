@@ -6,8 +6,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
-import com.aibill.android.domain.model.Transaction
-import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository

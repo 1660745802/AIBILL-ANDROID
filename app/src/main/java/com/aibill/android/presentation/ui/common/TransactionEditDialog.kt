@@ -10,14 +10,25 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.aibill.android.domain.model.Account
 import com.aibill.android.domain.model.Category
-import com.aibill.android.domain.model.TransactionType
+
+/**
+ * 交易编辑初始值。集中打包多参数，避免 LongParameterList。
+ */
+data class TransactionEditDialogInitial(
+    val amount: Int = 0, // 分
+    val type: String = "expense", // expense/income/transfer
+    val categoryId: Int? = null,
+    val description: String? = null,
+    val accountId: Int? = null,
+    val targetAccountId: Int? = null,
+    val tags: List<String> = emptyList(),
+)
 
 /**
  * 通用交易编辑对话框。
@@ -27,26 +38,20 @@ import com.aibill.android.domain.model.TransactionType
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TransactionEditDialog(
-    initialAmount: Int, // 分
-    initialType: String, // expense/income/transfer
-    initialCategoryId: Int? = null,
-    initialDescription: String? = null,
-    initialAccountId: Int? = null,
-    initialTargetAccountId: Int? = null,
-    initialTags: List<String> = emptyList(),
+    initial: TransactionEditDialogInitial,
     availableTags: List<String> = emptyList(),
     categoriesByType: Map<String, List<Category>>,
     accounts: List<Account> = emptyList(),
     onDismiss: () -> Unit,
     onConfirm: (amount: Int, type: String, categoryId: Int?, description: String, accountId: Int?, targetAccountId: Int?, tags: List<String>) -> Unit,
 ) {
-    var type by remember { mutableStateOf(initialType) }
-    var amountText by remember { mutableStateOf(if (initialAmount > 0) "%.2f".format(initialAmount / 100.0) else "") }
-    var description by remember { mutableStateOf(initialDescription ?: "") }
-    var selectedCategoryId by remember { mutableStateOf(initialCategoryId) }
-    var selectedAccountId by remember { mutableStateOf(initialAccountId) }
-    var selectedTargetAccountId by remember { mutableStateOf(initialTargetAccountId) }
-    var tags by remember { mutableStateOf(initialTags) }
+    var type by remember { mutableStateOf(initial.type) }
+    var amountText by remember { mutableStateOf(if (initial.amount > 0) "%.2f".format(initial.amount / 100.0) else "") }
+    var description by remember { mutableStateOf(initial.description ?: "") }
+    var selectedCategoryId by remember { mutableStateOf(initial.categoryId) }
+    var selectedAccountId by remember { mutableStateOf(initial.accountId) }
+    var selectedTargetAccountId by remember { mutableStateOf(initial.targetAccountId) }
+    var tags by remember { mutableStateOf(initial.tags) }
     var tagInput by remember { mutableStateOf("") }
     var showTagSuggestions by remember { mutableStateOf(false) }
 

@@ -30,6 +30,7 @@ import com.aibill.android.presentation.ui.auth.ServerConfigScreen
 import com.aibill.android.presentation.ui.category.CategoryManageScreen
 import com.aibill.android.presentation.ui.home.HomeScreen
 import com.aibill.android.presentation.ui.notification.NotificationCenterScreen
+import com.aibill.android.presentation.ui.profile.ProfileScreenNavigation
 import com.aibill.android.presentation.ui.profile.ProfileScreen
 import com.aibill.android.presentation.ui.record.ManualRecordScreen
 import com.aibill.android.presentation.ui.settings.PermissionGuideScreen
@@ -51,9 +52,7 @@ fun AiBillNavHost(
     startDestination: Route,
     navController: NavHostController = rememberNavController(),
     navigateTo: String? = null,
-    aiInputPrefill: String? = null,
     onNavigationHandled: () -> Unit = {},
-    onAiInputConsumed: () -> Unit = {},
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -154,13 +153,15 @@ fun AiBillNavHost(
             }
             composable<Route.Profile> {
                 ProfileScreen(
-                    onNavigateToSettings = { navController.navigateToSettings() },
-                    onNavigateToNotificationCenter = { navController.navigateToNotificationCenter() },
-                    onNavigateToPermissionGuide = { navController.navigateToPermissionGuide() },
-                    onNavigateToCategoryManage = { navController.navigateToCategoryManage() },
-                    onNavigateToAccountManage = { navController.navigateToAccountManage() },
-                    onNavigateToTrash = { navController.navigateToTrash() },
-                    onLogout = { navController.navigateToLoginAfterLogout() },
+                    navigation = ProfileScreenNavigation(
+                        onSettings = { navController.navigateToSettings() },
+                        onNotificationCenter = { navController.navigateToNotificationCenter() },
+                        onPermissionGuide = { navController.navigateToPermissionGuide() },
+                        onCategoryManage = { navController.navigateToCategoryManage() },
+                        onAccountManage = { navController.navigateToAccountManage() },
+                        onTrash = { navController.navigateToTrash() },
+                        onLogout = { navController.navigateToLoginAfterLogout() },
+                    ),
                 )
             }
 

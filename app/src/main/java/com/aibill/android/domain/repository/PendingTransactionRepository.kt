@@ -1,7 +1,6 @@
 package com.aibill.android.domain.repository
 
 import com.aibill.android.data.local.entity.PendingTransactionEntity
-import kotlinx.coroutines.flow.Flow
 
 /**
  * 待同步交易仓储接口。**ViewModel 只能通过此接口访问离线队列数据**，

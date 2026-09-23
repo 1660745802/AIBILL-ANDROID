@@ -13,6 +13,7 @@ import com.aibill.android.data.remote.dto.request.TransactionItemRequest
 import com.aibill.android.util.AppLogger
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import timber.log.Timber
 import retrofit2.HttpException
 import java.io.IOException
 
@@ -152,6 +153,7 @@ class SyncWorker @AssistedInject constructor(
     }
 
     private suspend fun markFailed(clientId: String, error: String) {
+        Timber.w("SyncWorker: 标记为失败 clientId=%s reason=%s", clientId, error)
         pendingTransactionDao.updateSyncStatus(
             clientId = clientId,
             status = STATUS_FAILED,

@@ -12,18 +12,10 @@ import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.util.AiResultValidator
 import com.aibill.android.util.AppLogger
-import com.aibill.android.service.A11yRules
-import com.aibill.android.service.AlipayRules
-import com.aibill.android.service.NlsRules
-import com.aibill.android.service.NotificationRules
-import com.aibill.android.service.ProcessorRules
-import com.aibill.android.service.SmsRules
-import com.aibill.android.service.WechatRules
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
@@ -80,7 +72,7 @@ class NotificationProcessorTest {
         io.mockk.mockkObject(com.aibill.android.service.WidgetDataUpdater)
         every { com.aibill.android.service.WidgetDataUpdater.notifyTransactionAdded(any(), any(), any(), any()) } returns Unit
         io.mockk.mockkObject(com.aibill.android.util.NotificationHelper)
-        every { com.aibill.android.util.NotificationHelper.showAutoRecordedNotification(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Unit
+        every { com.aibill.android.util.NotificationHelper.showAutoRecordedNotification(any(), any(), any(), any(), any(), any(), any(), any()) } returns Unit
         every { com.aibill.android.util.NotificationHelper.showConfirmNotification(any(), any(), any(), any(), any(), any(), any()) } returns Unit
         // Default: AI parse is enabled
         every { userPreferences.aiParseEnabled } returns flowOf(true)

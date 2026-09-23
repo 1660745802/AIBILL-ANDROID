@@ -13,6 +13,7 @@ import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.domain.repository.TransactionPage
+import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.service.SyncScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -59,12 +60,14 @@ class TransactionRepositoryImpl @Inject constructor(
         pendingTransactionDao.insert(entity)
     }
 
-    override suspend fun getTransactions(
-        page: Int, pageSize: Int, startDate: String?,
-        endDate: String?, type: String?, categoryId: Int?, accountId: Int?, keyword: String?, tag: String?,
-    ): Result<TransactionPage> {
+    override suspend fun getTransactions(query: TransactionQuery): Result<TransactionPage> {
         return safeApiCall {
-            transactionApi.getTransactions(page, pageSize, startDate, endDate, type, categoryId, accountId, keyword, tag)
+            transactionApi.getTransactions(
+                query.page, query.pageSize,
+                query.startDate, query.endDate,
+                query.type, query.categoryId, query.accountId,
+                query.keyword, query.tag,
+            )
         }.map { paginated ->
             TransactionPage(
                 items = paginated.items.map { it.toDomain() },

@@ -86,14 +86,14 @@ class UpdateManagerFallbackTest {
     fun `checkUpdate falls back to github when billserver throws`() = runTest {
         // GitHub release 版本需 > 当前 BuildConfig.VERSION_NAME（避免
         // githubReleaseUpdate(forceLatest=false) 因版本对比返回 null）。
-        // build.gradle.kts 当前 1.3.1，所以 mock 一个更高版本。
+        // 用 v99.0.0 确保永远比当前 versionName 新，避免每次 bump version 后测试失败。
         coEvery { appUpdateApi.checkUpdate(any(), any()) } throws RuntimeException("network error")
-        coEvery { githubReleaseApi.getLatestRelease(any(), any()) } returns gitRelease("v1.4.0")
+        coEvery { githubReleaseApi.getLatestRelease(any(), any()) } returns gitRelease("v99.0.0")
 
         val info = manager().checkUpdate()
 
         assertNotNull(info)
-        assertEquals("1.4.0", info!!.versionName)
+        assertEquals("99.0.0", info!!.versionName)
         assertEquals(UpdateManager.Source.GITHUB, info.source)
     }
 

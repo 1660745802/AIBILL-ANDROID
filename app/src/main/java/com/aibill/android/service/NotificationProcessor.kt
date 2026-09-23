@@ -93,7 +93,7 @@ class NotificationProcessor @Inject constructor(
         val categoryName: String?,
         val categoryIcon: String?,
         val description: String?,
-        val source: String,
+        // val source: String,
         val score: Int,
         val isComplete: Boolean,
         val receivedAt: Long,
@@ -195,7 +195,6 @@ class NotificationProcessor @Inject constructor(
                 categoryName = aiItem.categoryName,
                 categoryIcon = aiItem.categoryIcon,
                 description = aiItem.description ?: aiItem.categoryName,
-                source = if (learnedCategoryId != null) "learning+ai" else "ai",
                 score = aiItemScore(aiItem),
                 isComplete = isComplete,
                 receivedAt = item.receivedAt,
@@ -287,7 +286,6 @@ class NotificationProcessor @Inject constructor(
                     categoryName = candidate.categoryName,
                     categoryIcon = candidate.categoryIcon,
                     description = candidate.description,
-                    source = candidate.source,
                 )
                 appLogger.info("NLS", "✓入库: ¥${"%.2f".format(candidate.amount/100.0)} ${candidate.description} type=${candidate.type} score=${candidate.score} channel=${candidate.item.channel}")
                 // 触发学习
@@ -376,7 +374,7 @@ class NotificationProcessor @Inject constructor(
         categoryName: String? = null,
         categoryIcon: String? = null,
         description: String?,
-        source: String,
+        // source: String,
     ) {
         val clientId = UUID.randomUUID().toString()
         val now = LocalDate.now().toString()
@@ -397,7 +395,6 @@ class NotificationProcessor @Inject constructor(
 
         val pending = PendingTransactionEntity(
             clientId = clientId,
-            type = type,
             amount = amount,
             categoryId = categoryId,
             categoryName = categoryName,
@@ -405,6 +402,7 @@ class NotificationProcessor @Inject constructor(
             description = description,
             date = now,
             time = time,
+            type = type,
             source = "app_notification",
             sourceDetail = NotificationSourceMapping.friendlyName(item.packageName, rulesManager),
             syncStatus = "pending",
@@ -431,7 +429,6 @@ class NotificationProcessor @Inject constructor(
             amount = amount,
             description = description,
             source = NotificationSourceMapping.friendlyName(item.packageName, rulesManager),
-            type = type,
             privacyMode = privacyMode,
             clientId = clientId,
         )
@@ -475,7 +472,6 @@ class NotificationProcessor @Inject constructor(
             description = description ?: categoryName,
             source = NotificationSourceMapping.friendlyName(item.packageName, rulesManager),
             privacyMode = privacyMode,
-            type = type,
         )
     }
 }

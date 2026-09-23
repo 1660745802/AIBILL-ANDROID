@@ -13,7 +13,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -44,13 +43,11 @@ class MainActivity : FragmentActivity() {
     private var isLocked by mutableStateOf(false)
     private var wasInBackground = false
     private var navigateTo by mutableStateOf<String?>(null)
-    private var aiInputPrefill by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         navigateTo = resolveNavigateTo(intent)
-        aiInputPrefill = intent?.getStringExtra("ai_input")
         observeAuthEvents()
         appLogger.autoCleanOldLogs(this)
 
@@ -69,9 +66,7 @@ class MainActivity : FragmentActivity() {
                         AiBillNavHost(
                             startDestination = startupState.startRoute,
                             navigateTo = navigateTo,
-                            aiInputPrefill = aiInputPrefill,
                             onNavigationHandled = { navigateTo = null },
-                            onAiInputConsumed = { aiInputPrefill = null },
                         )
                     } else {
                         Box(
@@ -108,7 +103,6 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         navigateTo = resolveNavigateTo(intent)
-        intent.getStringExtra("ai_input")?.let { aiInputPrefill = it }
     }
 
     private fun resolveNavigateTo(intent: android.content.Intent?): String? {

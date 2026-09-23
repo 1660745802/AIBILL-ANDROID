@@ -47,7 +47,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
-import com.aibill.android.presentation.components.AmountFormat
+import com.aibill.android.presentation.components.AmountFormatter
 import com.aibill.android.presentation.components.AppTopBar
 import com.aibill.android.presentation.components.GradientSummaryCard
 import com.aibill.android.presentation.components.LoadingState
@@ -158,7 +158,7 @@ private fun HomeContent(
                     val dailyAvg = if (daysPassed > 0) uiState.monthlyExpense.toFloat() / daysPassed / 100f else 0f
                     add(Metric("日均", "¥${"%.0f".format(dailyAvg)}"))
                     if (uiState.monthlyIncome > 0) {
-                        add(Metric("收入", AmountFormat.toYuanDisplay(uiState.monthlyIncome)))
+                        add(Metric("收入", AmountFormatter.toYuanDisplay(uiState.monthlyIncome)))
                     }
                 },
             )
@@ -231,7 +231,7 @@ private fun TodayTitleRow(autoCount: Int, todayExpenseFen: Int) {
         }
         Spacer(Modifier.weight(1f))
         Text(
-            text = "今日支出 ${AmountFormat.toYuanDisplay(todayExpenseFen)}",
+            text = "今日支出 ${AmountFormatter.toYuanDisplay(todayExpenseFen)}",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

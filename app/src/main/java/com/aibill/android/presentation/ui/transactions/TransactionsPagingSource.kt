@@ -4,6 +4,7 @@ import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
+import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
 import timber.log.Timber
 
@@ -21,28 +22,37 @@ import timber.log.Timber
  * - 服务端 `total` 为 0 → 立即返回空列表（不再发请求）
  * - API 失败 → throw LoadResult.Error，由 Paging 暴露 loadState
  */
+/**
+ * PagingSource 的 filter 快照。集中参数避免 LongParameterList。
+ */
+data class PagingFilterSnapshot(
+    val startDate: String? = null,
+    val endDate: String? = null,
+    val type: String? = null,
+    val categoryId: Int? = null,
+    val keyword: String? = null,
+    val tag: String? = null,
+)
+
 class TransactionsPagingSource(
     private val repository: TransactionRepository,
-    private val startDate: String?,
-    private val endDate: String?,
-    private val type: String?,
-    private val categoryId: Int?,
-    private val keyword: String?,
-    private val tag: String?,
+    private val filter: PagingFilterSnapshot,
     private val pageSize: Int = 20,
 ) : PagingSource<Int, Transaction>() {
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Transaction> {
         val page = params.key ?: 1
         return when (val result = repository.getTransactions(
-            page = page,
-            pageSize = pageSize,
-            startDate = startDate,
-            endDate = endDate,
-            type = type?.takeIf { it != "all" },
-            categoryId = categoryId,
-            keyword = keyword?.ifBlank { null },
-            tag = tag,
+            TransactionQuery(
+                page = page,
+                pageSize = pageSize,
+                startDate = filter.startDate,
+                endDate = filter.endDate,
+                type = filter.type?.takeIf { it != "all" },
+                categoryId = filter.categoryId,
+                keyword = filter.keyword?.ifBlank { null },
+                tag = filter.tag,
+            ),
         )) {
             is Result.Success -> {
                 val pageData = result.data

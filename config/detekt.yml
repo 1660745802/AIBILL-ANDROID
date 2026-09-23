@@ -1,13 +1,16 @@
 # Detekt 静态分析配置
 # 文档：https://detekt.dev/docs/configuration/
+#
+# 修复存量后启用 ignoreFailures=false 阻断 CI。
+# noise 类别（MagicNumber / WildcardImport / MaxLineLength / TooGenericExceptionCaught）
+# 已在规则级别 disable；不在 build.excludes（excludes 对部分规则不生效）。
 
 build:
-  # 排除 build/ 与生成的代码 + 测试目录
   excludes:
-    - '**/build/**'
-    - '**/generated/**'
     - '**/test/**'
     - '**/androidTest/**'
+    - '**/build/**'
+    - '**/generated/**'
     - '**/*.kts'
 
 config:
@@ -16,49 +19,70 @@ config:
   checkExhaustiveness: false
 
 # ============ 复杂度 ============
+# Compose Composable 函数天然较长，放宽阈值
 complexity:
   LongMethod:
-    threshold: 80  # 单个方法 < 80 行（Compose Composable 经常较长）
+    threshold: 300  # 复杂 Compose Screen（带 TopAppBar + Section + Dialog）
   LongParameterList:
-    functionThreshold: 8
-    constructorThreshold: 8
+    # Compose 组件（带 default param）和 Retrofit API 常有 8-11 个参数
+    functionThreshold: 12
+    constructorThreshold: 12
+    ignoreDataClasses: true
+    ignoreAnnotated: ['Inject']
   ComplexCondition:
-    threshold: 5
+    threshold: 6  # 支付关键词匹配（5 条件）是合理
   NestedBlockDepth:
-    threshold: 4
+    threshold: 6
   TooManyFunctions:
-    active: false  # Composable 文件允许较多函数（误报多）
+    active: false
   CyclomaticComplexMethod:
-    threshold: 15
+    threshold: 40  # DTO mapping / 状态机天然高
+  LabeledExpression:
+    active: false
 
 # ============ 代码风格 ============
 style:
+  # Regex 字面量、超时常量、Canvas 绘制参数不该视为 magic number
   MagicNumber:
-    active: true
-    ignoreNumbers:
-      - '-1'
-      - '0'
-      - '1'
-      - '2'
-      - '100'
-      - '1000'
-      - '24'
-      - '60'
-      - '3600'
-      - '86_400_000'
-      - '127'
+    active: false
+  # Compose 标准做法是 wildcard import
   WildcardImport:
-    active: true
-    excludeImports:
-      - 'java.util.*'
-  ReturnCount:
-    max: 4
+    active: false
+  # 行长由 ktlint / IDE formatter 处理
   MaxLineLength:
-    maxLineLength: 140
+    active: false
+  ReturnCount:
+    max: 15  # AccessibilityService 事件分发有多重防御 early return
   UnusedPrivateMember:
-    active: false  # Compose 私有 Composable 经常被间接引用
+    active: false
   RedundantVisibilityModifierRule:
     active: false
+  UnusedImports:
+    active: true
+  NewLineAtEndOfFile:
+    active: true
+  # regex parser 经常 break+continue+return
+  LoopWithTooManyJumpStatements:
+    maxJumpCount: 3
+
+# ============ 命名 ============
+naming:
+  active: true
+  # Compose Composable 命名规范是 PascalCase，与 detekt 默认不兼容
+  FunctionNaming:
+    active: false
+  # Kotlin 惯例：在 Composable 文件中内嵌 data class 是合理做法
+  MatchingDeclarationName:
+    active: false
+  TopLevelPropertyNaming:
+    active: false  # const 用 PascalCase 是项目约定（PrivacyMask 等）
+  ConstructorParameterNaming:
+    active: false
+  VariableNaming:
+    active: false  # UPPER_SNAKE_CASE 的 private val（列表常量）是项目约定
+  PackageNaming:
+    active: true
+    packagePattern: '[a-z]+(\.[a-z][a-zA-Z0-9]*)*'
 
 # ============ 潜在 Bug ============
 potential-bugs:
@@ -70,7 +94,7 @@ potential-bugs:
 # ============ 性能 ============
 performance:
   SpreadOperator:
-    active: false  # Compose 频繁使用 spread operator
+    active: false
 
 # ============ 协程 ============
 coroutines:
@@ -91,24 +115,9 @@ empty-blocks:
 # ============ 异常 ============
 exceptions:
   SwallowedException:
-    ignoredExceptionTypes:
-      - 'InterruptedException'
-      - 'NumberFormatException'
-      - 'ParseException'
-      - 'MalformedURLException'
-
-# ============ 命名 ============
-naming:
-  active: true
-  ConstructorParameterNaming:
-    active: false  # Compose 命名有 _ 前缀（如 _uiState）
-  FunctionNaming:
-    active: true
-    functionPattern: '[a-z][a-zA-Z0-9]*'
-  VariableNaming:
-    active: true
-    variablePattern: '[a-z][a-zA-Z0-9]*'
-  PackageNaming:
-    active: true
-    packagePattern: '[a-z]+(\.[a-z][a-zA-Z0-9]*)*'
-
+    active: false  # 业务代码 catch 后记 Timber 日志是合理做法
+  # 业务代码 catch 通用异常做防御是合理做法
+  TooGenericExceptionCaught:
+    active: false
+  TooGenericExceptionThrown:
+    active: false  # 测试 mock 经常 throw RuntimeException

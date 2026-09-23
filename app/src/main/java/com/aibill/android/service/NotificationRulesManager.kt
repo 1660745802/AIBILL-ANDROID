@@ -268,16 +268,16 @@ class NotificationRulesManager @Inject constructor(
                 mapDtoToRules(fileDto.rules)
             } else {
                 Timber.w("NotificationRules: assets default_rules.json parse returned null, using empty fallback")
-                EMPTY_FALLBACK
+                emptyFallback
             }
         } catch (e: Exception) {
             Timber.e(e, "NotificationRules: failed to read assets/default_rules.json")
-            EMPTY_FALLBACK
+            emptyFallback
         }
     }
 
     /** 极端兜底（assets也读不到时） */
-    private val EMPTY_FALLBACK = NotificationRules(
+    private val emptyFallback = NotificationRules(
         nls = NlsRules(
             paymentSignalRegex = "[¥￥]|支付|付款|到账|转账|消费|扣款|充值|退款",
             wechat = WechatRules("com.tencent.mm", listOf("微信支付"), listOf("零钱"), listOf("[转账]", "[微信红包]"), listOf("¥", "￥")),

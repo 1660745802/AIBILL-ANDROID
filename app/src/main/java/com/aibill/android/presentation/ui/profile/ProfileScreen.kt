@@ -56,16 +56,23 @@ import com.aibill.android.presentation.theme.AiBillTheme
 import com.aibill.android.presentation.theme.BrandGradient
 import com.aibill.android.presentation.theme.Tokens
 
+/**
+ * Profile 页所有导航回调（合并到一个参数，避免 LongParameterList）。
+ */
+data class ProfileScreenNavigation(
+    val onSettings: () -> Unit = {},
+    val onNotificationCenter: () -> Unit = {},
+    val onPermissionGuide: () -> Unit = {},
+    val onCategoryManage: () -> Unit = {},
+    val onAccountManage: () -> Unit = {},
+    val onTrash: () -> Unit = {},
+    val onLogout: () -> Unit = {},
+)
+
 @Composable
 fun ProfileScreen(
-    onNavigateToSettings: () -> Unit = {},
-    onNavigateToNotificationCenter: () -> Unit = {},
-    onNavigateToPermissionGuide: () -> Unit = {},
-    onNavigateToCategoryManage: () -> Unit = {},
-    onNavigateToAccountManage: () -> Unit = {},
-    onNavigateToTrash: () -> Unit = {},
-    onLogout: () -> Unit = {},
     modifier: Modifier = Modifier,
+    navigation: ProfileScreenNavigation = ProfileScreenNavigation(),
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
     var showLogoutConfirm by remember { mutableStateOf(false) }
@@ -79,7 +86,7 @@ fun ProfileScreen(
             isDestructive = true,
             onConfirm = {
                 showLogoutConfirm = false
-                viewModel.logout(onLogout)
+                viewModel.logout(navigation.onLogout)
             },
             onDismiss = { showLogoutConfirm = false },
         )
@@ -104,19 +111,19 @@ fun ProfileScreen(
                     ProfileMenuItem(
                         icon = Icons.Default.Category, title = "分类管理",
                         subtitle = "自定义收支分类",
-                        onClick = onNavigateToCategoryManage,
+                        onClick = navigation.onCategoryManage,
                     )
                     MenuDivider()
                     ProfileMenuItem(
                         icon = Icons.Default.AccountBalance, title = "账户管理",
                         subtitle = "管理你的钱包和银行卡",
-                        onClick = onNavigateToAccountManage,
+                        onClick = navigation.onAccountManage,
                     )
                     MenuDivider()
                     ProfileMenuItem(
                         icon = Icons.Default.Delete, title = "回收站",
                         subtitle = "查看和恢复已删除的记录",
-                        onClick = onNavigateToTrash,
+                        onClick = navigation.onTrash,
                     )
                 }
             }
@@ -126,19 +133,19 @@ fun ProfileScreen(
                     ProfileMenuItem(
                         icon = Icons.Default.Notifications, title = "通知中心",
                         subtitle = "查看待确认的自动记账",
-                        onClick = onNavigateToNotificationCenter,
+                        onClick = navigation.onNotificationCenter,
                     )
                     MenuDivider()
                     ProfileMenuItem(
                         icon = Icons.Default.Shield, title = "权限与保活",
                         subtitle = "通知监听、电池优化、自启动",
-                        onClick = onNavigateToPermissionGuide,
+                        onClick = navigation.onPermissionGuide,
                     )
                     MenuDivider()
                     ProfileMenuItem(
                         icon = Icons.Default.Settings, title = "通用设置",
                         subtitle = "主题、隐私、服务器",
-                        onClick = onNavigateToSettings,
+                        onClick = navigation.onSettings,
                     )
                 }
             }
@@ -172,7 +179,7 @@ private fun UserHeaderCard(displayName: String) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Surface(
-                modifier = Modifier.size(Tokens.Avatar.xl),
+                modifier = Modifier.size(72.dp),
                 shape = CircleShape,
                 color = Color.White.copy(alpha = 0.2f),
             ) {
@@ -252,12 +259,12 @@ private fun ProfileMenuItem(
         } else null,
         leadingContent = {
             Surface(
-                shape = RoundedCornerShape(Tokens.Radius.sm),
+                shape = RoundedCornerShape(10.dp),
                 color = iconBg,
                 modifier = Modifier.size(Tokens.Avatar.md),
             ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(Tokens.IconSize.md))
+                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
                 }
             }
         },
