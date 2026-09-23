@@ -145,8 +145,15 @@ class UpdateManager @Inject constructor(
                 currentVersionCode = BuildConfig.VERSION_CODE,
             )
         }.fold(
-            onSuccess = { dto ->
-                if (dto.hasUpdate && dto.apkUrl != null) {
+            onSuccess = { response ->
+                // 服务端响应是 {code, data, message} 三层结构，必须先解包 data
+                // （历史 bug：直接按 AppUpdateDto 解析外层，has_update 静默取默认 false → 永远"已是最新"）
+                val dto = response.data
+                if (response.code != 0 || dto == null) {
+                    BillserverResult.Failure(
+                        RuntimeException("billserver code=${response.code} msg=${response.message}"),
+                    )
+                } else if (dto.hasUpdate && dto.apkUrl != null) {
                     val info = dto.toUpdateInfo(source = Source.BILLSERVER)
                     if (info != null) BillserverResult.Success(info)
                     else BillserverResult.NoUpdate  // DTO 字段缺失视为"无更新"
@@ -186,7 +193,7 @@ class UpdateManager @Inject constructor(
             versionName = version,
             changelog = changelog?.trim().orEmpty(),
             apkUrl = url,
-            apkSize = apkSize,
+            apkSize = apkSize ?: 0,
             source = source,
             forceUpdate = forceUpdate,
         )

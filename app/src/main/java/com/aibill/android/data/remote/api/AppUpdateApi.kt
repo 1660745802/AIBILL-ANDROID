@@ -1,5 +1,6 @@
 package com.aibill.android.data.remote.api
 
+import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import retrofit2.http.GET
@@ -21,6 +22,11 @@ interface AppUpdateApi {
     /**
      * 查询是否有新版本
      *
+     * ⚠️ 必须返回 [ApiResponse] 包装（服务端响应是 `{code, data, message}` 三层结构）。
+     * 历史 bug：曾直接返回 [AppUpdateDto]，Moshi 在外层找不到 `has_update` →
+     * 静默取默认 false → 永远误判"已是最新"（v1.3.0~v1.5.0 中招，
+     * UpdateManagerFallbackTest 因 mock 绕过了 Moshi 解析未发现）。
+     *
      * @param currentVersionName 当前 App 的 versionName（如 "1.2.0"）
      * @param currentVersionCode 当前 App 的 versionCode（如 3）
      * @param platform 平台标识（固定 "android"）
@@ -30,7 +36,7 @@ interface AppUpdateApi {
         @Query("versionName") currentVersionName: String,
         @Query("versionCode") currentVersionCode: Int,
         @Query("platform") platform: String = "android",
-    ): AppUpdateDto
+    ): ApiResponse<AppUpdateDto>
 }
 
 /**
@@ -47,5 +53,5 @@ data class AppUpdateDto(
     @Json(name = "force_update") val forceUpdate: Boolean = false,
     @Json(name = "changelog") val changelog: String? = null,
     @Json(name = "apk_url") val apkUrl: String? = null,
-    @Json(name = "apk_size") val apkSize: Long = 0,
+    @Json(name = "apk_size") val apkSize: Long? = null,  // 服务端 no-update 场景返回 null，非空 Long 会抛 JsonDataException
 )

@@ -34,6 +34,10 @@ class UpdateManagerFallbackTest {
         )
     }
 
+    /** 服务端真实响应是 {code, data, message} 三层 — mock 必须保持同样结构，否则掩盖 Moshi 解包 bug */
+    private fun updateResponse(dto: AppUpdateDto) =
+        com.aibill.android.data.remote.dto.response.ApiResponse(code = 0, data = dto, message = "")
+
     private fun gitRelease(tag: String = "v1.3.0", body: String = "## New") = GithubReleaseDto(
         tagName = tag,
         name = "Release $tag",
@@ -50,14 +54,14 @@ class UpdateManagerFallbackTest {
 
     @Test
     fun `checkUpdate returns billserver when hasUpdate=true`() = runTest {
-        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns AppUpdateDto(
+        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns updateResponse(AppUpdateDto(
             hasUpdate = true,
             latestVersion = "1.4.0",
             latestVersionCode = 5,
             apkUrl = "https://billserver/aibill-1.4.0.apk",
             apkSize = 4500000L,
             changelog = "新功能",
-        )
+        ))
 
         val info = manager().checkUpdate()
 
@@ -69,11 +73,11 @@ class UpdateManagerFallbackTest {
 
     @Test
     fun `checkUpdate does NOT fallback to github when billserver says up-to-date`() = runTest {
-        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns AppUpdateDto(
+        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns updateResponse(AppUpdateDto(
             hasUpdate = false,
             latestVersion = "1.2.0",
             latestVersionCode = 3,
-        )
+        ))
 
         val info = manager().checkUpdate()
 
@@ -100,10 +104,10 @@ class UpdateManagerFallbackTest {
     @Test
     fun `fetchLatest does NOT fallback when billserver reachable but hasUpdate=false`() = runTest {
         // 手动检查：billserver 可达说没新版本 → 直接返回 null（不查 GitHub）
-        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns AppUpdateDto(
+        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns updateResponse(AppUpdateDto(
             hasUpdate = false,
             latestVersion = "1.2.0",
-        )
+        ))
 
         val info = manager().fetchLatest()
 
@@ -126,13 +130,13 @@ class UpdateManagerFallbackTest {
 
     @Test
     fun `fetchLatestResult returns Success from billserver when hasUpdate=true`() = runTest {
-        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns AppUpdateDto(
+        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns updateResponse(AppUpdateDto(
             hasUpdate = true,
             latestVersion = "1.4.0",
             latestVersionCode = 5,
             apkUrl = "https://billserver/aibill-1.4.0.apk",
             apkSize = 4500000L,
-        )
+        ))
 
         val result = manager().fetchLatestResult()
 
@@ -147,11 +151,11 @@ class UpdateManagerFallbackTest {
 
     @Test
     fun `fetchLatestResult returns NoUpdate when billserver reachable says up-to-date`() = runTest {
-        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns AppUpdateDto(
+        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns updateResponse(AppUpdateDto(
             hasUpdate = false,
             latestVersion = "1.2.0",
             latestVersionCode = 3,
-        )
+        ))
 
         val result = manager().fetchLatestResult()
 
