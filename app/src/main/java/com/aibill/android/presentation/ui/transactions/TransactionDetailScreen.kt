@@ -5,65 +5,59 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.InputChip
-import androidx.compose.material3.SuggestionChip
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aibill.android.presentation.components.AppTopBar
 import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.PrimaryButton
+import com.aibill.android.presentation.theme.Tokens
+import com.aibill.android.presentation.ui.transactions.components.DetailAccountPickerRow
+import com.aibill.android.presentation.ui.transactions.components.DetailCard
+import com.aibill.android.presentation.ui.transactions.components.DetailCategoryPickerRow
+import com.aibill.android.presentation.ui.transactions.components.DetailTagSection
+import com.aibill.android.presentation.ui.transactions.components.DetailTextField
+import com.aibill.android.presentation.ui.transactions.components.DetailTypeChipRow
 import kotlinx.coroutines.flow.collectLatest
 
+/**
+ * 交易详情页。**已重构**：6 个私有 Composable 全部抽到 components/ 目录。
+ *
+ * - DetailCard / DetailTextField: 详情页统一容器 + 输入框
+ * - DetailTypeChipRow / DetailCategoryPickerRow / DetailAccountPickerRow: 字段选择
+ * - DetailTagSection: 标签编辑（VM 仍用逗号分隔字符串）
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransactionDetailScreen(
@@ -90,13 +84,9 @@ fun TransactionDetailScreen(
         modifier = modifier,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = { Text("📝 交易详情") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
+            AppTopBar(
+                title = "📝 交易详情",
+                onBack = onNavigateBack,
                 actions = {
                     IconButton(
                         onClick = viewModel::onDelete,
@@ -121,7 +111,7 @@ fun TransactionDetailScreen(
                 verticalArrangement = Arrangement.Center,
             ) {
                 CircularProgressIndicator()
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(Tokens.Spacing.md))
                 Text("加载中...", style = MaterialTheme.typography.bodyMedium)
             }
         } else {
@@ -133,19 +123,17 @@ fun TransactionDetailScreen(
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 16.dp)
+                        .padding(horizontal = Tokens.Spacing.lg)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.md),
                 ) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    // 类型选择
+                    Spacer(modifier = Modifier.height(Tokens.Spacing.xs))
                     DetailCard(label = "💰 类型") {
-                        TypeChipRow(
+                        DetailTypeChipRow(
                             selected = uiState.type,
                             onSelected = viewModel::onTypeChanged,
                         )
                     }
-                    // 金额
                     DetailCard(label = "💵 金额") {
                         DetailTextField(
                             value = uiState.amount,
@@ -153,23 +141,20 @@ fun TransactionDetailScreen(
                             placeholder = "0.00",
                         )
                     }
-                    // 分类
                     DetailCard(label = "📂 分类") {
-                        CategoryPickerRow(
+                        DetailCategoryPickerRow(
                             availableCategories = uiState.categories,
                             selectedCategoryId = uiState.categoryId,
                             onSelect = viewModel::onCategorySelected,
                         )
                     }
-                    // 账户
                     DetailCard(label = "🏦 账户") {
-                        AccountPickerRow(
+                        DetailAccountPickerRow(
                             availableAccounts = uiState.accounts,
                             selectedAccountId = uiState.accountId,
                             onSelect = viewModel::onAccountSelected,
                         )
                     }
-                    // 描述
                     DetailCard(label = "📝 描述") {
                         DetailTextField(
                             value = uiState.description,
@@ -177,12 +162,11 @@ fun TransactionDetailScreen(
                             placeholder = "添加描述...",
                         )
                     }
-                    // 日期
                     DetailCard(label = "📅 日期") {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp),
+                                .padding(vertical = Tokens.Spacing.xs),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
@@ -194,14 +178,13 @@ fun TransactionDetailScreen(
                                 Icon(
                                     Icons.Default.CalendarMonth,
                                     contentDescription = "选日期",
-                                    modifier = Modifier.size(20.dp),
+                                    modifier = Modifier.size(Tokens.IconSize.sm),
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(Tokens.Spacing.xs))
                                 Text("选择")
                             }
                         }
                     }
-                    // 时间
                     DetailCard(label = "🕐 时间") {
                         DetailTextField(
                             value = uiState.time,
@@ -209,24 +192,22 @@ fun TransactionDetailScreen(
                             placeholder = "HH:mm",
                         )
                     }
-                    // 标签
                     DetailCard(label = "🏷️ 标签") {
-                        TagEditSection(
+                        DetailTagSection(
                             tagsText = uiState.tags,
                             onTagsChanged = viewModel::onTagsChanged,
                             availableTags = uiState.availableTags,
                         )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(Tokens.Spacing.sm))
                 }
 
-                // 保存按钮固定在底部
                 PrimaryButton(
                     text = "保存修改",
                     onClick = viewModel::onSave,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(horizontal = Tokens.Spacing.lg, vertical = Tokens.Spacing.md),
                     enabled = !uiState.isSaving,
                     loading = uiState.isSaving,
                 )
@@ -234,11 +215,14 @@ fun TransactionDetailScreen(
         }
     }
 
-    // 日期选择器弹窗
     if (showDatePicker) {
         val dateState = rememberDatePickerState(
             initialSelectedDateMillis = uiState.date.takeIf { it.isNotBlank() }
-                ?.let { runCatching { java.time.LocalDate.parse(it).toEpochDay() * 86_400_000L }.getOrNull() }
+                ?.let {
+                    runCatching {
+                        java.time.LocalDate.parse(it).toEpochDay() * 86_400_000L
+                    }.getOrNull()
+                }
                 ?: System.currentTimeMillis(),
         )
         DatePickerDialog(
@@ -261,228 +245,5 @@ fun TransactionDetailScreen(
         ) {
             DatePicker(state = dateState)
         }
-    }
-}
-
-@Composable
-private fun DetailCard(
-    label: String,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            content()
-        }
-    }
-}
-
-@Composable
-private fun DetailTextField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    modifier: Modifier = Modifier,
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = modifier.fillMaxWidth(),
-        placeholder = { Text(placeholder) },
-        singleLine = true,
-        shape = RoundedCornerShape(14.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-        ),
-    )
-}
-
-@Composable
-private fun TypeChipRow(
-    selected: String,
-    onSelected: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val types = listOf("expense" to "支出", "income" to "收入", "transfer" to "转账")
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        types.forEach { (value, label) ->
-            FilterChip(
-                selected = selected == value,
-                onClick = { onSelected(value) },
-                label = { Text(label) },
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun CategoryPickerRow(
-    availableCategories: List<com.aibill.android.domain.model.Category>,
-    selectedCategoryId: Int?,
-    onSelect: (Int) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    if (availableCategories.isEmpty()) {
-        Text(
-            text = "暂无分类",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        return
-    }
-    FlowRow(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        availableCategories.forEach { cat ->
-            FilterChip(
-                selected = selectedCategoryId == cat.id,
-                onClick = { onSelect(cat.id) },
-                label = { Text("${cat.icon} ${cat.name}") },
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun AccountPickerRow(
-    availableAccounts: List<com.aibill.android.domain.model.Account>,
-    selectedAccountId: Int?,
-    onSelect: (Int?) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    FlowRow(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        FilterChip(
-            selected = selectedAccountId == null,
-            onClick = { onSelect(null) },
-            label = { Text("无") },
-        )
-        availableAccounts.forEach { acc ->
-            FilterChip(
-                selected = selectedAccountId == acc.id,
-                onClick = { onSelect(acc.id) },
-                label = { Text("${acc.icon} ${acc.name}") },
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun TagEditSection(
-    tagsText: String,
-    onTagsChanged: (String) -> Unit,
-    availableTags: List<String> = emptyList(),
-    modifier: Modifier = Modifier,
-) {
-    val tags = remember(tagsText) {
-        tagsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
-    }
-    var tagInput by remember { mutableStateOf("") }
-    val suggestions = remember(availableTags, tags) {
-        availableTags.filter { it !in tags }.take(5)
-    }
-
-    Column(modifier = modifier.fillMaxWidth()) {
-        // 建议标签（横滑，有已选标签时才显示，primary色区分）
-        if (suggestions.isNotEmpty() && tags.isNotEmpty()) {
-            androidx.compose.foundation.lazy.LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                items(suggestions.size) { index ->
-                    val suggestion = suggestions[index]
-                    SuggestionChip(
-                        onClick = {
-                            val newTags = tags + suggestion
-                            onTagsChanged(newTags.joinToString(", "))
-                        },
-                        label = { Text(suggestion, style = MaterialTheme.typography.labelSmall) },
-                        modifier = Modifier.height(28.dp),
-                        border = androidx.compose.material3.SuggestionChipDefaults.suggestionChipBorder(
-                            enabled = true,
-                            borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                        ),
-                        colors = androidx.compose.material3.SuggestionChipDefaults.suggestionChipColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-                            labelColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                }
-            }
-        }
-        // 已选标签
-        if (tags.isNotEmpty()) {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                tags.forEach { tag ->
-                    InputChip(
-                        selected = false,
-                        onClick = {
-                            val newTags = tags - tag
-                            onTagsChanged(newTags.joinToString(", "))
-                        },
-                        label = { Text(tag) },
-                        trailingIcon = {
-                            Icon(
-                                Icons.Default.Close,
-                                contentDescription = "移除标签",
-                                modifier = Modifier.size(14.dp),
-                            )
-                        },
-                        modifier = Modifier.height(28.dp),
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-        }
-        // 输入框
-        OutlinedTextField(
-            value = tagInput,
-            onValueChange = { tagInput = it },
-            placeholder = { Text("添加标签", style = MaterialTheme.typography.bodySmall) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodySmall,
-            shape = RoundedCornerShape(8.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-            ),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = {
-                if (tagInput.isNotBlank()) {
-                    val trimmed = tagInput.trim()
-                    val newTags = if (trimmed !in tags) tags + trimmed else tags
-                    onTagsChanged(newTags.joinToString(", "))
-                    tagInput = ""
-                }
-            }),
-        )
     }
 }
