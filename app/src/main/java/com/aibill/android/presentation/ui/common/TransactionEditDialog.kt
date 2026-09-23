@@ -1,6 +1,5 @@
 package com.aibill.android.presentation.ui.common
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -210,9 +209,10 @@ fun TransactionEditDialog(
                     )
                     SimpleAccountPicker(
                         label = "到",
-                        accounts = accounts.filter { it.id != selectedAccountId },
+                        accounts = accounts,
                         selectedId = selectedTargetAccountId,
                         onSelect = { selectedTargetAccountId = it },
+                        excludeId = selectedAccountId,
                     )
                 }
             }
@@ -244,28 +244,14 @@ private fun SimpleAccountPicker(
     accounts: List<Account>,
     selectedId: Int?,
     onSelect: (Int) -> Unit,
+    excludeId: Int? = null,
 ) {
-    val selectedName = accounts.firstOrNull { it.id == selectedId }?.let { "${it.icon} ${it.name}" } ?: "选择账户"
-    var expanded by remember { mutableStateOf(false) }
-    Box(modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = selectedName,
-            onValueChange = {},
-            readOnly = true,
-            label = { Text(label) },
-            modifier = Modifier.fillMaxWidth().clickable { expanded = true },
-            singleLine = true,
-        )
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            accounts.forEach { account ->
-                DropdownMenuItem(
-                    text = { Text("${account.icon} ${account.name}") },
-                    onClick = { onSelect(account.id); expanded = false },
-                )
-            }
-        }
-    }
+    com.aibill.android.presentation.components.AccountPicker(
+        label = label,
+        accounts = accounts,
+        selectedId = selectedId,
+        onSelect = onSelect,
+        placeholder = "选择账户",
+        excludeId = excludeId,
+    )
 }
