@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.theme.AppOutlinedButton
 import com.aibill.android.presentation.theme.PrimaryButton
 
@@ -72,7 +73,7 @@ fun ServerConfigScreen(
         // 圆角卡片风格输入框
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(Tokens.Radius.lg),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             ),
@@ -85,7 +86,7 @@ fun ServerConfigScreen(
                     placeholder = { Text("例如: http://192.168.1.100:3000") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(Tokens.Radius.md),
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Uri,
                         imeAction = ImeAction.Done
@@ -115,7 +116,7 @@ fun ServerConfigScreen(
         // 按钮组
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.md)
         ) {
             AppOutlinedButton(
                 text = "测试连接",
@@ -143,7 +144,7 @@ fun ServerConfigScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(48.dp))
+        Spacer(modifier = Modifier.height(Tokens.TouchTarget.normal))
 
         // 底部提示
         Text(

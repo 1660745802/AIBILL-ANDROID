@@ -37,11 +37,12 @@ object Tokens {
     }
 
     object Radius {
-        val sm = 8.dp
+        val xs = 4.dp        // 小装饰元素
+        val sm = 8.dp        // Chip/小按钮
         val md = 14.dp       // 按钮/输入框
         val lg = 16.dp       // 卡片
         val xl = 20.dp       // 渐变卡/汇总卡
-        val pill = 100.dp    // Chip
+        val pill = 100.dp    // 全圆
     }
 
     object IconSize {

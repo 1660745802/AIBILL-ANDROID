@@ -1,5 +1,7 @@
 package com.aibill.android.presentation.ui.common
 
+import com.aibill.android.presentation.theme.Tokens
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -61,11 +63,11 @@ fun TransactionEditDialog(
         title = { Text("编辑并确认") },
         text = {
             Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.md),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 // 类型三选
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm)) {
                     FilterChip(
                         selected = type == "expense",
                         onClick = { type = "expense" },
@@ -111,8 +113,8 @@ fun TransactionEditDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs),
                 ) {
                     tags.forEach { tag ->
                         InputChip(
@@ -123,7 +125,7 @@ fun TransactionEditDialog(
                                 Icon(
                                     Icons.Default.Close,
                                     contentDescription = "移除标签",
-                                    modifier = Modifier.size(14.dp),
+                                    modifier = Modifier.size(Tokens.IconSize.sm),
                                 )
                             },
                             modifier = Modifier.height(28.dp),
@@ -139,7 +141,7 @@ fun TransactionEditDialog(
                         modifier = Modifier.weight(1f).heightIn(min = 44.dp),
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodySmall,
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(Tokens.Radius.sm),
                         colors = OutlinedTextFieldDefaults.colors(
                             unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
                         ),
@@ -159,8 +161,8 @@ fun TransactionEditDialog(
                 if (tagSuggestions.isNotEmpty()) {
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs),
+                        verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs),
                     ) {
                         tagSuggestions.forEach { suggestion ->
                             SuggestionChip(
@@ -185,8 +187,8 @@ fun TransactionEditDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs),
                         ) {
                             availableCategories.forEach { cat ->
                                 FilterChip(

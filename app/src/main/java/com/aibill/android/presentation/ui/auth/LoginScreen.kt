@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.theme.PrimaryButton
 
 @Composable
@@ -88,7 +89,7 @@ fun LoginScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
-                Spacer(modifier = Modifier.height(48.dp))
+                Spacer(modifier = Modifier.height(Tokens.TouchTarget.normal))
 
                 // 用户名输入框（大圆角）
                 OutlinedTextField(
@@ -97,7 +98,7 @@ fun LoginScreen(
                     label = { Text("用户名") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(Tokens.Radius.md),
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Text,
                         imeAction = ImeAction.Next
@@ -117,7 +118,7 @@ fun LoginScreen(
                     label = { Text("密码") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(Tokens.Radius.md),
                     visualTransformation = if (passwordVisible) {
                         VisualTransformation.None
                     } else {

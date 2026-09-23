@@ -19,6 +19,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.presentation.components.AmountFormat
 import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.theme.Tokens
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,7 +82,7 @@ fun TrashScreen(
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(padding),
                     contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
                 ) {
                     items(uiState.items, key = { it.id ?: 0 }) { item ->
                         TrashItem(
@@ -128,7 +129,7 @@ private fun TrashItem(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(Tokens.Radius.lg),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         ),
@@ -179,22 +180,22 @@ private fun TrashItem(
             Spacer(modifier = Modifier.width(8.dp))
 
             // 恢复按钮
-            IconButton(onClick = onRestore, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onRestore, modifier = Modifier.size(Tokens.Avatar.md)) {
                 Icon(
                     Icons.Default.RestoreFromTrash,
                     contentDescription = "恢复",
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(Tokens.IconSize.md),
                 )
             }
 
             // 永久删除按钮
-            IconButton(onClick = onPermanentDelete, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onPermanentDelete, modifier = Modifier.size(Tokens.Avatar.md)) {
                 Icon(
                     Icons.Default.DeleteForever,
                     contentDescription = "永久删除",
                     tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(Tokens.IconSize.md),
                 )
             }
         }

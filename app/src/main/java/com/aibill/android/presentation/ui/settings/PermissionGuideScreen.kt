@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.aibill.android.presentation.theme.PrimaryButton
+import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.theme.SecondaryButton
 import com.aibill.android.presentation.theme.SuccessColor
 import com.aibill.android.util.BatteryOptimizationHelper
@@ -89,7 +90,7 @@ fun PermissionGuideScreen(
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg)
             ) {
                 Text(
                     text = "为保证自动记账功能正常运行，请开启以下权限：",
@@ -110,7 +111,7 @@ fun PermissionGuideScreen(
             // 检测"权限有但服务未连接"（vivo等ROM首次授权需toggle）
             if (isNotificationListenerEnabled && !com.aibill.android.service.NotificationMonitorService.isConnected) {
                 androidx.compose.material3.Card(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(Tokens.Radius.md),
                     colors = androidx.compose.material3.CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
                     ),
@@ -220,7 +221,7 @@ private fun PermissionItem(
     modifier: Modifier = Modifier
 ) {
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(Tokens.Radius.lg),
         modifier = modifier.fillMaxWidth().heightIn(min = 72.dp)
     ) {
         Row(
@@ -235,15 +236,15 @@ private fun PermissionItem(
                     imageVector = Icons.Default.CheckCircle,
                     contentDescription = null,
                     tint = SuccessColor,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(Tokens.IconSize.lg)
                 )
                 false -> Icon(
                     imageVector = Icons.Default.Warning,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(Tokens.IconSize.lg)
                 )
-                null -> Spacer(modifier = Modifier.size(24.dp))
+                null -> Spacer(modifier = Modifier.size(Tokens.IconSize.lg))
             }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {

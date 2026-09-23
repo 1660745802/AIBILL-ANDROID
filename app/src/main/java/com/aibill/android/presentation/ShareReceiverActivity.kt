@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aibill.android.presentation.theme.AiBillTheme
+import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.theme.PrimaryButton
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -78,7 +79,7 @@ private fun ShareReceiverContent(
             ) {
                 Column(
                     modifier = Modifier.padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -111,13 +112,13 @@ private fun ShareReceiverContent(
 
 @Composable
 private fun TextShareContent(text: String, onConfirm: (String) -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.md)) {
         Text(
             text = "将以下文本发送给 AI 解析：",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+        Surface(shape = RoundedCornerShape(Tokens.Radius.md), color = MaterialTheme.colorScheme.surfaceVariant) {
             Text(text = text.take(200), modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
         }
         PrimaryButton(

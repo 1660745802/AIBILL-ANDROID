@@ -172,7 +172,7 @@ private fun UserHeaderCard(displayName: String) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Surface(
-                modifier = Modifier.size(72.dp),
+                modifier = Modifier.size(Tokens.Avatar.xl),
                 shape = CircleShape,
                 color = Color.White.copy(alpha = 0.2f),
             ) {
@@ -252,12 +252,12 @@ private fun ProfileMenuItem(
         } else null,
         leadingContent = {
             Surface(
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(Tokens.Radius.sm),
                 color = iconBg,
                 modifier = Modifier.size(Tokens.Avatar.md),
             ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(Tokens.IconSize.md))
                 }
             }
         },

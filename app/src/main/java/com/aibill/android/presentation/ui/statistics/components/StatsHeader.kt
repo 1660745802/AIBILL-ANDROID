@@ -48,7 +48,7 @@ fun MonthSelector(
             colors = IconButtonDefaults.iconButtonColors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             ),
-            modifier = Modifier.size(36.dp),
+            modifier = Modifier.size(Tokens.Avatar.md),
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
@@ -66,7 +66,7 @@ fun MonthSelector(
             colors = IconButtonDefaults.iconButtonColors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             ),
-            modifier = Modifier.size(36.dp),
+            modifier = Modifier.size(Tokens.Avatar.md),
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,

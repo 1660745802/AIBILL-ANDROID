@@ -20,6 +20,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.domain.model.Account
 import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.theme.Tokens
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -79,7 +80,7 @@ fun AccountManageScreen(
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm)
             ) {
                 items(accounts, key = { it.id }) { account ->
                     AccountItem(
@@ -173,11 +174,11 @@ private fun AccountEditDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.md)) {
                 OutlinedTextField(
                     value = name, onValueChange = { name = it },
                     label = { Text("名称") }, singleLine = true,
-                    shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(Tokens.Radius.md), modifier = Modifier.fillMaxWidth(),
                 )
                 if (showType) {
                     var expanded by remember { mutableStateOf(false) }
@@ -186,7 +187,7 @@ private fun AccountEditDialog(
                             value = accountTypes.firstOrNull { it.first == type }?.second ?: type,
                             onValueChange = {}, readOnly = true, label = { Text("类型") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                            shape = RoundedCornerShape(14.dp),
+                            shape = RoundedCornerShape(Tokens.Radius.md),
                             modifier = Modifier.fillMaxWidth().menuAnchor(),
                         )
                         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -202,7 +203,7 @@ private fun AccountEditDialog(
                 OutlinedTextField(
                     value = icon, onValueChange = { icon = it },
                     label = { Text("图标 (Emoji)") }, singleLine = true,
-                    shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(Tokens.Radius.md), modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = balance,
@@ -212,7 +213,7 @@ private fun AccountEditDialog(
                         }
                     },
                     label = { Text("初始余额 (元)") }, singleLine = true,
-                    shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(Tokens.Radius.md), modifier = Modifier.fillMaxWidth(),
                 )
             }
         },
@@ -249,7 +250,7 @@ private fun AccountItem(
                 onClick = onClick,
                 onLongClick = onLongClick,
             ),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(Tokens.Radius.lg),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         )

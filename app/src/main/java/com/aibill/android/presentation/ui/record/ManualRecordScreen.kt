@@ -219,7 +219,7 @@ private fun SuccessOverlay() {
         Icon(
             Icons.Default.CheckCircle,
             contentDescription = "保存成功",
-            modifier = Modifier.size(52.dp),
+            modifier = Modifier.size(Tokens.TouchTarget.large + 2.dp),
             tint = MaterialTheme.colorScheme.primary,
         )
         Spacer(modifier = Modifier.height(Tokens.Spacing.md))
@@ -316,7 +316,7 @@ private fun AiQuickInput(
         Spacer(modifier = Modifier.width(Tokens.Spacing.sm))
         if (isParsing) {
             CircularProgressIndicator(
-                modifier = Modifier.size(48.dp),
+                modifier = Modifier.size(Tokens.TouchTarget.normal),
                 strokeWidth = 2.5.dp,
             )
         } else {

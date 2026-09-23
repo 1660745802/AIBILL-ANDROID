@@ -123,7 +123,7 @@ fun IncomeExpenseCompareBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp)),
+                    .clip(RoundedCornerShape(Tokens.Radius.xs)),
             ) {
                 Box(
                     modifier = Modifier

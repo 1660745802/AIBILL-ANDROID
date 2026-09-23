@@ -21,6 +21,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.domain.model.Category
 import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.theme.Tokens
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -98,7 +99,7 @@ fun CategoryManageScreen(
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm)
                 ) {
                     items(categories, key = { it.id }) { category ->
                         CategoryItem(
@@ -183,13 +184,13 @@ private fun CategoryEditDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.md)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("名称") },
                     singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(Tokens.Radius.md),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
@@ -197,7 +198,7 @@ private fun CategoryEditDialog(
                     onValueChange = { icon = it },
                     label = { Text("图标 (Emoji)") },
                     singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(Tokens.Radius.md),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
@@ -205,7 +206,7 @@ private fun CategoryEditDialog(
                     onValueChange = { sortOrder = it.filter { c -> c.isDigit() } },
                     label = { Text("排序") },
                     singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(Tokens.Radius.md),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -242,7 +243,7 @@ private fun CategoryItem(
                 onClick = onClick,
                 onLongClick = onLongClick,
             ),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(Tokens.Radius.lg),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         )
@@ -250,7 +251,7 @@ private fun CategoryItem(
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.md)
         ) {
             Text(text = category.icon, fontSize = 24.sp)
             Text(

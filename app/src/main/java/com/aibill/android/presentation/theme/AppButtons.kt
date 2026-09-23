@@ -1,5 +1,7 @@
 package com.aibill.android.presentation.theme
 
+import com.aibill.android.presentation.theme.Tokens
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,7 +34,7 @@ import androidx.compose.ui.unit.dp
  * - 支持 loading 态与前置图标
  */
 
-private val ButtonShape = RoundedCornerShape(14.dp)
+private val ButtonShape = RoundedCornerShape(Tokens.Radius.md)
 private const val HEIGHT_PRIMARY = 52
 private const val HEIGHT_NORMAL = 48
 

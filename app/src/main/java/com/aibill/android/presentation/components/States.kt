@@ -50,7 +50,7 @@ fun EmptyState(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(Tokens.TouchTarget.normal),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                 )
             } else if (emoji != null) {
@@ -99,7 +99,7 @@ fun LoadingState(modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         CircularProgressIndicator(
-            modifier = Modifier.size(36.dp),
+            modifier = Modifier.size(Tokens.Avatar.md),
             strokeWidth = 3.dp,
         )
     }
@@ -117,7 +117,7 @@ fun AppendLoading(modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         CircularProgressIndicator(
-            modifier = Modifier.size(24.dp),
+            modifier = Modifier.size(Tokens.IconSize.lg),
             strokeWidth = 2.dp,
         )
     }

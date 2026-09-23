@@ -278,7 +278,7 @@ private fun PendingSyncChip(count: Int, isSyncing: Boolean, onSyncClick: () -> U
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isSyncing) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
+                        modifier = Modifier.size(Tokens.IconSize.sm),
                         strokeWidth = 2.dp,
                         color = WarningColor,
                     )

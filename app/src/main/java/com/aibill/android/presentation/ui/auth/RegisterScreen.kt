@@ -27,6 +27,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.repository.AuthRepository
 import com.aibill.android.presentation.theme.PrimaryButton
+import com.aibill.android.presentation.theme.Tokens
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -103,7 +104,7 @@ fun RegisterScreen(
                 label = { Text("用户名") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(Tokens.Radius.md),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
                 enabled = !uiState.isLoading
@@ -117,7 +118,7 @@ fun RegisterScreen(
                 label = { Text("密码") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(Tokens.Radius.md),
                 visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
                     IconButton(onClick = { passwordVisible = !passwordVisible }) {
@@ -140,7 +141,7 @@ fun RegisterScreen(
                 label = { Text("邀请码") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(Tokens.Radius.md),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
                 enabled = !uiState.isLoading
@@ -154,7 +155,7 @@ fun RegisterScreen(
                 label = { Text("昵称（选填）") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(Tokens.Radius.md),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                 enabled = !uiState.isLoading

@@ -73,7 +73,7 @@ internal fun DateHeader(
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.md)) {
             if (expenseTotal > 0) {
                 Text(
                     text = "支出 ${AmountFormat.toYuanDisplay(expenseTotal)}",
@@ -125,7 +125,7 @@ internal fun TransactionItem(
                     imageVector = Icons.Outlined.Delete,
                     contentDescription = "删除",
                     tint = Color.White,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(Tokens.IconSize.md),
                 )
                 Text(
                     text = "删除",
@@ -179,7 +179,7 @@ internal fun TransactionItem(
                 Surface(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier.size(44.dp),
+                    modifier = Modifier.size(Tokens.Avatar.lg),
                 ) {
                     Column(
                         modifier = Modifier.fillMaxSize(),

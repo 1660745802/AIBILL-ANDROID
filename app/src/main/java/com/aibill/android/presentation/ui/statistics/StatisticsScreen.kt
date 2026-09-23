@@ -30,6 +30,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.aibill.android.presentation.theme.SecondaryButton
+import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.ui.statistics.components.CategoryDonutChart
 import com.aibill.android.presentation.ui.statistics.components.CategoryStatItem
 import com.aibill.android.presentation.ui.statistics.components.IncomeExpenseCompareBar
@@ -85,7 +86,7 @@ fun StatisticsScreen(
                     contentAlignment = Alignment.Center,
                 ) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(36.dp),
+                        modifier = Modifier.size(Tokens.Avatar.md),
                         strokeWidth = 3.dp,
                     )
                 }
@@ -137,7 +138,7 @@ fun StatisticsScreen(
             else -> {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
                 ) {
                     item(key = "summary") {
                         SummaryCard(
