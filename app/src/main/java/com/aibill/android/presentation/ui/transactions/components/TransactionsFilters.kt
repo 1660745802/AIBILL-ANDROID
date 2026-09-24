@@ -26,9 +26,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +39,7 @@ import com.aibill.android.domain.model.Category
 import com.aibill.android.presentation.theme.ExpenseColor
 import com.aibill.android.presentation.theme.IncomeColor
 import com.aibill.android.presentation.theme.Tokens
+import kotlinx.coroutines.launch
 
 /**
  * 流水筛选区。**重构为 3 行紧凑布局**：
@@ -53,7 +56,6 @@ data class TransactionsFiltersCallbacks(
     val onJumpToCurrentMonth: () -> Unit = {},
     val onSelectLastMonth: () -> Unit = {},
     val onSelectCustomDate: (Long, Long) -> Unit = { _, _ -> },
-    val onSelectToday: () -> Unit = {},
     val onSelectThisWeek: () -> Unit = {},
     val onTypeChanged: (String) -> Unit = {},
     val onCategoryChanged: (Int?) -> Unit = {},
@@ -80,7 +82,6 @@ fun TransactionsFilters(
             onClearDate = callbacks.onClearDate,
             onJumpToCurrentMonth = callbacks.onJumpToCurrentMonth,
             onSelectLastMonth = callbacks.onSelectLastMonth,
-            onSelectToday = callbacks.onSelectToday,
             onSelectThisWeek = callbacks.onSelectThisWeek,
             onShowCustomDatePicker = { showDatePicker = true },
         )
@@ -95,68 +96,60 @@ fun TransactionsFilters(
             )
         }
 
-        // ============ 行 2：类型 ============
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Tokens.Spacing.xl, vertical = Tokens.Spacing.xs),
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FilterChip(
-                selected = state.filterType == "all",
-                onClick = { callbacks.onTypeChanged("all") },
-                label = { Text("全部") },
-            )
-            FilterChip(
-                selected = state.filterType == "expense",
-                onClick = { callbacks.onTypeChanged("expense") },
-                label = { Text("支出") },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = ExpenseColor.copy(alpha = 0.12f),
-                    selectedLeadingIconColor = ExpenseColor,
-                ),
-            )
-            FilterChip(
-                selected = state.filterType == "income",
-                onClick = { callbacks.onTypeChanged("income") },
-                label = { Text("收入") },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = IncomeColor.copy(alpha = 0.12f),
-                    selectedLeadingIconColor = IncomeColor,
-                ),
-            )
-        }
+        // ============ 行 2：类型 + 筛选触发按钮（不含已选筛选）============
+        TypeAndFilterRow(
+            state = state,
+            onTypeChanged = callbacks.onTypeChanged,
+            onFilterClick = { showFilterSheet = true },
+        )
 
-        // ============ 行 3：折叠筛选按钮 + 当前筛选摘要 ============
-        FilterBarRow(
+        // ============ 行 3：已选筛选摘要（仅在有筛选时显示）============
+        SelectedFiltersRow(
             state = state,
             categories = categories,
-            onClick = { showFilterSheet = true },
             onClearCategory = { callbacks.onCategoryChanged(null) },
             onClearTag = { callbacks.onTagToggled(it) },
         )
 
-        // ============ 筛选 Sheet（点击筛选按钮展开）============
-        if (showFilterSheet) {
-            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-            ModalBottomSheet(
-                onDismissRequest = { showFilterSheet = false },
-                sheetState = sheetState,
-            ) {
+        // ============ 筛选 Sheet（始终存在，用 sheetState 控制动画避免关闭闪退）============
+        // 修复：不要用 if (showFilterSheet) 条件渲染 ModalBottomSheet，
+        // 会在点击“完成”时同时触发 onDismissRequest + onClose 的双重动画，
+        // 导致 Compose 重组与动画状态冲突闪退。改为始终创建 sheetState，
+        // 仅在隐藏时跳过 content 渲染。
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val sheetScope = rememberCoroutineScope()
+
+        // 响应外部状态变化，控制 sheet 显示
+        LaunchedEffect(showFilterSheet) {
+            if (showFilterSheet) sheetState.show()
+        }
+
+        ModalBottomSheet(
+            onDismissRequest = {
+                sheetScope.launch {
+                    sheetState.hide()
+                    showFilterSheet = false
+                }
+            },
+            sheetState = sheetState,
+        ) {
+            if (showFilterSheet) {
                 FilterSheetContent(
                     state = state,
                     categories = categories,
                     availableTags = availableTags,
-                    onCategorySelected = {
-                        callbacks.onCategoryChanged(it)
-                    },
+                    onCategorySelected = { callbacks.onCategoryChanged(it) },
                     onTagToggled = callbacks.onTagToggled,
                     onClearAll = {
                         callbacks.onCategoryChanged(null)
                         callbacks.onClearAllTags()
                     },
-                    onClose = { showFilterSheet = false },
+                    onClose = {
+                        sheetScope.launch {
+                            sheetState.hide()
+                            showFilterSheet = false
+                        }
+                    },
                 )
             }
         }
@@ -198,14 +191,12 @@ private fun DateFilterRow(
     onClearDate: () -> Unit,
     onJumpToCurrentMonth: () -> Unit,
     onSelectLastMonth: () -> Unit,
-    onSelectToday: () -> Unit,
     onSelectThisWeek: () -> Unit,
     onShowCustomDatePicker: () -> Unit,
 ) {
     val isCustomRange = filterDateLabel != "全部" &&
             filterDateLabel != "本月" &&
             filterDateLabel != "上月" &&
-            filterDateLabel != "今日" &&
             filterDateLabel != "本周"
 
     Row(
@@ -216,11 +207,6 @@ private fun DateFilterRow(
         horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FilterChip(
-            selected = filterDateLabel == "今日",
-            onClick = onSelectToday,
-            label = { Text("今日") },
-        )
         FilterChip(
             selected = filterDateLabel == "本周",
             onClick = onSelectThisWeek,
@@ -292,16 +278,13 @@ private fun MoreDateButton(
 // =============================================================================
 
 @Composable
-private fun FilterBarRow(
+private fun TypeAndFilterRow(
     state: com.aibill.android.presentation.ui.transactions.TransactionsViewModel.TransactionsUiState,
-    categories: List<Category>,
-    onClick: () -> Unit,
-    onClearCategory: () -> Unit,
-    onClearTag: (String) -> Unit,
+    onTypeChanged: (String) -> Unit,
+    onFilterClick: () -> Unit,
 ) {
     val hasFilter = state.filterCategoryId != null || state.filterTags.isNotEmpty()
-    val categoryName = state.filterCategoryId
-        ?.let { id -> categories.firstOrNull { it.id == id }?.let { "${it.icon} ${it.name}" } }
+    val filterCount = (if (state.filterCategoryId != null) 1 else 0) + state.filterTags.size
 
     Row(
         modifier = Modifier
@@ -311,14 +294,61 @@ private fun FilterBarRow(
         horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FilterTriggerButton(
-            label = if (hasFilter) "筛选" else "筛选",
-            count = (if (state.filterCategoryId != null) 1 else 0) + state.filterTags.size,
-            isActive = hasFilter,
-            onClick = onClick,
+        FilterChip(
+            selected = state.filterType == "all",
+            onClick = { onTypeChanged("all") },
+            label = { Text("全部") },
         )
+        FilterChip(
+            selected = state.filterType == "expense",
+            onClick = { onTypeChanged("expense") },
+            label = { Text("支出") },
+            colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = ExpenseColor.copy(alpha = 0.12f),
+                selectedLabelColor = ExpenseColor,
+            ),
+        )
+        FilterChip(
+            selected = state.filterType == "income",
+            onClick = { onTypeChanged("income") },
+            label = { Text("收入") },
+            colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = IncomeColor.copy(alpha = 0.12f),
+                selectedLabelColor = IncomeColor,
+            ),
+        )
+        FilterTriggerButton(
+            label = "筛选",
+            count = filterCount,
+            isActive = hasFilter,
+            onClick = onFilterClick,
+        )
+    }
+}
 
-        // 当前已选筛选（紧凑 chip，可点击清除）
+/**
+ * 行 3：已选筛选摘要（仅在有筛选时显示，独立行避免挤占类型筛选）。
+ */
+@Composable
+private fun SelectedFiltersRow(
+    state: com.aibill.android.presentation.ui.transactions.TransactionsViewModel.TransactionsUiState,
+    categories: List<Category>,
+    onClearCategory: () -> Unit,
+    onClearTag: (String) -> Unit,
+) {
+    val categoryName = state.filterCategoryId
+        ?.let { id -> categories.firstOrNull { it.id == id }?.let { "${it.icon} ${it.name}" } }
+    val hasFilter = categoryName != null || state.filterTags.isNotEmpty()
+    if (!hasFilter) return
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = Tokens.Spacing.xl, vertical = Tokens.Spacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         if (categoryName != null) {
             RemovableChip(
                 text = categoryName,

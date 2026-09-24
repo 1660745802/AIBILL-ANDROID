@@ -77,7 +77,8 @@ fun MonthSelector(
 }
 
 /**
- * 统计页 Tab 切换：支出 / 收入
+ * 统计页 Tab 切换：支出 / 收入。
+ * **整行居中**，与月份切换器对齐。
  */
 @Composable
 fun StatsTabRow(
@@ -87,7 +88,7 @@ fun StatsTabRow(
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Start,
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         FilterChip(

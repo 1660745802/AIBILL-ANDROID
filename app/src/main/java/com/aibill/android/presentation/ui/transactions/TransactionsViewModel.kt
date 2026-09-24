@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -90,16 +91,25 @@ class TransactionsViewModel @Inject constructor(
 
     private val pageSize = 20
     private var searchJob: Job? = null
+    /**
+     * PR #63: 跟踪期间合计协程。时段快速切换时取消旧协程，避免
+     * 多个 pageSize=9999 的请求并发造成 OOM 闪退。
+     */
+    private var periodSummaryJob: Job? = null
     private var lastDeletedTransaction: Transaction? = null
 
     /**
      * Paging 3 数据流。filter 变化时自动重建 PagingSource，
      * cachedIn(viewModelScope) 保证 ViewModel 重建时缓存不丢失。
+     *
+     * **防抖 100ms**：避免频繁切换筛选时多次 flatMapLatest cancel + 重建，
+     * 多次 Pager 并发 + safeApiCall 调用可能导致闪退。
      */
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
     val transactionsPager: Flow<PagingData<Transaction>> = _uiState
         .map { it.pagingFilter }
         .distinctUntilChanged()
+        .debounce(100)  // 100ms 防抖，快速多次切换只保留最后一次
         .flatMapLatest { filter ->
             Pager(
                 config = PagingConfig(
@@ -158,18 +168,28 @@ class TransactionsViewModel @Inject constructor(
     /**
      * 期间合计：有日期筛选时调用后端 stats API（避免前端遍历全量）。
      * 无筛选时不计算（前端列表 Paging 已展示总额）。
+     *
+     * **并发安全**：
+     * - 取消上次请求（防快速切换并发）
+     * - 150ms 防抖（避免连续操作多次发 9999 条请求）
      */
     private fun loadPeriodSummary() {
-        val state = _uiState.value
-        if (state.filterStartDate == null) {
+        periodSummaryJob?.cancel()  // 取消上次请求
+        val stateAtCall = _uiState.value  // 先快照当前 state
+        if (stateAtCall.filterStartDate == null) {
             _uiState.update { it.copy(periodExpense = 0, periodIncome = 0) }
             return
         }
-        viewModelScope.launch {
+        periodSummaryJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(150)  // 150ms 防抖
+            // 重新读取最新 state（避免防抖期间用户已切换时段）
+            val state = _uiState.value
+            if (state.filterStartDate == null) {
+                _uiState.update { it.copy(periodExpense = 0, periodIncome = 0) }
+                return@launch
+            }
             val start = state.filterStartDate
             val end = state.filterEndDate ?: start
-            // 仅在 Paging 还没加载时，单次查询拉满（limit=9999）用于合计
-            // 简化：直接复用 Repository 单次接口，最大 9999 条
             when (val result = transactionRepository.getTransactions(
                 TransactionQuery(
                     page = 1,
@@ -256,17 +276,6 @@ class TransactionsViewModel @Inject constructor(
         loadPeriodSummary()
     }
 
-    /** 今日范围 */
-    fun onSelectToday() {
-        val today = java.time.LocalDate.now()
-        updateState { copy(
-            filterStartDate = today.toString(),
-            filterEndDate = today.toString(),
-            filterDateLabel = "今日",
-        ) }
-        loadPeriodSummary()
-    }
-
     /** 本周范围（周一 → 周日） */
     fun onSelectThisWeek() {
         val today = java.time.LocalDate.now()
@@ -312,7 +321,8 @@ class TransactionsViewModel @Inject constructor(
 
     fun setCategoryFilter(categoryId: Int?) {
         updateState { copy(filterCategoryId = categoryId) }
-        loadPeriodSummary()
+        // 注意：不调 loadPeriodSummary()，避免 chip × 快速点击时 9999 条请求并发 OOM 闪退。
+        // 期间合计仅在时段变化时刷新，分类/标签变化时复用上次结果。
     }
 
     fun setTagFilter(tag: String?) {
@@ -323,7 +333,7 @@ class TransactionsViewModel @Inject constructor(
             else -> currentTags + tag
         }
         updateState { copy(filterTags = newTags) }
-        loadPeriodSummary()
+        // 同上：不调 loadPeriodSummary() 防闪退
     }
 
     /** 一键清空所有标签筛选 */

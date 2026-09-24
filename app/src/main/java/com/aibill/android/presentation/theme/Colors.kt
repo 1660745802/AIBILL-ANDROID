@@ -68,6 +68,16 @@ const val PRIVACY_MASK = "¥***"
 // {Brand}{Role}{Variant}，其中 Variant = Light/Dark（来自 ColorScheme 主题）。
 internal val TealContainerLight = Color(0xFFB2DFDB)
 internal val TealOnContainerLight = Color(0xFF00332E)
+
+/**
+ * 柔和品牌渐变（横向）。保留渐变效果但颜色更接近,
+ * 适用于需要品牌识别但不需高饱和的场合（如「我的」页 Hero）。
+ *
+ * 颜色仍在 teal 调色板内，保持主题一致。
+ */
+val BrandGradientSubtle: Brush = Brush.linearGradient(
+    colors = listOf(TealLight, TealContainerLight),
+)
 internal val TealSecondaryContainerLight = Color(0xFFCCE8E4)
 internal val TealOnSecondaryContainerLight = Color(0xFF00201C)
 internal val TertiaryLight = Color(0xFF4A6360)

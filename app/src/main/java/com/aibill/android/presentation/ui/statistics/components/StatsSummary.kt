@@ -51,24 +51,18 @@ fun SummaryCard(
     }
 
     val secondaryMetrics = buildList<Metric> {
+        // 只保留日均 + 结余；收支对比交给下方的 CompareBar
         if (daysInPeriod > 0 && displayAmount > 0) {
             val dailyAvg = displayAmount.toFloat() / daysInPeriod / 100f
             add(Metric("日均", "¥${"%.2f".format(dailyAvg)}"))
         }
-        if (summary != null && (summary.expense > 0 || summary.income > 0)) {
-            if (selectedTab == "expense" && summary.income > 0) {
-                add(Metric("收入", AmountFormatter.toYuanDisplay(summary.income)))
-            } else if (selectedTab == "income" && summary.expense > 0) {
-                add(Metric("支出", AmountFormatter.toYuanDisplay(summary.expense)))
+        if (summary != null && summary.balance != 0) {
+            val balanceText = if (summary.balance < 0) {
+                "-${AmountFormatter.toYuanDisplay(-summary.balance)}"
+            } else {
+                AmountFormatter.toYuanDisplay(summary.balance)
             }
-            if (summary.balance != 0) {
-                val balanceText = if (summary.balance < 0) {
-                    "-${AmountFormatter.toYuanDisplay(-summary.balance)}"
-                } else {
-                    AmountFormatter.toYuanDisplay(summary.balance)
-                }
-                add(Metric("结余", balanceText))
-            }
+            add(Metric("结余", balanceText))
         }
     }
 

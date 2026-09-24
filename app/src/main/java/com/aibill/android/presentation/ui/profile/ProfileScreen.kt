@@ -52,7 +52,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.presentation.components.AppTopBar
 import com.aibill.android.presentation.components.ConfirmDialog
 import com.aibill.android.presentation.theme.AiBillTheme
-import com.aibill.android.presentation.theme.BrandGradient
+import com.aibill.android.presentation.theme.BrandGradientSubtle
 import com.aibill.android.presentation.theme.Tokens
 
 /**
@@ -212,26 +212,35 @@ private fun UserHeroCard(
         shape = RoundedCornerShape(Tokens.Radius.xl),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
     ) {
+        // 柔和品牌渐变背景下的文字色：
+        // - Light mode：浅 teal 渐变 + 深 teal 文字 (onPrimaryContainer)
+        // - Dark mode：接受以 teal 系色文本表达（柔和优先）
+        val heroTextColor = MaterialTheme.colorScheme.onPrimaryContainer
+        val heroTextSecondary = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+        val heroAvatarBg = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+        val heroAvatarText = MaterialTheme.colorScheme.onPrimaryContainer
+        val heroIconTint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(brush = BrandGradient, shape = RoundedCornerShape(Tokens.Radius.xl))
+                .background(brush = BrandGradientSubtle, shape = RoundedCornerShape(Tokens.Radius.xl))
                 .padding(horizontal = Tokens.Spacing.xxl, vertical = Tokens.Spacing.xl),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // 头像：用昵称首字符（避免跨设备 emoji 渲染不一致）
+                // 头像：主色 container + 深 teal 文字（柔和统一）
                 Box(
                     modifier = Modifier
                         .size(64.dp)
-                        .background(color = Color.White.copy(alpha = 0.25f), shape = CircleShape),
+                        .background(color = heroAvatarBg, shape = CircleShape),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         text = displayName.firstOrNull()?.toString() ?: "U",
-                        color = Color.White,
+                        color = heroAvatarText,
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Bold,
                     )
@@ -242,13 +251,13 @@ private fun UserHeroCard(
                         text = displayName,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                        color = heroTextColor,
                     )
                     if (username.isNotBlank()) {
                         Text(
                             text = "@$username",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.75f),
+                            color = heroTextSecondary,
                         )
                     }
                 }
@@ -265,6 +274,9 @@ private fun UserHeroCard(
                     icon = Icons.Default.Category,
                     label = "累计笔数",
                     value = "$totalTransactions 笔",
+                    iconTint = heroIconTint,
+                    labelColor = heroTextSecondary,
+                    valueColor = heroTextColor,
                 )
             }
         }
@@ -277,6 +289,9 @@ private fun StatCell(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
+    iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    labelColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     Row(
         modifier = modifier,
@@ -285,7 +300,7 @@ private fun StatCell(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = Color.White.copy(alpha = 0.85f),
+            tint = iconTint,
             modifier = Modifier.size(Tokens.IconSize.md),
         )
         Spacer(modifier = Modifier.size(Tokens.Spacing.sm))
@@ -293,13 +308,13 @@ private fun StatCell(
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.7f),
+                color = labelColor,
             )
             Text(
                 text = value,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = Color.White,
+                color = valueColor,
             )
         }
     }
