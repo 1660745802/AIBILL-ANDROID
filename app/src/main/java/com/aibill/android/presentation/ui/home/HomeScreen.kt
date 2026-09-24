@@ -15,12 +15,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -49,7 +49,6 @@ import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.presentation.components.AmountFormatter
 import com.aibill.android.presentation.components.AppTopBar
-import com.aibill.android.presentation.components.GradientSummaryCard
 import com.aibill.android.presentation.components.LoadingState
 import com.aibill.android.presentation.components.Metric
 import com.aibill.android.presentation.components.TransactionRow
@@ -148,7 +147,7 @@ private fun HomeContent(
         verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.listItemSpacing),
     ) {
         item(key = "header") {
-            GradientSummaryCard(
+            PlainSummaryCard(
                 label = "本月支出",
                 amountFen = uiState.monthlyExpense,
                 modifier = Modifier.clickable { onHeaderClick() },
@@ -307,3 +306,74 @@ private fun PendingSyncChip(count: Int, isSyncing: Boolean, onSyncClick: () -> U
         ),
     )
 }
+
+/**
+ * 首页本月支出卡：surfaceContainerMedium 背景 + 大字号金额（低调版）。
+ * 替代原 [com.aibill.android.presentation.components.GradientSummaryCard] 的渐变设计。
+ */
+@Composable
+private fun PlainSummaryCard(
+    label: String,
+    amountFen: Int,
+    modifier: Modifier = Modifier,
+    periodLabel: String? = null,
+    secondaryMetrics: List<Metric> = emptyList(),
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(Tokens.Radius.xl),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Tokens.Spacing.xxl, vertical = Tokens.Spacing.xl),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(Tokens.Spacing.sm))
+                    Text(
+                        text = AmountFormatter.toYuanDisplay(amountFen),
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                if (periodLabel != null) {
+                    Text(
+                        text = periodLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
+            }
+            if (secondaryMetrics.isNotEmpty()) {
+                Spacer(Modifier.height(Tokens.Spacing.md))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    secondaryMetrics.forEach { metric ->
+                        Text(
+                            text = "${metric.label} ${metric.value}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+

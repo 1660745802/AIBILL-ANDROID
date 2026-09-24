@@ -256,6 +256,43 @@ class TransactionsViewModel @Inject constructor(
         loadPeriodSummary()
     }
 
+    /** 今日范围 */
+    fun onSelectToday() {
+        val today = java.time.LocalDate.now()
+        updateState { copy(
+            filterStartDate = today.toString(),
+            filterEndDate = today.toString(),
+            filterDateLabel = "今日",
+        ) }
+        loadPeriodSummary()
+    }
+
+    /** 本周范围（周一 → 周日） */
+    fun onSelectThisWeek() {
+        val today = java.time.LocalDate.now()
+        val monday = today.with(java.time.DayOfWeek.MONDAY)
+        val sunday = today.with(java.time.DayOfWeek.SUNDAY)
+        updateState { copy(
+            filterStartDate = monday.toString(),
+            filterEndDate = sunday.toString(),
+            filterDateLabel = "本周",
+        ) }
+        loadPeriodSummary()
+    }
+
+    /** 上周范围（周一 → 周日） */
+    fun onSelectLastWeek() {
+        val today = java.time.LocalDate.now()
+        val lastMonday = today.with(java.time.DayOfWeek.MONDAY).minusWeeks(1)
+        val lastSunday = lastMonday.plusDays(6)
+        updateState { copy(
+            filterStartDate = lastMonday.toString(),
+            filterEndDate = lastSunday.toString(),
+            filterDateLabel = "上周",
+        ) }
+        loadPeriodSummary()
+    }
+
     fun onDateRangeSelected(startMillis: Long, endMillis: Long) {
         val start = java.time.Instant.ofEpochMilli(startMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         val end = java.time.Instant.ofEpochMilli(endMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
@@ -286,6 +323,12 @@ class TransactionsViewModel @Inject constructor(
             else -> currentTags + tag
         }
         updateState { copy(filterTags = newTags) }
+        loadPeriodSummary()
+    }
+
+    /** 一键清空所有标签筛选 */
+    fun clearAllTags() {
+        updateState { copy(filterTags = emptyList()) }
         loadPeriodSummary()
     }
 

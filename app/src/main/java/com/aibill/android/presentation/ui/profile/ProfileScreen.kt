@@ -395,14 +395,14 @@ private fun ProfileMenuItem(
 }
 
 /**
- * 数字徽章（红色 pill）。仅在 count > 0 时显示。
+ * 数字徽章（低调灰底 pill）。仅在 count > 0 时显示。
  */
 @Composable
 private fun BadgePill(count: Int) {
     Box(
         modifier = Modifier
             .background(
-                color = MaterialTheme.colorScheme.error,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 shape = RoundedCornerShape(Tokens.Radius.pill),
             )
             .padding(horizontal = Tokens.Spacing.sm, vertical = 2.dp),
@@ -410,9 +410,9 @@ private fun BadgePill(count: Int) {
     ) {
         Text(
             text = "$count",
-            color = MaterialTheme.colorScheme.onError,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Medium,
         )
     }
 }

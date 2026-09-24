@@ -101,9 +101,12 @@ fun TransactionsScreen(
                         )
                     },
                     onSelectCustomDate = viewModel::onDateRangeSelected,
+                    onSelectToday = viewModel::onSelectToday,
+                    onSelectThisWeek = viewModel::onSelectThisWeek,
                     onTypeChanged = viewModel::onFilterTypeChanged,
                     onCategoryChanged = viewModel::setCategoryFilter,
                     onTagToggled = viewModel::setTagFilter,
+                    onClearAllTags = viewModel::clearAllTags,
                 ),
             )
 

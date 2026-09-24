@@ -16,21 +16,21 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aibill.android.domain.repository.StatsSummary
 import com.aibill.android.presentation.components.AmountFormatter
-import com.aibill.android.presentation.components.GradientSummaryCard
 import com.aibill.android.presentation.components.Metric
 import com.aibill.android.presentation.theme.ExpenseColor
-import com.aibill.android.presentation.theme.ExpenseGradient
 import com.aibill.android.presentation.theme.IncomeColor
-import com.aibill.android.presentation.theme.IncomeGradient
 import com.aibill.android.presentation.theme.Tokens
 
 /**
- * 统计页顶部汇总卡。基于 [GradientSummaryCard]，按 [selectedTab] 自动选支出/收入渐变。
+ * 统计页顶部汇总卡。低调表面色背景 + 强调色文字，**不使用渐变**。
+ * 按 [selectedTab] 切换强调色（支出 → 红，收入 → 绿）。
  */
 @Composable
 fun SummaryCard(
@@ -44,40 +44,90 @@ fun SummaryCard(
         else -> summary?.income ?: 0
     }
     val label = if (selectedTab == "expense") "总支出" else "总收入"
-    val gradient = if (selectedTab == "expense") ExpenseGradient else IncomeGradient
+    val amountColor = if (selectedTab == "expense") ExpenseColor else IncomeColor
     val change = when (selectedTab) {
         "expense" -> summary?.expenseChange ?: 0
         else -> summary?.incomeChange ?: 0
     }
 
-    GradientSummaryCard(
-        label = label,
-        amountFen = displayAmount,
-        modifier = modifier,
-        gradient = gradient,
-        trendPercent = change,
-        secondaryMetrics = buildList {
-            if (daysInPeriod > 0 && displayAmount > 0) {
-                val dailyAvg = displayAmount.toFloat() / daysInPeriod / 100f
-                add(Metric("日均", "¥${"%.2f".format(dailyAvg)}"))
+    val secondaryMetrics = buildList<Metric> {
+        if (daysInPeriod > 0 && displayAmount > 0) {
+            val dailyAvg = displayAmount.toFloat() / daysInPeriod / 100f
+            add(Metric("日均", "¥${"%.2f".format(dailyAvg)}"))
+        }
+        if (summary != null && (summary.expense > 0 || summary.income > 0)) {
+            if (selectedTab == "expense" && summary.income > 0) {
+                add(Metric("收入", AmountFormatter.toYuanDisplay(summary.income)))
+            } else if (selectedTab == "income" && summary.expense > 0) {
+                add(Metric("支出", AmountFormatter.toYuanDisplay(summary.expense)))
             }
-            if (summary != null && (summary.expense > 0 || summary.income > 0)) {
-                if (selectedTab == "expense" && summary.income > 0) {
-                    add(Metric("收入", AmountFormatter.toYuanDisplay(summary.income)))
-                } else if (selectedTab == "income" && summary.expense > 0) {
-                    add(Metric("支出", AmountFormatter.toYuanDisplay(summary.expense)))
+            if (summary.balance != 0) {
+                val balanceText = if (summary.balance < 0) {
+                    "-${AmountFormatter.toYuanDisplay(-summary.balance)}"
+                } else {
+                    AmountFormatter.toYuanDisplay(summary.balance)
                 }
-                if (summary.balance != 0) {
-                    val balanceText = if (summary.balance < 0) {
-                        "-${AmountFormatter.toYuanDisplay(-summary.balance)}"
-                    } else {
-                        AmountFormatter.toYuanDisplay(summary.balance)
+                add(Metric("结余", balanceText))
+            }
+        }
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(Tokens.Radius.xl),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Tokens.Spacing.xxl, vertical = Tokens.Spacing.xl),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                Column {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(Tokens.Spacing.sm))
+                    Text(
+                        text = AmountFormatter.toYuanDisplay(displayAmount),
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = amountColor,
+                    )
+                }
+                if (change != 0) {
+                    Text(
+                        text = if (change > 0) "环比 +$change%" else "环比 $change%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
+            }
+            if (secondaryMetrics.isNotEmpty()) {
+                Spacer(Modifier.height(Tokens.Spacing.md))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    secondaryMetrics.forEach { metric ->
+                        Text(
+                            text = "${metric.label} ${metric.value}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                    add(Metric("结余", balanceText))
                 }
             }
-        },
-    )
+        }
+    }
 }
 
 /**
