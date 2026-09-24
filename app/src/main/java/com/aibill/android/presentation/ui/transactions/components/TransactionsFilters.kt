@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.drop
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -588,8 +589,12 @@ private fun FilterSheetHost(
     // 跟踪 sheetState.isVisible，hide 动画完成后才通知外层关闭
     // 这样外层 if 条件变 false → 当前 Composable 立即 dispose，
     // 不会与 hide 动画 race 导致闪退
+    // **重要**：drop(1) 跳过 sheetState.isVisible 初始值（Hidden=false），
+    // 否则 LaunchedEffect 第一次 collect 就会发射 false 立即调用 onDismissRequest()，
+    // 导致 FilterSheetHost 立即被销毁，sheet 永远打不开（v1.5.6 闪退 + 无反应 bug）
     LaunchedEffect(sheetState) {
         androidx.compose.runtime.snapshotFlow { sheetState.isVisible }
+            .drop(1)
             .collect { visible ->
                 if (!visible) onDismissRequest()
             }
