@@ -32,6 +32,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -111,29 +112,36 @@ fun TransactionsFilters(
             onClearTag = { callbacks.onTagToggled(it) },
         )
 
-        // ============ 筛选 Sheet（始终存在，用 sheetState 控制动画避免关闭闪退）============
-        // 修复：不要用 if (showFilterSheet) 条件渲染 ModalBottomSheet，
-        // 会在点击“完成”时同时触发 onDismissRequest + onClose 的双重动画，
-        // 导致 Compose 重组与动画状态冲突闪退。改为始终创建 sheetState，
-        // 仅在隐藏时跳过 content 渲染。
+        // ============ 筛选 Sheet ============
+        // **关键**：上一版 always render ModalBottomSheet 会导致 Hidden 状态下
+        // 仍占据 fillMaxSize 拦截整个屏幕点击事件，流水页“什么都点不了”。
+        // 改回 if (showFilterSheet) 条件渲染 + LaunchedEffect 跟踪 sheetState.isVisible
+        // 控制 showFilterSheet → 动画完成后才 dispose，避免双重动画闪退。
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val sheetScope = rememberCoroutineScope()
 
-        // 响应外部状态变化，控制 sheet 显示
+        // 响应外部状态变化：当 showFilterSheet=true 时调用 sheetState.show()
         LaunchedEffect(showFilterSheet) {
             if (showFilterSheet) sheetState.show()
         }
 
-        ModalBottomSheet(
-            onDismissRequest = {
-                sheetScope.launch {
-                    sheetState.hide()
+        // 跟踪 sheetState 隐藏：动画完成后才设 showFilterSheet=false
+        // 这样 if 条件变为 false，ModalBottomSheet 才被 dispose（避免双重动画）
+        LaunchedEffect(sheetState) {
+            snapshotFlow { sheetState.isVisible }.collect { visible ->
+                if (!visible && showFilterSheet) {
                     showFilterSheet = false
                 }
-            },
-            sheetState = sheetState,
-        ) {
-            if (showFilterSheet) {
+            }
+        }
+
+        if (showFilterSheet) {
+            ModalBottomSheet(
+                onDismissRequest = {
+                    sheetScope.launch { sheetState.hide() }
+                },
+                sheetState = sheetState,
+            ) {
                 FilterSheetContent(
                     state = state,
                     categories = categories,
@@ -145,10 +153,7 @@ fun TransactionsFilters(
                         callbacks.onClearAllTags()
                     },
                     onClose = {
-                        sheetScope.launch {
-                            sheetState.hide()
-                            showFilterSheet = false
-                        }
+                        sheetScope.launch { sheetState.hide() }
                     },
                 )
             }
