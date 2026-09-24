@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,11 +30,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -77,6 +76,9 @@ fun ProfileScreen(
 ) {
     var showLogoutConfirm by remember { mutableStateOf(false) }
     val displayName by viewModel.displayName.collectAsStateWithLifecycle()
+    val username by viewModel.username.collectAsStateWithLifecycle()
+    val totalTransactions by viewModel.totalTransactions.collectAsStateWithLifecycle()
+    val trashCount by viewModel.trashCount.collectAsStateWithLifecycle()
 
     if (showLogoutConfirm) {
         ConfirmDialog(
@@ -95,77 +97,116 @@ fun ProfileScreen(
     Scaffold(
         modifier = modifier,
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { AppTopBar(title = "我的") },
+        topBar = {
+            AppTopBar(title = "我的") {
+                IconButton(onClick = navigation.onSettings) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "设置",
+                    )
+                }
+            }
+        },
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(Tokens.Spacing.xl),
+            contentPadding = PaddingValues(
+                start = Tokens.Spacing.screenHorizontal,
+                end = Tokens.Spacing.screenHorizontal,
+                top = Tokens.Spacing.xl,
+                bottom = Tokens.Spacing.huge,
+            ),
             verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
         ) {
-            item { UserHeaderCard(displayName = displayName) }
-            item { SectionLabel("管理") }
-            item {
+            item(key = "hero") {
+                UserHeroCard(
+                    displayName = displayName,
+                    username = username,
+                    totalTransactions = totalTransactions,
+                )
+            }
+
+            item(key = "section_content") {
+                SectionLabel("我的内容")
+            }
+            item(key = "content_card") {
                 MenuCard {
                     ProfileMenuItem(
-                        icon = Icons.Default.Category, title = "分类管理",
-                        subtitle = "自定义收支分类",
+                        icon = Icons.Default.Category,
+                        title = "分类管理",
+                        subtitle = "管理收支分类",
                         onClick = navigation.onCategoryManage,
                     )
                     MenuDivider()
                     ProfileMenuItem(
-                        icon = Icons.Default.AccountBalance, title = "账户管理",
-                        subtitle = "管理你的钱包和银行卡",
+                        icon = Icons.Default.AccountBalance,
+                        title = "账户管理",
+                        subtitle = "管理钱包和银行卡",
                         onClick = navigation.onAccountManage,
                     )
                     MenuDivider()
                     ProfileMenuItem(
-                        icon = Icons.Default.Delete, title = "回收站",
-                        subtitle = "查看和恢复已删除的记录",
+                        icon = Icons.Default.Delete,
+                        title = "回收站",
+                        subtitle = "已删除的记录",
+                        badge = trashCount.takeIf { it > 0 },
                         onClick = navigation.onTrash,
                     )
                 }
             }
-            item { SectionLabel("设置") }
-            item {
+
+            item(key = "section_automation") {
+                SectionLabel("自动化")
+            }
+            item(key = "automation_card") {
                 MenuCard {
                     ProfileMenuItem(
-                        icon = Icons.Default.Notifications, title = "通知中心",
+                        icon = Icons.Default.Notifications,
+                        title = "通知中心",
                         subtitle = "查看待确认的自动记账",
                         onClick = navigation.onNotificationCenter,
                     )
                     MenuDivider()
                     ProfileMenuItem(
-                        icon = Icons.Default.Shield, title = "权限与保活",
-                        subtitle = "通知监听、电池优化、自启动",
+                        icon = Icons.Default.Shield,
+                        title = "权限与保活",
+                        subtitle = "通知监听、自启动、电池优化",
                         onClick = navigation.onPermissionGuide,
                     )
-                    MenuDivider()
-                    ProfileMenuItem(
-                        icon = Icons.Default.Settings, title = "通用设置",
-                        subtitle = "主题、隐私、服务器",
-                        onClick = navigation.onSettings,
-                    )
                 }
             }
-            item {
-                MenuCard {
-                    ProfileMenuItem(
-                        icon = Icons.AutoMirrored.Filled.Logout, title = "退出登录",
-                        tint = MaterialTheme.colorScheme.error,
-                        iconBg = MaterialTheme.colorScheme.errorContainer,
-                        onClick = { showLogoutConfirm = true },
-                    )
-                }
+
+            item(key = "danger_card") {
+                Spacer(modifier = Modifier.height(Tokens.Spacing.sm))
+                DangerCard(
+                    title = "退出登录",
+                    onClick = { showLogoutConfirm = true },
+                )
             }
-            item { Spacer(modifier = Modifier.height(Tokens.Spacing.xxl)) }
         }
     }
 }
 
+// =============================================================================
+// 组件
+// =============================================================================
+
+/**
+ * 用户 Hero 卡（主题色渐变）。
+ *
+ * 设计要点：
+ * - 头像用首字符圆形（避免 emoji 跨设备不一致）
+ * - 副标题展示用户名（@username）
+ * - 底部单指标：累计笔数（**不展示金额**，避免和首页/统计冲突）
+ */
 @Composable
-private fun UserHeaderCard(displayName: String) {
+private fun UserHeroCard(
+    displayName: String,
+    username: String,
+    totalTransactions: Int,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(Tokens.Radius.xl),
@@ -175,29 +216,90 @@ private fun UserHeaderCard(displayName: String) {
             modifier = Modifier
                 .fillMaxWidth()
                 .background(brush = BrandGradient, shape = RoundedCornerShape(Tokens.Radius.xl))
-                .padding(Tokens.Spacing.xxl),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .padding(horizontal = Tokens.Spacing.xxl, vertical = Tokens.Spacing.xl),
         ) {
-            Surface(
-                modifier = Modifier.size(72.dp),
-                shape = CircleShape,
-                color = Color.White.copy(alpha = 0.2f),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Text(text = "👤", fontSize = 32.sp)
+                // 头像：用昵称首字符（避免跨设备 emoji 渲染不一致）
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(color = Color.White.copy(alpha = 0.25f), shape = CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = displayName.firstOrNull()?.toString() ?: "U",
+                        color = Color.White,
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = displayName,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                    )
+                    if (username.isNotBlank()) {
+                        Text(
+                            text = "@$username",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.75f),
+                        )
+                    }
                 }
             }
-            Spacer(modifier = Modifier.height(Tokens.Spacing.md))
+
+            Spacer(modifier = Modifier.height(Tokens.Spacing.xl))
+
+            // 成就指标：单列“累计笔数”（零金额）
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StatCell(
+                    icon = Icons.Default.Category,
+                    label = "累计笔数",
+                    value = "$totalTransactions 笔",
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatCell(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.85f),
+            modifier = Modifier.size(Tokens.IconSize.md),
+        )
+        Spacer(modifier = Modifier.size(Tokens.Spacing.sm))
+        Column {
             Text(
-                displayName,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White.copy(alpha = 0.7f),
             )
             Text(
-                "AIBILL · 智能记账",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.White.copy(alpha = 0.7f),
+                text = value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
             )
         }
     }
@@ -218,7 +320,7 @@ private fun SectionLabel(title: String) {
 private fun MenuCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(Tokens.Radius.xl),
+        shape = RoundedCornerShape(Tokens.Radius.lg),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = Tokens.Elevation.low),
     ) {
@@ -242,46 +344,122 @@ private fun ProfileMenuItem(
     subtitle: String? = null,
     iconBg: Color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
     tint: Color = MaterialTheme.colorScheme.primary,
+    badge: Int? = null,
     onClick: () -> Unit = {},
 ) {
-    ListItem(
-        headlineContent = {
-            Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
-        },
-        supportingContent = if (subtitle != null) {
-            {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = Tokens.Spacing.lg, vertical = Tokens.Spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 左侧图标圆角方块
+        Box(
+            modifier = Modifier
+                .size(Tokens.Avatar.md)
+                .background(color = iconBg, shape = RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+        }
+        Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
+        // 中间标题+副标题
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Medium,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            if (subtitle != null) {
                 Text(
                     subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        } else null,
-        leadingContent = {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = iconBg,
-                modifier = Modifier.size(Tokens.Avatar.md),
-            ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
-                }
-            }
-        },
-        trailingContent = {
+        }
+        // 右侧：Badge 或 Chevron
+        if (badge != null) {
+            BadgePill(count = badge)
+            Spacer(modifier = Modifier.size(Tokens.Spacing.sm))
+        }
+        Icon(
+            Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+            modifier = Modifier.size(Tokens.IconSize.sm),
+        )
+    }
+}
+
+/**
+ * 数字徽章（红色 pill）。仅在 count > 0 时显示。
+ */
+@Composable
+private fun BadgePill(count: Int) {
+    Box(
+        modifier = Modifier
+            .background(
+                color = MaterialTheme.colorScheme.error,
+                shape = RoundedCornerShape(Tokens.Radius.pill),
+            )
+            .padding(horizontal = Tokens.Spacing.sm, vertical = 2.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "$count",
+            color = MaterialTheme.colorScheme.onError,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+/**
+ * 危险操作项。低饱和 errorContainer 背景，柔和但仍可识别。
+ */
+@Composable
+private fun DangerCard(title: String, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(Tokens.Radius.lg),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Tokens.Spacing.lg, vertical = Tokens.Spacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.Logout,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.size(Tokens.IconSize.md),
+            )
+            Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
+            Text(
+                title,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                fontWeight = FontWeight.Medium,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
             Icon(
                 Icons.Default.ChevronRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                tint = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.5f),
                 modifier = Modifier.size(Tokens.IconSize.sm),
             )
-        },
-        modifier = Modifier.clickable(onClick = onClick),
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-    )
+        }
+    }
 }
 
-@Preview(showBackground = true, heightDp = 700)
+@Preview(showBackground = true, heightDp = 800)
 @Composable
 private fun ProfileScreenPreview() {
     AiBillTheme {

@@ -20,17 +20,14 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
-import com.aibill.android.presentation.ui.transactions.components.TransactionsFiltersCallbacks
 import com.aibill.android.presentation.ui.transactions.components.TransactionsFilters
+import com.aibill.android.presentation.ui.transactions.components.TransactionsFiltersCallbacks
 import com.aibill.android.presentation.ui.transactions.components.TransactionsPagingList
 import java.time.YearMonth
 
 /**
- * 流水页。**已重构**：filter 行 / 列表 / 空状态拆为独立组件。
- *
- * - filter: [TransactionsFilters]
- * - list:   [TransactionsPagingList]
- * - 空状态/loading: 复用 presentation/components/States
+ * 流水页。**重设计**：补上 AppTopBar 提供视觉锚点；
+ * filter 行 / 列表 / 日期分组均已就绪（保留）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

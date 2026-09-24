@@ -12,14 +12,29 @@ import com.aibill.android.util.AppLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * 设置页 ViewModel。
+ *
+ * 设计要点（**反应式**）：
+ * - 所有 [UserPreferences] 派生的偏好字段直接 `stateIn` 为 StateFlow，UI 直接 collect
+ * - 不再 init 块里一坨 `first()` 阻塞读取 + `update`
+ * - 改偏好只需 set，对应 StateFlow 自动推新值
+ *
+ * 仅以下"运行时状态"放在 [UiState]：
+ * - [notificationListenerGranted] - 系统权限检查（不是偏好）
+ * - [isLoading] - 修改密码时的临时状态
+ */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val authRepository: AuthRepository,
@@ -30,88 +45,80 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
 
     data class UiState(
-        val themeMode: String = "system",
-        val serverUrl: String = "",
         val notificationListenerGranted: Boolean = false,
-        val hideFromRecents: Boolean = false,
-        val notificationPrivacy: Boolean = false,
-        val appLockEnabled: Boolean = false,
-        val quickEntryEnabled: Boolean = false,
         val isLoading: Boolean = false,
     )
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
+    // ============ 反应式：直接来自 UserPreferences ============
+
+    val displayName: StateFlow<String> = userPreferences.nickname
+        .combine(userPreferences.username) { nickname, username ->
+            nickname?.takeIf { it.isNotBlank() }
+                ?: username?.takeIf { it.isNotBlank() }
+                ?: "用户"
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "用户")
+
+    val username: StateFlow<String> = userPreferences.username
+        .map { it.orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    val themeMode: StateFlow<String> = userPreferences.themeMode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "system")
+
+    val serverUrl: StateFlow<String> = userPreferences.serverUrl
+        .map { it.orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    val hideFromRecents: StateFlow<Boolean> = userPreferences.hideFromRecents
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val notificationPrivacy: StateFlow<Boolean> = userPreferences.notificationPrivacy
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val appLockEnabled: StateFlow<Boolean> = userPreferences.appLockEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val quickEntryEnabled: StateFlow<Boolean> = userPreferences.quickEntryEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    // ============ 事件通道（toast / snackbar） ============
+
     private val _events = Channel<String>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
-    init {
-        viewModelScope.launch {
-            val theme = userPreferences.themeMode.first()
-            val url = userPreferences.serverUrl.first().orEmpty()
-            val hide = userPreferences.hideFromRecents.first()
-            val privacy = userPreferences.notificationPrivacy.first()
-            val appLock = userPreferences.appLockEnabled.first()
-            val quickEntry = userPreferences.quickEntryEnabled.first()
-            _uiState.update {
-                it.copy(
-                    themeMode = theme,
-                    serverUrl = url,
-                    hideFromRecents = hide,
-                    notificationPrivacy = privacy,
-                    appLockEnabled = appLock,
-                    quickEntryEnabled = quickEntry
-                )
-            }
-        }
-    }
+    // ============ 操作方法（无需手动 update 偏好字段） ============
 
     fun onThemeChanged(mode: String) {
-        viewModelScope.launch {
-            userPreferences.setThemeMode(mode)
-            _uiState.update { it.copy(themeMode = mode) }
-        }
+        viewModelScope.launch { userPreferences.setThemeMode(mode) }
     }
 
     fun onHideFromRecentsChanged(enabled: Boolean) {
-        viewModelScope.launch {
-            userPreferences.setHideFromRecents(enabled)
-            _uiState.update { it.copy(hideFromRecents = enabled) }
-        }
+        viewModelScope.launch { userPreferences.setHideFromRecents(enabled) }
     }
 
     fun checkNotificationListenerPermission(context: Context) {
         val enabledListeners = android.provider.Settings.Secure.getString(
             context.contentResolver, "enabled_notification_listeners"
         ).orEmpty()
-        val granted = enabledListeners.contains(context.packageName)
-        _uiState.update { it.copy(notificationListenerGranted = granted) }
+        _uiState.update { it.copy(notificationListenerGranted = enabledListeners.contains(context.packageName)) }
     }
 
     fun onNotificationPrivacyChanged(enabled: Boolean) {
-        viewModelScope.launch {
-            userPreferences.setNotificationPrivacy(enabled)
-            _uiState.update { it.copy(notificationPrivacy = enabled) }
-        }
+        viewModelScope.launch { userPreferences.setNotificationPrivacy(enabled) }
     }
 
     fun onAppLockChanged(enabled: Boolean) {
-        viewModelScope.launch {
-            userPreferences.setAppLockEnabled(enabled)
-            _uiState.update { it.copy(appLockEnabled = enabled) }
-        }
+        viewModelScope.launch { userPreferences.setAppLockEnabled(enabled) }
     }
 
     fun onQuickEntryChanged(enabled: Boolean, context: Context) {
         viewModelScope.launch {
             userPreferences.setQuickEntryEnabled(enabled)
-            _uiState.update { it.copy(quickEntryEnabled = enabled) }
-            if (enabled) {
-                QuickEntryService.start(context)
-            } else {
-                QuickEntryService.stop(context)
-            }
+            if (enabled) QuickEntryService.start(context) else QuickEntryService.stop(context)
         }
     }
 
@@ -132,10 +139,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val logText = appLogger.exportAsText()
-                // 生成文件到 cache 目录（可清理）
                 val logFile = java.io.File(context.cacheDir, "aibill_log_${System.currentTimeMillis()}.txt")
                 logFile.writeText(logText)
-                // 通过 FileProvider 分享
                 val uri = androidx.core.content.FileProvider.getUriForFile(
                     context, "${context.packageName}.fileprovider", logFile
                 )
@@ -170,7 +175,7 @@ class SettingsViewModel @Inject constructor(
      * 之前直接 downloadAndInstall() 是不合理的——用户没看到任何确认就被下载了。
      */
     sealed class UpdateCheckResult {
-        data class Available(val info: com.aibill.android.service.UpdateManager.UpdateInfo) : UpdateCheckResult()
+        data class Available(val info: UpdateManager.UpdateInfo) : UpdateCheckResult()
         data object UpToDate : UpdateCheckResult()
         data class Failed(val message: String) : UpdateCheckResult()
     }
@@ -180,9 +185,9 @@ class SettingsViewModel @Inject constructor(
             _events.send("正在获取最新版本…")
             val current = com.aibill.android.BuildConfig.VERSION_NAME
             when (val result = updateManager.fetchLatestResult()) {
-                is com.aibill.android.service.UpdateManager.FetchLatestResult.Success -> {
+                is UpdateManager.FetchLatestResult.Success -> {
                     val latest = result.info
-                    if (!com.aibill.android.service.UpdateManager.isNewerVersion(latest.versionName, current)) {
+                    if (!UpdateManager.isNewerVersion(latest.versionName, current)) {
                         _events.send("已是最新版本 v$current")
                         onResult(UpdateCheckResult.UpToDate)
                     } else {
@@ -190,12 +195,12 @@ class SettingsViewModel @Inject constructor(
                         onResult(UpdateCheckResult.Available(latest))
                     }
                 }
-                com.aibill.android.service.UpdateManager.FetchLatestResult.NoUpdate -> {
+                UpdateManager.FetchLatestResult.NoUpdate -> {
                     // billserver 权威判定：已是最新（不 fallback GitHub）
                     _events.send("已是最新版本 v$current（服务器无更新）")
                     onResult(UpdateCheckResult.UpToDate)
                 }
-                is com.aibill.android.service.UpdateManager.FetchLatestResult.Failure -> {
+                is UpdateManager.FetchLatestResult.Failure -> {
                     // 关键修复：之前此分支不发 _events，用户只看到"正在获取…"后永久沉默
                     _events.send(result.message)
                     onResult(UpdateCheckResult.Failed(result.message))
@@ -207,7 +212,7 @@ class SettingsViewModel @Inject constructor(
     /**
      * 用户在「发现新版本」对话框点"立即更新"后调用。
      */
-    fun startUpdateDownload(context: android.content.Context, info: com.aibill.android.service.UpdateManager.UpdateInfo) {
+    fun startUpdateDownload(context: Context, info: UpdateManager.UpdateInfo) {
         viewModelScope.launch {
             _events.send("开始下载 ${info.versionName}")
             updateManager.downloadAndInstall(context, info)
