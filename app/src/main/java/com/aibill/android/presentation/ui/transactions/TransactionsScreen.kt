@@ -117,7 +117,6 @@ fun TransactionsScreen(
                 TransactionsPagingList(
                     pagingItems = pagingItems,
                     listState = listState,
-                    searchKeyword = uiState.searchKeyword,
                     onDelete = viewModel::onDeleteTransaction,
                     onItemClick = onNavigateToDetail,
                 )

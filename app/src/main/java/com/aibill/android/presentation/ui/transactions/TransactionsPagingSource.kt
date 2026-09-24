@@ -30,7 +30,6 @@ data class PagingFilterSnapshot(
     val endDate: String? = null,
     val type: String? = null,
     val categoryId: Int? = null,
-    val keyword: String? = null,
     val tag: String? = null,
 )
 
@@ -48,9 +47,8 @@ class TransactionsPagingSource(
                 pageSize = pageSize,
                 startDate = filter.startDate,
                 endDate = filter.endDate,
-                type = filter.type?.takeIf { it != "all" },
+                type = filter.type,  // ViewModel 已转 null（非 "all"）
                 categoryId = filter.categoryId,
-                keyword = filter.keyword?.ifBlank { null },
                 tag = filter.tag,
             ),
         )) {

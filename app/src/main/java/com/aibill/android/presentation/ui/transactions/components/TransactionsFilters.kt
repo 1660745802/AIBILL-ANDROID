@@ -113,50 +113,17 @@ fun TransactionsFilters(
         )
 
         // ============ 筛选 Sheet ============
-        // **关键**：上一版 always render ModalBottomSheet 会导致 Hidden 状态下
-        // 仍占据 fillMaxSize 拦截整个屏幕点击事件，流水页“什么都点不了”。
-        // 改回 if (showFilterSheet) 条件渲染 + LaunchedEffect 跟踪 sheetState.isVisible
-        // 控制 showFilterSheet → 动画完成后才 dispose，避免双重动画闪退。
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        val sheetScope = rememberCoroutineScope()
-
-        // 响应外部状态变化：当 showFilterSheet=true 时调用 sheetState.show()
-        LaunchedEffect(showFilterSheet) {
-            if (showFilterSheet) sheetState.show()
-        }
-
-        // 跟踪 sheetState 隐藏：动画完成后才设 showFilterSheet=false
-        // 这样 if 条件变为 false，ModalBottomSheet 才被 dispose（避免双重动画）
-        LaunchedEffect(sheetState) {
-            snapshotFlow { sheetState.isVisible }.collect { visible ->
-                if (!visible && showFilterSheet) {
-                    showFilterSheet = false
-                }
-            }
-        }
-
+        // 纯条件渲染：if (showFilterSheet) 才创建 ModalBottomSheet + sheetState。
+        // 这样 Hidden 状态下不会占据 fillMaxSize 拦截点击事件。
+        // sheetState 和 ModalBottomSheet 生命周期严格绑定，避免“幽灵弹窗”问题。
         if (showFilterSheet) {
-            ModalBottomSheet(
-                onDismissRequest = {
-                    sheetScope.launch { sheetState.hide() }
-                },
-                sheetState = sheetState,
-            ) {
-                FilterSheetContent(
-                    state = state,
-                    categories = categories,
-                    availableTags = availableTags,
-                    onCategorySelected = { callbacks.onCategoryChanged(it) },
-                    onTagToggled = callbacks.onTagToggled,
-                    onClearAll = {
-                        callbacks.onCategoryChanged(null)
-                        callbacks.onClearAllTags()
-                    },
-                    onClose = {
-                        sheetScope.launch { sheetState.hide() }
-                    },
-                )
-            }
+            FilterSheetHost(
+                state = state,
+                categories = categories,
+                availableTags = availableTags,
+                callbacks = callbacks,
+                onDismissRequest = { showFilterSheet = false },
+            )
         }
 
         // ============ 当前筛选下的合计（按需）============
@@ -593,3 +560,61 @@ private fun DateRangePickerDialog(
         )
     }
 }
+
+/**
+ * 筛选 Sheet 容器（**独立 Composable**，sheetState 和 ModalBottomSheet 生命周期严格绑定）。
+ *
+ * - 仅当外层调用时（即 if (showFilterSheet)）才进入
+ * - 退出时 ModalBottomSheet 立即随 if 条件销毁，避免 Hidden 状态拦截事件
+ * - 关闭动画通过 sheetState.isVisible 状态控制外层 showFilterSheet
+ *   （在 FilterSheetHost 内部 LaunchedEffect 中调用 onDismissRequest）
+ *
+ * PR #65：上一版 always render ModalBottomSheet 在 Hidden 状态下仍占据 fillMaxSize
+ * 拦截整个屏幕点击事件，导致“流水页什么都点不了”。
+ * 现彻底拆为独立 Composable，确保生命周期严格匹配。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FilterSheetHost(
+    state: com.aibill.android.presentation.ui.transactions.TransactionsViewModel.TransactionsUiState,
+    categories: List<Category>,
+    availableTags: List<String>,
+    callbacks: TransactionsFiltersCallbacks,
+    onDismissRequest: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetScope = rememberCoroutineScope()
+
+    // 跟踪 sheetState.isVisible，hide 动画完成后才通知外层关闭
+    // 这样外层 if 条件变 false → 当前 Composable 立即 dispose，
+    // 不会与 hide 动画 race 导致闪退
+    LaunchedEffect(sheetState) {
+        androidx.compose.runtime.snapshotFlow { sheetState.isVisible }
+            .collect { visible ->
+                if (!visible) onDismissRequest()
+            }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = {
+            sheetScope.launch { sheetState.hide() }
+        },
+        sheetState = sheetState,
+    ) {
+        FilterSheetContent(
+            state = state,
+            categories = categories,
+            availableTags = availableTags,
+            onCategorySelected = { callbacks.onCategoryChanged(it) },
+            onTagToggled = callbacks.onTagToggled,
+            onClearAll = {
+                callbacks.onCategoryChanged(null)
+                callbacks.onClearAllTags()
+            },
+            onClose = {
+                sheetScope.launch { sheetState.hide() }
+            },
+        )
+    }
+}
+

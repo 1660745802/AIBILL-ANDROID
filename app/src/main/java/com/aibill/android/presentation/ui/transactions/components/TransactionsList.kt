@@ -19,7 +19,6 @@ import com.aibill.android.presentation.components.AppendError
 import com.aibill.android.presentation.components.AppendLoading
 import com.aibill.android.presentation.components.EmptyState
 import com.aibill.android.presentation.components.LoadingState
-import com.aibill.android.presentation.components.SearchEmptyState
 import com.aibill.android.presentation.theme.Tokens
 
 /**
@@ -35,7 +34,6 @@ import com.aibill.android.presentation.theme.Tokens
 fun TransactionsPagingList(
     pagingItems: LazyPagingItems<Transaction>,
     listState: LazyListState,
-    searchKeyword: String,
     onDelete: (Int) -> Unit,
     onItemClick: (Int) -> Unit,
     modifier: Modifier = Modifier,
@@ -44,16 +42,12 @@ fun TransactionsPagingList(
     val isEmpty = pagingItems.itemCount == 0 && refreshState is LoadState.NotLoading
 
     if (isEmpty) {
-        if (searchKeyword.isNotBlank()) {
-            SearchEmptyState(keyword = searchKeyword, modifier = modifier)
-        } else {
-            EmptyState(
-                emoji = "📭",
-                title = "暂无流水记录",
-                subtitle = "去首页记一笔吧",
-                modifier = modifier,
-            )
-        }
+        EmptyState(
+            emoji = "📭",
+            title = "暂无流水记录",
+            subtitle = "去首页记一笔吧",
+            modifier = modifier,
+        )
         return
     }
 

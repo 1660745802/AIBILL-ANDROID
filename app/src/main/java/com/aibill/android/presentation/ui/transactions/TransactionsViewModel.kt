@@ -13,7 +13,6 @@ import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,7 +20,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -44,7 +43,6 @@ class TransactionsViewModel @Inject constructor(
 
     data class TransactionsUiState(
         val error: String? = null,
-        val searchKeyword: String = "",
         /** 流水类型筛选 (all/expense/income) */
         val filterType: String = "all",
         /** 按分类筛选 */
@@ -72,7 +70,6 @@ class TransactionsViewModel @Inject constructor(
     data class PagingFilter(
         val type: String? = null,
         val categoryId: Int? = null,
-        val keyword: String? = null,
         val tag: String? = null,
         val startDate: String? = null,
         val endDate: String? = null,
@@ -90,7 +87,6 @@ class TransactionsViewModel @Inject constructor(
     val uiEvent: SharedFlow<UiEvent> = _uiEvent.asSharedFlow()
 
     private val pageSize = 20
-    private var searchJob: Job? = null
     /**
      * PR #63: 跟踪期间合计协程。时段快速切换时取消旧协程，避免
      * 多个 pageSize=9999 的请求并发造成 OOM 闪退。
@@ -102,14 +98,14 @@ class TransactionsViewModel @Inject constructor(
      * Paging 3 数据流。filter 变化时自动重建 PagingSource，
      * cachedIn(viewModelScope) 保证 ViewModel 重建时缓存不丢失。
      *
-     * **防抖 100ms**：避免频繁切换筛选时多次 flatMapLatest cancel + 重建，
-     * 多次 Pager 并发 + safeApiCall 调用可能导致闪退。
+     * PR #66：用 conflate() 替代 debounce()，避免按钮点击反馈滞后一个操作。
+     * conflate 丢弃上游中间值，保留最新值传给 flatMapLatest，避免 Pager 频繁 cancel。
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
     val transactionsPager: Flow<PagingData<Transaction>> = _uiState
         .map { it.pagingFilter }
         .distinctUntilChanged()
-        .debounce(100)  // 100ms 防抖，快速多次切换只保留最后一次
+        .conflate()  // 丢弃上游中间值，只发射最新值
         .flatMapLatest { filter ->
             Pager(
                 config = PagingConfig(
@@ -125,7 +121,6 @@ class TransactionsViewModel @Inject constructor(
                             endDate = filter.endDate,
                             type = filter.type,
                             categoryId = filter.categoryId,
-                            keyword = filter.keyword,
                             tag = filter.tag,
                         ),
                         pageSize = pageSize,
@@ -138,7 +133,8 @@ class TransactionsViewModel @Inject constructor(
     init {
         loadAvailableTags()
         loadCategories()
-        loadPeriodSummary()
+        // loadPeriodSummary 不调：默认 filterStartDate=null 会立即 return，
+        // 而且无意义（用户进入时还没选日期）。
     }
 
     /** Screen 重新进入时刷新（Paging 自动感知 filter；这里只刷新合计） */
@@ -219,7 +215,6 @@ class TransactionsViewModel @Inject constructor(
     private fun TransactionsUiState.toPagingFilter() = PagingFilter(
         type = filterType.takeIf { it != "all" },
         categoryId = filterCategoryId,
-        keyword = searchKeyword.ifBlank { null },
         tag = filterTags.joinToString(",").ifEmpty { null },
         startDate = filterStartDate,
         endDate = filterEndDate,
@@ -289,19 +284,6 @@ class TransactionsViewModel @Inject constructor(
         loadPeriodSummary()
     }
 
-    /** 上周范围（周一 → 周日） */
-    fun onSelectLastWeek() {
-        val today = java.time.LocalDate.now()
-        val lastMonday = today.with(java.time.DayOfWeek.MONDAY).minusWeeks(1)
-        val lastSunday = lastMonday.plusDays(6)
-        updateState { copy(
-            filterStartDate = lastMonday.toString(),
-            filterEndDate = lastSunday.toString(),
-            filterDateLabel = "上周",
-        ) }
-        loadPeriodSummary()
-    }
-
     fun onDateRangeSelected(startMillis: Long, endMillis: Long) {
         val start = java.time.Instant.ofEpochMilli(startMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         val end = java.time.Instant.ofEpochMilli(endMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
@@ -321,8 +303,7 @@ class TransactionsViewModel @Inject constructor(
 
     fun setCategoryFilter(categoryId: Int?) {
         updateState { copy(filterCategoryId = categoryId) }
-        // 注意：不调 loadPeriodSummary()，避免 chip × 快速点击时 9999 条请求并发 OOM 闪退。
-        // 期间合计仅在时段变化时刷新，分类/标签变化时复用上次结果。
+        loadPeriodSummary()  // 分类过滤合计由 loadPeriodSummary 内部 150ms debounce + cancel 防并发
     }
 
     fun setTagFilter(tag: String?) {
@@ -333,7 +314,7 @@ class TransactionsViewModel @Inject constructor(
             else -> currentTags + tag
         }
         updateState { copy(filterTags = newTags) }
-        // 同上：不调 loadPeriodSummary() 防闪退
+        loadPeriodSummary()  // 同上：刷新该筛选下的合计
     }
 
     /** 一键清空所有标签筛选 */
@@ -343,16 +324,9 @@ class TransactionsViewModel @Inject constructor(
     }
 
     private inline fun updateState(transform: TransactionsUiState.() -> TransactionsUiState) {
-        _uiState.update { it.transform().copy(pagingFilter = it.toPagingFilter()) }
-    }
-
-    fun onSearchChanged(keyword: String) {
-        _uiState.update { it.copy(searchKeyword = keyword) }
-        // Paging 3 filter 快照通过 pagingFilter.keyword 同步
-        updateState { copy(searchKeyword = keyword) }
-        searchJob?.cancel()
-        searchJob = viewModelScope.launch {
-            delay(DEBOUNCE_MS)
+        _uiState.update { currentState ->
+            val transformed = currentState.transform()
+            transformed.copy(pagingFilter = transformed.toPagingFilter())
         }
     }
 
@@ -388,9 +362,5 @@ class TransactionsViewModel @Inject constructor(
                 is Result.Loading -> Unit
             }
         }
-    }
-
-    companion object {
-        private const val DEBOUNCE_MS = 300L
     }
 }
