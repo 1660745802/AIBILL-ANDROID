@@ -20,7 +20,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -88,8 +87,8 @@ class TransactionsViewModel @Inject constructor(
 
     private val pageSize = 20
     /**
-     * PR #63: 跟踪期间合计协程。时段快速切换时取消旧协程，避免
-     * 多个 pageSize=9999 的请求并发造成 OOM 闪退。
+     * 跟踪期间合计协程：快速切换筛选时取消上一次未完成的请求，
+     * 避免多个 pageSize=9999 的全量拉取并发浪费资源。
      */
     private var periodSummaryJob: Job? = null
     private var lastDeletedTransaction: Transaction? = null
@@ -97,15 +96,12 @@ class TransactionsViewModel @Inject constructor(
     /**
      * Paging 3 数据流。filter 变化时自动重建 PagingSource，
      * cachedIn(viewModelScope) 保证 ViewModel 重建时缓存不丢失。
-     *
-     * PR #66：用 conflate() 替代 debounce()，避免按钮点击反馈滞后一个操作。
-     * conflate 丢弃上游中间值，保留最新值传给 flatMapLatest，避免 Pager 频繁 cancel。
+     * （上游是 StateFlow，本身只发最新值，无需额外 conflate/debounce。）
      */
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val transactionsPager: Flow<PagingData<Transaction>> = _uiState
         .map { it.pagingFilter }
         .distinctUntilChanged()
-        .conflate()  // 丢弃上游中间值，只发射最新值
         .flatMapLatest { filter ->
             Pager(
                 config = PagingConfig(

@@ -26,14 +26,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
-import kotlinx.coroutines.flow.drop
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -45,9 +42,9 @@ import kotlinx.coroutines.launch
 
 /**
  * 流水筛选区。**重构为 3 行紧凑布局**：
- * - 行 1：时段（今日/本周/本月/上月/全部 + 自定义）
- * - 行 2：类型（全部/支出/收入）
- * - 行 3：折叠筛选（点击底部 sheet 选择分类/标签/账户）
+ * - 行 1：时段（本周/本月/上月/全部 + 自定义“更多”）
+ * - 行 2：类型（全部/支出/收入）+ 筛选触发按钮
+ * - 行 3：已选筛选摘要（按需）
  *
  * 设计原则：
  * - 不显示冗余信息（筛选标签太长用"更多 ▾"代替）
@@ -114,17 +111,39 @@ fun TransactionsFilters(
         )
 
         // ============ 筛选 Sheet ============
-        // 纯条件渲染：if (showFilterSheet) 才创建 ModalBottomSheet + sheetState。
-        // 这样 Hidden 状态下不会占据 fillMaxSize 拦截点击事件。
-        // sheetState 和 ModalBottomSheet 生命周期严格绑定，避免“幽灵弹窗”问题。
+        // 条件渲染 + 关闭时先播完 hide 动画再销毁：
+        // scope.launch { sheetState.hide(); showFilterSheet = false }
+        // hide() 挂起直到动画结束，然后才置 false → if 条件变 false → 销毁。
         if (showFilterSheet) {
-            FilterSheetHost(
-                state = state,
-                categories = categories,
-                availableTags = availableTags,
-                callbacks = callbacks,
-                onDismissRequest = { showFilterSheet = false },
-            )
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            val sheetScope = rememberCoroutineScope()
+            ModalBottomSheet(
+                onDismissRequest = {
+                    sheetScope.launch {
+                        sheetState.hide()
+                        showFilterSheet = false
+                    }
+                },
+                sheetState = sheetState,
+            ) {
+                FilterSheetContent(
+                    state = state,
+                    categories = categories,
+                    availableTags = availableTags,
+                    onCategorySelected = { callbacks.onCategoryChanged(it) },
+                    onTagToggled = callbacks.onTagToggled,
+                    onClearAll = {
+                        callbacks.onCategoryChanged(null)
+                        callbacks.onClearAllTags()
+                    },
+                    onClose = {
+                        sheetScope.launch {
+                            sheetState.hide()
+                            showFilterSheet = false
+                        }
+                    },
+                )
+            }
         }
 
         // ============ 当前筛选下的合计（按需）============
@@ -562,64 +581,4 @@ private fun DateRangePickerDialog(
     }
 }
 
-/**
- * 筛选 Sheet 容器（**独立 Composable**，sheetState 和 ModalBottomSheet 生命周期严格绑定）。
- *
- * - 仅当外层调用时（即 if (showFilterSheet)）才进入
- * - 退出时 ModalBottomSheet 立即随 if 条件销毁，避免 Hidden 状态拦截事件
- * - 关闭动画通过 sheetState.isVisible 状态控制外层 showFilterSheet
- *   （在 FilterSheetHost 内部 LaunchedEffect 中调用 onDismissRequest）
- *
- * PR #65：上一版 always render ModalBottomSheet 在 Hidden 状态下仍占据 fillMaxSize
- * 拦截整个屏幕点击事件，导致“流水页什么都点不了”。
- * 现彻底拆为独立 Composable，确保生命周期严格匹配。
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FilterSheetHost(
-    state: com.aibill.android.presentation.ui.transactions.TransactionsViewModel.TransactionsUiState,
-    categories: List<Category>,
-    availableTags: List<String>,
-    callbacks: TransactionsFiltersCallbacks,
-    onDismissRequest: () -> Unit,
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val sheetScope = rememberCoroutineScope()
-
-    // 跟踪 sheetState.isVisible，hide 动画完成后才通知外层关闭
-    // 这样外层 if 条件变 false → 当前 Composable 立即 dispose，
-    // 不会与 hide 动画 race 导致闪退
-    // **重要**：drop(1) 跳过 sheetState.isVisible 初始值（Hidden=false），
-    // 否则 LaunchedEffect 第一次 collect 就会发射 false 立即调用 onDismissRequest()，
-    // 导致 FilterSheetHost 立即被销毁，sheet 永远打不开（v1.5.6 闪退 + 无反应 bug）
-    LaunchedEffect(sheetState) {
-        androidx.compose.runtime.snapshotFlow { sheetState.isVisible }
-            .drop(1)
-            .collect { visible ->
-                if (!visible) onDismissRequest()
-            }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = {
-            sheetScope.launch { sheetState.hide() }
-        },
-        sheetState = sheetState,
-    ) {
-        FilterSheetContent(
-            state = state,
-            categories = categories,
-            availableTags = availableTags,
-            onCategorySelected = { callbacks.onCategoryChanged(it) },
-            onTagToggled = callbacks.onTagToggled,
-            onClearAll = {
-                callbacks.onCategoryChanged(null)
-                callbacks.onClearAllTags()
-            },
-            onClose = {
-                sheetScope.launch { sheetState.hide() }
-            },
-        )
-    }
-}
 

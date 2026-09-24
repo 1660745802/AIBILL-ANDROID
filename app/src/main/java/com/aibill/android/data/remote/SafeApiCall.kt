@@ -44,12 +44,6 @@ suspend inline fun <reified T> safeApiCall(
                 Result.Error(response.code, response.message)
             }
         }
-    } catch (e: kotlinx.coroutines.CancellationException) {
-        // **重要**：协程取消异常必须 rethrow，不能被 catch (Exception) 吞掉。
-        // 之前的实现吞了 CancellationException，导致 PagingSource.load 被取消时
-        // 返回 LoadResult.Error，Paging 库误以为加载失败并 retry，在频繁切换筛选时
-        // 触发多个 Pager 并发请求，最终导致 ANR/闪退。
-        throw e
     } catch (e: IOException) {
         Timber.e(e, "网络连接失败")
         Result.Error(Result.ERROR_NETWORK, "网络连接失败，请检查网络")
