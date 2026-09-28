@@ -79,6 +79,13 @@ class SmsReceiverService : BroadcastReceiver() {
             return
         }
 
+        // 营销短信拦截（sms.spam_keywords + default_rule 排除词，含强交易特征
+        // 如尾号/卡号/入账的交 AI 判定，与 NLS 渠道 isLikelySpamSms 同源）
+        if (rulesManager.isLikelyMarketing(text)) {
+            appLogger.debug("SMS", "营销短信拦截: sender=$sender text=${text.take(40)}")
+            return
+        }
+
         appLogger.info("SMS", "预筛通过,交给Processor: sender=$sender len=${text.length}")
 
         // 直接交给 Processor（AI + 后置按金额去重）

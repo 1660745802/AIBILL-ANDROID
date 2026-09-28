@@ -51,10 +51,11 @@ class AuthInterceptor @Inject constructor(
 
         val response = chain.proceed(request)
 
-        // 401 全局处理
+        // 401 全局处理：清整个会话（token + userId/username/nickname），
+        // 避免只清 token 导致用户信息残留在 EncryptedSharedPreferences（与登出行为一致）
         if (response.code == 401) {
             appLogger.error("AUTH", "401 Token过期, 触发跳转登录: url=${originalRequest.url}")
-            tokenManager.clearToken()
+            tokenManager.clearSession()
             authEventBus.emit(AuthEvent.TokenExpired)
         }
 

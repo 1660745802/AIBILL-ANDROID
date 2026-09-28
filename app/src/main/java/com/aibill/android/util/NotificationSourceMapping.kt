@@ -95,12 +95,15 @@ object NotificationSourceMapping {
     val KNOWN_PACKAGES: Set<String> = SOURCE_NAMES.keys
 
     fun friendlyName(packageName: String): String =
-        SOURCE_NAMES[packageName] ?: packageName
+        if (packageName.startsWith("sms:")) "短信"
+        else SOURCE_NAMES[packageName] ?: packageName
 
     /**
      * 云控版本：优先从云控规则中查找，fallback 到硬编码 map。
      */
     fun friendlyName(packageName: String, rulesManager: NotificationRulesManager): String {
+        // SMS 渠道的 packageName 是 "sms:<发送方>"，统一映射为"短信"
+        if (packageName.startsWith("sms:")) return "短信"
         val cloudMapping = rulesManager.getRules().sourceMapping
         if (cloudMapping.isNotEmpty()) {
             cloudMapping[packageName]?.let { return it }

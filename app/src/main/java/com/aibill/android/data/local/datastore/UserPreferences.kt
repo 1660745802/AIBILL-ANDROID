@@ -16,9 +16,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -72,8 +74,17 @@ class UserPreferences @Inject constructor(
     /**
      * 同步读取当前 serverUrl，仅供 OkHttp Interceptor 等必须在主线程/OkHttp 线程
      * 同步获取值的场景使用。值由 init 块中的热流维护。
+     *
+     * 启动竞态兑底：热流尚未首次发射时缓存为 null，此时同步读一次 DataStore
+     * （仅在缓存未就绪时发生，首次调用后由热流接管，不再重复读）。
      */
-    fun getServerUrlBlocking(): String? = serverUrlCache.get()
+    fun getServerUrlBlocking(): String? {
+        serverUrlCache.get()?.let { return it }
+        return runBlocking {
+            dataStore.data.map { it[Keys.SERVER_URL] }.first()
+                .also { serverUrlCache.compareAndSet(null, it) }
+        }
+    }
 
     suspend fun setServerUrl(url: String) {
         dataStore.edit { it[Keys.SERVER_URL] = url }

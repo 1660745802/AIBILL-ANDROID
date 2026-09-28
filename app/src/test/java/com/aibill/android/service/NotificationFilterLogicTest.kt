@@ -125,4 +125,99 @@ class NotificationFilterLogicTest {
     fun `其他App 促销消息不放行`() {
         assertFalse(isLikelyFinancial("com.taobao.taobao", "618大促", "限时折扣快来抢购"))
     }
+
+    // === default_rule 兜底（v6：白名单外的 App 也走过滤链，2026-09 渠道适配修复） ===
+    // 镜像 NotificationMonitorService.handleNotification / SmsReceiverService.handleSms
+    // 的真实过滤链（营销词拦截 → default_rule 排除词 + payment_signal）。
+    // 注意：与真实代码保持同步，真实逻辑见 service/NotificationMonitorService.kt。
+
+    /** 与 rules.json nls.payment_signal_regex 一致的完整正则 */
+    private val paymentSignalRegexFull = Regex(
+        "[¥￥$]|RMB|CNY|人民币|元|支付|已付|付款|实付|付出|刷卡|收款|收入|到账|入账|转入|转出|转账|汇款|消费|交易|扣款|扣费|代扣|缴费|充值|提现|退款|退货|红包|余额|账单|还款|欠款|尾号|卡号|信用卡|储蓄卡|银行卡|收益|利息|分期|贷款|工资|薪资|报销"
+    )
+
+    /** 与 rules.json sms.spam_keywords 一致（子集，覆盖主要营销词） */
+    private val smsSpamKeywords = listOf(
+        "订购", "退订", "办理", "开通", "激活", "贷款", "借款",
+        "提额", "申请", "审批", "邀请", "回复R", "回复TD", "免费领", "中奖", "恭喜",
+    )
+
+    /** 与 rules.json nls.default_rule.exclude_content_contains 一致（子集） */
+    private val defaultExcludeContent = listOf(
+        "秒杀", "礼包", "可领", "待领取", "至高", "首绑", "领取", "抽奖", "优惠券", "满减",
+        "红包雨", "限时", "福利", "特惠", "立减", "补贴", "返现", "失效", "卡包",
+        "即将过期", "快过期", "再不用", "来不及", "待使用", "中奖", "恭喜", "点击链接",
+        "免费领", "贷款", "借款", "提额", "办理", "开通", "邀请",
+    )
+
+    /** 强交易特征词（镜像 NotificationRulesManager.STRONG_TXN_MARKERS） */
+    private val strongTxnMarkers = listOf(
+        "尾号", "卡号", "账户", "储蓄卡", "信用卡", "入账", "支出", "消费",
+        "扣款", "转账", "汇款", "还款", "余额",
+    )
+
+    /** 营销判定（镜像 NotificationRulesManager.isLikelyMarketing）：命中营销词但不含强交易特征才拦 */
+    private fun isLikelyMarketing(text: String): Boolean {
+        val hit = smsSpamKeywords.any { text.contains(it) } ||
+            defaultExcludeContent.any { text.contains(it) }
+        if (!hit) return false
+        return strongTxnMarkers.none { text.contains(it) }
+    }
+
+    /** SMS 渠道预筛（镜像 SmsReceiverService.handleSms：正则 + 营销词拦截） */
+    private fun passesSmsGate(text: String): Boolean {
+        if (!paymentSignalRegexFull.containsMatchIn(text)) return false
+        return !isLikelyMarketing(text)
+    }
+
+    /** NLS 渠道过滤链（镜像 handleNotification：白名单不再一票否决，走 default_rule） */
+    private fun passesNlsGate(fullText: String): Boolean {
+        if (isLikelyMarketing(fullText)) return false
+        return paymentSignalRegexFull.containsMatchIn(fullText)
+    }
+
+    @Test
+    fun `未配置银行App 动账通知走 default_rule 放行`() {
+        // 包名不含 bank/cmb/... 且不在 source_mapping 的农信/城商行/新银行
+        assertTrue(passesNlsGate("您尾号3321的储蓄卡账户10月28日14:00支出人民币350.00元"))
+    }
+
+    @Test
+    fun `未配置银行App 贷款推广被 default_rule 拦截`() {
+        assertFalse(passesNlsGate("恭喜您，预审批贷款额度10万元已到账，点击链接领取"))
+    }
+
+    @Test
+    fun `未配置App 无支付信号不放行`() {
+        assertFalse(passesNlsGate("您的包裹已发出"))
+    }
+
+    @Test
+    fun `银行短信正常放行`() {
+        assertTrue(passesSmsGate("您尾号1234储蓄卡账户10月28日支出100.00元，余额3021.55元"))
+    }
+
+    @Test
+    fun `营销短信被拦截`() {
+        assertFalse(passesSmsGate("【XX银行】恭喜您获得贷款额度10万元，回复R办理"))
+    }
+
+    @Test
+    fun `真实交易含办理字样不被误杀`() {
+        // "办理"是营销词，但含尾号/入账等强交易特征 → 交 AI 判定而非过滤层直接拦（宁可多放不漏）
+        assertTrue(passesNlsGate("您尾号1234信用卡办理的分期入账3500元"))
+        assertTrue(passesSmsGate("您尾号1234信用卡办理的分期入账3500元"))
+    }
+
+    @Test
+    fun `含强交易特征的弱营销交 AI 判定`() {
+        // 营销词 + 尾号并存时不在过滤层拦（防误杀），由 AI 兵底拒识
+        assertTrue(passesSmsGate("【工行】您尾号1234的信用卡可办理分期，点击链接"))
+    }
+
+    @Test
+    fun `短信渠道来源显示为短信`() {
+        // 真实函数（非镜像）：NotificationSourceMapping.friendlyName 的 sms: 前缀映射
+        assertEquals("短信", com.aibill.android.util.NotificationSourceMapping.friendlyName("sms:10695588"))
+    }
 }

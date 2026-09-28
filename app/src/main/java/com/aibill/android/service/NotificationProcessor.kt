@@ -93,7 +93,6 @@ class NotificationProcessor @Inject constructor(
         val categoryName: String?,
         val categoryIcon: String?,
         val description: String?,
-        // val source: String,
         val score: Int,
         val isComplete: Boolean,
         val receivedAt: Long,
@@ -138,9 +137,11 @@ class NotificationProcessor @Inject constructor(
         }
 
         val learnedCategoryId = run {
-            val keyword = (item.title.takeIf { it.isNotBlank() } ?: item.fullText.take(30))
-                .trim().lowercase()
-            categoryLearningEngine.matchCategory(keyword)
+            // 学习规则的 key 是「商家/描述」（learnFromCorrection 全部以 description 学入），
+            // 匹配必须在完整通知文本里做 contains 词边界匹配。
+            // 之前只用 title（常为"微信支付"等泛化词）匹配，学了也命中不了，
+            // 智能分类学习在通知链路形同虚设（PR review 修复）。
+            categoryLearningEngine.matchCategory(item.fullText)
         }
 
         try {
@@ -194,7 +195,8 @@ class NotificationProcessor @Inject constructor(
                 categoryId = finalCategoryId,
                 categoryName = aiItem.categoryName,
                 categoryIcon = aiItem.categoryIcon,
-                description = aiItem.description ?: aiItem.categoryName,
+                description = (aiItem.description ?: aiItem.categoryName)
+                    ?.let { sanitizeEcommerceDescription(it) },
                 score = aiItemScore(aiItem),
                 isComplete = isComplete,
                 receivedAt = item.receivedAt,
@@ -220,7 +222,32 @@ class NotificationProcessor @Inject constructor(
         val existing = scoringPool[key]
 
         if (existing != null && (candidate.receivedAt - existing.receivedAt) <= scoreWindowMs) {
-            // N秒 内同金额：比较 score，保留更好的
+            val sameSource = existing.item.channel == candidate.item.channel &&
+                existing.item.packageName == candidate.item.packageName
+            if (sameSource) {
+                // 同渠道同包名同金额 = 两笔真实交易（如 10s 内两杯 ¥15 咖啡）。
+                // 评分窗口的本意是合并「同一笔交易的跨渠道多视图」，不能把
+                // 同来源的两笔合并丢一笔：立即提交前一笔，为新交易开新窗口。
+                // （同一交易的重复通知更早会被内存 hash 去重 / DB 1s 去重拦掉）
+                appLogger.debug("NLS", "同来源同金额，视为两笔交易: amount=$key pkg=${candidate.item.packageName}")
+                scoringJobs[key]?.cancel()
+                scoringJobs.remove(key)
+                scoringPool.remove(key)
+                processorScope.launch {
+                    try {
+                        commitBest(existing)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // flush 路径异常兑底：未捕获异常会崩掉进程，必须与窗口路径同级兑底
+                        appLogger.error("NLS", "同源立即提交异常: amount=$key err=${e.message}")
+                        Timber.e(e, "NotificationProcessor same-source flush failed: amount=$key")
+                    }
+                }
+                openScoringWindow(candidate)
+                return
+            }
+            // 跨渠道同金额：同一笔交易的两个视图，比较 score 保留更好的
             if (candidate.score > existing.score) {
                 scoringPool[key] = candidate
                 appLogger.debug("NLS", "评分替换: amount=$key newScore=${candidate.score} > oldScore=${existing.score}")
@@ -229,29 +256,37 @@ class NotificationProcessor @Inject constructor(
             }
         } else {
             // 首条或超过评分窗口的新交易
-            scoringPool[key] = candidate
-            scoringJobs[key]?.cancel()
-            appLogger.debug("NLS", "评分窗口启动: amount=$key score=${candidate.score} isComplete=${candidate.isComplete} channel=${candidate.item.channel}")
-            scoringJobs[key] = processorScope.launch {
-                try {
-                    delay(scoreWindowMs)
-                    val best = scoringPool.remove(key) ?: run {
-                        appLogger.warn("NLS", "评分窗口到期但池中无数据: amount=$key")
-                        return@launch
-                    }
-                    commitBest(best)
-                } catch (e: Exception) {
-                    // PR 修复：commitBest 异常路径兜底。
-                    // 原代码若 commitBest 抛异常会被外层 catch 静默吞掉，且
-                    // scoringPool.remove(key) 在 commitBest 之前执行，所以残留
-                    // 概率极低；此处加显式清理 + 日志，确保任何 future 修改
-                    // （如 scoringPool.get/set 后再 commitBest）也不会留下脏数据。
-                    appLogger.error("NLS", "评分提交异常: amount=$key err=${e.message}")
-                    Timber.e(e, "NotificationProcessor scoring commit failed: amount=$key")
-                    scoringPool.remove(key)
-                } finally {
-                    scoringJobs.remove(key)
+            openScoringWindow(candidate)
+        }
+    }
+
+    /** 开一个新的评分窗口：N 秒后取池中候选执行 commitBest */
+    private fun openScoringWindow(candidate: ScoredCandidate) {
+        val key = candidate.amount
+        scoringPool[key] = candidate
+        scoringJobs[key]?.cancel()
+        appLogger.debug("NLS", "评分窗口启动: amount=$key score=${candidate.score} isComplete=${candidate.isComplete} channel=${candidate.item.channel}")
+        scoringJobs[key] = processorScope.launch {
+            try {
+                delay(scoreWindowMs)
+                val best = scoringPool.remove(key) ?: run {
+                    appLogger.warn("NLS", "评分窗口到期但池中无数据: amount=$key")
+                    return@launch
                 }
+                commitBest(best)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // PR 修复：commitBest 异常路径兜底。
+                // 原代码若 commitBest 抛异常会被外层 catch 静默吞掉，且
+                // scoringPool.remove(key) 在 commitBest 之前执行，所以残留
+                // 概率极低；此处加显式清理 + 日志，确保任何 future 修改
+                // （如 scoringPool.get/set 后再 commitBest）也不会留下脏数据。
+                appLogger.error("NLS", "评分提交异常: amount=$key err=${e.message}")
+                Timber.e(e, "NotificationProcessor scoring commit failed: amount=$key")
+                scoringPool.remove(key)
+            } finally {
+                scoringJobs.remove(key)
             }
         }
     }
@@ -374,7 +409,6 @@ class NotificationProcessor @Inject constructor(
         categoryName: String? = null,
         categoryIcon: String? = null,
         description: String?,
-        // source: String,
     ) {
         val clientId = UUID.randomUUID().toString()
         val now = LocalDate.now().toString()
@@ -437,13 +471,6 @@ class NotificationProcessor @Inject constructor(
     /**
      * AI 有结果但信息不完整 → 进待审池 + 发确认通知
      */
-    private suspend fun insertPendingReview(
-        item: Item,
-        aiItem: AiParsedItemDto,
-    ) {
-        insertPendingReview(item, aiItem.amount, aiItem.type, aiItem.categoryName, aiItem.description ?: aiItem.categoryName)
-    }
-
     private suspend fun insertPendingReview(
         item: Item,
         amount: Int,

@@ -94,6 +94,22 @@ class NotificationRulesManager @Inject constructor(
      */
     fun getRules(): NotificationRules = getSnapshot().rules
 
+    /**
+     * 营销内容判定（NLS/SMS 共用）：命中营销词表（sms.spam_keywords +
+     * default_rule 排除词）且**不含强交易特征**时才判营销。
+     *
+     * 设计原则与 isLikelyFinancial 一致：极保守，宁可多放不漏。
+     * 形似真实交易（尾号/卡号/入账…）的文本即使含"办理/开通/贷款"等词
+     * 也交由 AI 判定，避免误杀如"您尾号1234信用卡办理的分期入账3500元"。
+     */
+    fun isLikelyMarketing(text: String): Boolean {
+        val rules = getRules()
+        val hitMarketingWord = rules.sms.spamKeywords.any { text.contains(it) } ||
+            rules.nls.defaultExcludeContent.any { text.contains(it) }
+        if (!hitMarketingWord) return false
+        return STRONG_TXN_MARKERS.none { text.contains(it) }
+    }
+
     private fun loadInitialRules(): RulesSnapshot {
         val json = prefs.getString(KEY_JSON, null)
         if (json != null) {
@@ -252,6 +268,15 @@ class NotificationRulesManager @Inject constructor(
     companion object {
         private const val KEY_JSON = "notification_rules_json"
         private const val KEY_ETAG = "notification_rules_etag"
+
+        /**
+         * 强交易特征词：命中任一即视为"形似真实交易"，营销词不再一票否决，
+         * 交 AI 判定。故意不含"到账/收入"（营销文案爱用"额度已到账"）。
+         */
+        private val STRONG_TXN_MARKERS = listOf(
+            "尾号", "卡号", "账户", "储蓄卡", "信用卡", "入账", "支出", "消费",
+            "扣款", "转账", "汇款", "还款", "余额",
+        )
     }
 
     /**

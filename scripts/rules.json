@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "rules": {
     "nls": {
       "payment_signal_regex": "[¥￥$]|RMB|CNY|人民币|元|支付|已付|付款|实付|付出|刷卡|收款|收入|到账|入账|转入|转出|转账|汇款|消费|交易|扣款|扣费|代扣|缴费|充值|提现|退款|退货|红包|余额|账单|还款|欠款|尾号|卡号|信用卡|储蓄卡|银行卡|收益|利息|分期|贷款|工资|薪资|报销",
@@ -85,10 +85,15 @@
       "com.oppo.mms": "短信",
       "com.vivo.mms": "短信",
       "com.icbc": "工商银行",
+      "com.icbc.im": "工商银行",
+      "com.icbc.icbc": "工商银行",
       "com.chinamworld.bocmbci": "中国银行",
       "com.ccb.start": "建设银行",
       "com.abchina.abc": "农业银行",
-      "com.chinamworld.main": "交通银行",
+      "com.android.bankabc": "农业银行",
+      "com.chinamworld.main": "建设银行",
+      "com.bankcomm": "交通银行",
+      "com.bankcomm.Bankcomm": "交通银行",
       "com.psbc.mbank": "邮储银行",
       "cmb.pb": "招商银行",
       "com.cmbchina.ccd.pluto.cmbActivity": "招行信用卡",

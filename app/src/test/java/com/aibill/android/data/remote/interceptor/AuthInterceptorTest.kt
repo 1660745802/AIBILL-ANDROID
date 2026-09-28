@@ -49,13 +49,13 @@ class AuthInterceptorTest {
         val response = interceptor.intercept(chain)
 
         assertEquals(200, response.code)
-        // 没调 clearToken、没 emit
-        verify(exactly = 0) { tokenManager.clearToken() }
+        // 没调 clearSession、没 emit
+        verify(exactly = 0) { tokenManager.clearSession() }
         verify(exactly = 0) { authEventBus.emit(any()) }
     }
 
     @Test
-    fun `401 response - clearToken then emit TokenExpired, in that order`() {
+    fun `401 response - clearSession then emit TokenExpired, in that order`() {
         val request = Request.Builder().url("https://api.example.com/transactions").build()
         every { tokenManager.getToken() } returns "jwt-abc"
         val chain = makeChain(request, 401)
@@ -65,7 +65,7 @@ class AuthInterceptorTest {
         // 顺序很关键：先清 token 再 emit
         // 否则 UI 立刻重新发请求时会带着已过期的 token
         verifyOrder {
-            tokenManager.clearToken()
+            tokenManager.clearSession()
             authEventBus.emit(AuthEvent.TokenExpired)
         }
     }
@@ -79,7 +79,7 @@ class AuthInterceptorTest {
         interceptor.intercept(chain)
 
         // 即便没 token，401 也要清（防止 race：旧 token 刚被外部清掉，401 来时 getToken 已 null）
-        verify(exactly = 1) { tokenManager.clearToken() }
+        verify(exactly = 1) { tokenManager.clearSession() }
         verify(exactly = 1) { authEventBus.emit(AuthEvent.TokenExpired) }
     }
 

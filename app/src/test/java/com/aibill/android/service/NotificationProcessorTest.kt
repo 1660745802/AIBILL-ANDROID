@@ -323,7 +323,6 @@ class NotificationProcessorTest {
 
         val baseTime = System.currentTimeMillis()
 
-        // First NLS notification from wechat
         processor.process(makeItem(
             packageName = "com.tencent.mm",
             fullText = "支付成功 ¥15.00 咖啡",
@@ -332,12 +331,9 @@ class NotificationProcessorTest {
         ))
         testDispatcher.scheduler.runCurrent()
 
-        // Wait for first to commit
         advanceTimeBy(11_000)
         testDispatcher.scheduler.runCurrent()
 
-        // Second NLS notification from same wechat (same channel, same package)
-        // This represents a genuinely different transaction
         processor.process(makeItem(
             packageName = "com.tencent.mm",
             fullText = "支付成功 ¥15.00 咖啡",
@@ -349,7 +345,44 @@ class NotificationProcessorTest {
         advanceTimeBy(11_000)
         testDispatcher.scheduler.runCurrent()
 
-        // Both should be inserted (same channel + same package = not deduped)
+        coVerify(exactly = 2) { pendingTransactionDao.insert(any()) }
+    }
+
+    @Test
+    @DisplayName("6b. 同金额同渠道同包名 10s 内 → 评分窗口立即提交前一笔，两笔都入库（不合并丢账）")
+    fun sameAmountSameSourceWithinWindow_bothInsert() = runTest(testDispatcher) {
+        val aiItem = makeAiItem(amount = 1500, description = "咖啡")
+        coEvery { aiApi.parse(any()) } returns makeApiResponse(aiItem)
+        setupValidatorValid()
+        coEvery { notificationRecordDao.insert(any()) } returns 1L
+        coEvery { notificationRecordDao.findRecentConfirmedFromOtherChannel(any(), any(), any()) } returns null
+
+        val baseTime = System.currentTimeMillis()
+
+        processor.process(makeItem(
+            packageName = "com.tencent.mm",
+            fullText = "支付成功 ¥15.00 咖啡",
+            channel = NotificationProcessor.Channel.NLS,
+            receivedAt = baseTime,
+        ))
+        testDispatcher.scheduler.runCurrent()
+
+        // 同渠道同包名同金额，2s 后再来一笔真实交易：前一笔应被立即 flush 提交
+        processor.process(makeItem(
+            packageName = "com.tencent.mm",
+            fullText = "支付成功 ¥15.00 咖啡",
+            channel = NotificationProcessor.Channel.NLS,
+            receivedAt = baseTime + 2_000,
+        ))
+        testDispatcher.scheduler.runCurrent()
+
+        // 第一笔（立即 flush）已入库
+        coVerify(atLeast = 1) { pendingTransactionDao.insert(any()) }
+
+        // 第二笔走完自己的评分窗口后入库，共两笔
+        advanceTimeBy(11_000)
+        testDispatcher.scheduler.runCurrent()
+
         coVerify(exactly = 2) { pendingTransactionDao.insert(any()) }
     }
 

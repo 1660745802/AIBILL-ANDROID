@@ -12,7 +12,6 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -166,8 +165,15 @@ class NotificationMonitorService : NotificationListenerService() {
     }
 
     override fun onDestroy() {
+        super.onDestroy()
         isConnected = false
-        serviceScope.cancel()
+        // ★ 切勿在这里 cancel serviceScope！
+        // serviceScope 是进程级 @ApplicationScope（Hilt @Singleton，全 App 共享：
+        // SMS/A11Y/外部 Intent/小组件等所有协程都跑在它上面）。
+        // NLS 被系统 requestRebind 销毁重建后，cancel 会让整个 App 的协程
+        // 静默失效（launch 不执行也不抛异常）：通知零日志、AI 零调用，
+        // 直到进程被杀才恢复。（2026-09 回归根因，与 PaymentAccessibilityService
+        // 的处理保持一致：进程级 Scope 由 CoroutineScopeModule 持有，不在 Service 里 cancel。）
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -193,9 +199,12 @@ class NotificationMonitorService : NotificationListenerService() {
         // 按需刷新规则（代际无变化则跳过）
         refreshRulesIfNeeded()
 
+        // v6 default_rule 的设计承诺："新增 App 默认自动生效，无需配置"。
+        // 白名单不再一票否决——未配置包名（农信/城商行/新银行等）继续走
+        // 营销词排除 + payment_signal 正则 + AI 兜底的过滤链，
+        // 白名单仅用于日志观测（区分已知/未知来源）。
         if (!rulesManager.isKnownOrBankPackage(packageName)) {
-            appLogger.debug("NLS", "包名不在白名单: pkg=$packageName")
-            return
+            appLogger.debug("NLS", "包名不在白名单，走 default_rule 兜底: pkg=$packageName")
         }
 
         // 2. 提取通知文本
@@ -280,7 +289,8 @@ class NotificationMonitorService : NotificationListenerService() {
         }
         // 优先2：default_rule（大多数App走这套：营销排除 + payment_signal 放行）
         if (defaultExcludeContent.isNotEmpty()) {
-            if (defaultExcludeContent.any { fullText.contains(it) }) return false
+            // 营销词命中但含强交易特征（尾号/卡号/入账…）时交 AI 判定（宁可多放不漏）
+            if (rulesManager.isLikelyMarketing(fullText)) return false
             return paymentSignalRegex.containsMatchIn(fullText)
         }
         // 回退：旧硬编码逻辑（default_rule 也为空时，向后兼容）
@@ -335,6 +345,6 @@ class NotificationMonitorService : NotificationListenerService() {
      * 判断短信是否是营销/广告/订购类（含金额关键词但不是真实账务）。
      */
     private fun isLikelySpamSms(text: String): Boolean {
-        return smsSpamKeywords.any { text.contains(it) }
+        return rulesManager.isLikelyMarketing(text)
     }
 }

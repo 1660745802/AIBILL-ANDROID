@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Binder
-import androidx.core.content.ContextCompat
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.di.ApplicationScope
@@ -79,14 +78,18 @@ class ExternalActionReceiver : BroadcastReceiver() {
         }
 
         if (autoConfirm) {
-            // ★ 安全检查：静默入账仅同签名 App 可用
-            val granted = ContextCompat.checkSelfPermission(
-                context, PERMISSION_QUICK_RECORD
+            // ★ 安全检查：静默入账仅同签名 App 可用。
+            // 必须校验**调用方** UID 是否持有 signature 权限，不能用
+            // ContextCompat.checkSelfPermission（那只检查自己进程，而本 App 自己
+            // 声明了 uses-permission，永远 GRANTED，等于没有防护）。
+            val callingUid = Binder.getCallingUid()
+            val granted = context.checkPermission(
+                PERMISSION_QUICK_RECORD, callingUid, -1
             ) == PackageManager.PERMISSION_GRANTED
             if (!granted) {
                 Timber.w(
                     "ExternalActionReceiver: 拒绝静默入账，" +
-                        "调用方未持有 signature 权限 PERMISSION_QUICK_RECORD"
+                        "调用方(uid=$callingUid)未持有 signature 权限 PERMISSION_QUICK_RECORD"
                 )
                 return
             }

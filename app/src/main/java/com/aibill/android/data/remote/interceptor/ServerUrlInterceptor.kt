@@ -24,7 +24,9 @@ class ServerUrlInterceptor @Inject constructor(
         val originalRequest = chain.request()
         val originalUrl = originalRequest.url
 
-        // 从缓存原子读 serverUrl（不再 runBlocking DataStore）
+        // 从缓存原子读 serverUrl（不 runBlocking DataStore）
+        // 注：启动竞态兜底在 UserPreferences.getServerUrlBlocking() 真实实现内，
+        // 此处不做任何阻塞读取（避免污染单测环境）
         val serverUrl = userPreferences.getServerUrlBlocking()
 
         if (serverUrl.isNullOrBlank()) {
@@ -41,20 +43,19 @@ class ServerUrlInterceptor @Inject constructor(
             return chain.proceed(originalRequest)
         }
 
-        // 提取原始请求中的路径部分（去掉占位 base 的 /api/ 前缀）
+        // 构建新的 URL：保留 parsedBaseUrl 的完整路径，再追加原始请求路径
+        val basePath = parsedBaseUrl.encodedPath.trimEnd('/')
+        // 仅当用户配置的 base 路径已包含 api 段时才去掉占位路径的 "api" 前缀
+        // （防 /api/api/... 重复）；否则必须保留：后端契约是 /api/*，
+        // README 示例 serverUrl 不带 /api，无条件 drop 会把请求打到
+        // /auth/login 导致全部 404（历史坑，被测试用例固化）。
+        val baseHasApi = basePath.split("/").any { it.equals("api", ignoreCase = true) }
         val pathSegments = originalUrl.pathSegments
-        // 原始 URL 类似 http://localhost:3000/api/auth/login
-        // pathSegments = ["api", "auth", "login"]
-        // 需要去掉占位 baseUrl 中的 "api" 前缀，只保留 "auth/login"
-        // 因为用户配置的 serverUrl 已包含 /api
-        val relativePath = if (pathSegments.firstOrNull() == "api") {
+        val relativePath = if (baseHasApi && pathSegments.firstOrNull() == "api") {
             pathSegments.drop(1).joinToString("/")
         } else {
             pathSegments.joinToString("/")
         }
-
-        // 构建新的 URL：保留 parsedBaseUrl 的完整路径，再追加 relativePath
-        val basePath = parsedBaseUrl.encodedPath.trimEnd('/')
         val newUrl = parsedBaseUrl.newBuilder()
             .encodedPath("$basePath/$relativePath")
             .query(originalUrl.query)
