@@ -77,6 +77,8 @@ class TransactionsViewModel @Inject constructor(
     sealed class UiEvent {
         data class ShowToast(val message: String) : UiEvent()
         data object ShowDeleteUndo : UiEvent()
+        /** 删除成功：触发流水列表刷新（Pager 不会自动感知删除，需要手动调 refresh()） */
+        data object RefreshList : UiEvent()
     }
 
     private val _uiState = MutableStateFlow(TransactionsUiState())
@@ -328,12 +330,14 @@ class TransactionsViewModel @Inject constructor(
 
     fun onDeleteTransaction(id: Int) {
         viewModelScope.launch {
-            // 乐观更新：本地立即移除，Paging 自动重载
-            lastDeletedTransaction = null
+            // 软删除（billserver 移到回收站，本地/远端缓存不自动感知）
             when (val result = transactionRepository.deleteTransaction(id)) {
                 is Result.Success -> {
                     _uiEvent.emit(UiEvent.ShowDeleteUndo)
-                    // PagingSource 自动感知（删除后列表会变）
+                    // PR 修复：billserver 软删除后 Pager 不会自动 invalidate，
+                    // 需主动 refresh 让 LazyPagingItems 重新从 PagingSource 加载，
+                    // 删除的条目才会从 UI 上消失。
+                    _uiEvent.emit(UiEvent.RefreshList)
                 }
                 is Result.Error -> {
                     Timber.e("删除失败: ${result.message}")

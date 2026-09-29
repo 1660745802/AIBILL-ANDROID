@@ -72,6 +72,10 @@ fun TransactionsScreen(
                         viewModel.undoDelete()
                     }
                 }
+                is TransactionsViewModel.UiEvent.RefreshList ->
+                    // PR 修复：billserver 软删除后 Pager 不会自动 refresh
+                    // （PagingSource 只读 GET，没有外部变更通知机制）
+                    pagingItems.refresh()
             }
         }
     }
