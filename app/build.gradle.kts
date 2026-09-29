@@ -26,8 +26,8 @@ android {
         applicationId = "com.aibill.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "1.5.10"
+        versionCode = 18
+        versionName = "1.5.11"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
