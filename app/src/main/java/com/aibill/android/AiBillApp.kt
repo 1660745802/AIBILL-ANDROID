@@ -5,7 +5,6 @@ import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.aibill.android.di.ApplicationScope
 import com.aibill.android.service.A11yHealthCheckWorker
-import com.aibill.android.service.InsightWorker
 import com.aibill.android.service.NlsHealthCheckWorker
 import com.aibill.android.service.NotificationRulesManager
 import com.aibill.android.service.RulesSyncWorker
@@ -43,7 +42,6 @@ class AiBillApp : Application(), Configuration.Provider {
     }
 
     private fun scheduleWorkers() {
-        InsightWorker.schedule(this)
         NlsHealthCheckWorker.schedule(this)
         A11yHealthCheckWorker.schedule(this)
         RulesSyncWorker.schedule(this)
