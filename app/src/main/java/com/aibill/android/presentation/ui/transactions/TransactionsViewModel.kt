@@ -154,7 +154,8 @@ class TransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             when (val result = categoryRepository.getCategoriesOnce()) {
                 is Result.Success -> _uiState.update { it.copy(categories = result.data) }
-                else -> Unit
+                is Result.Error -> Timber.w("加载分类失败: ${result.message}")
+                is Result.Loading -> Unit
             }
         }
     }
@@ -328,8 +329,18 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
-    fun onDeleteTransaction(id: Int) {
+    /**
+     * 删除事务。保存被删的 [Transaction] 以供 [undoDelete] 恢复。
+     * 只在 id 非空时发送请求（本地的 pending 记录可能还没有 server id）。
+     */
+    fun onDeleteTransaction(transaction: Transaction) {
+        lastDeletedTransaction = transaction
         viewModelScope.launch {
+            val id = transaction.id ?: run {
+                lastDeletedTransaction = null
+                _uiEvent.emit(UiEvent.ShowToast("该记录尚未同步，无法删除"))
+                return@launch
+            }
             // 软删除（billserver 移到回收站，本地/远端缓存不自动感知）
             when (val result = transactionRepository.deleteTransaction(id)) {
                 is Result.Success -> {
@@ -340,6 +351,7 @@ class TransactionsViewModel @Inject constructor(
                     _uiEvent.emit(UiEvent.RefreshList)
                 }
                 is Result.Error -> {
+                    lastDeletedTransaction = null
                     Timber.e("删除失败: ${result.message}")
                     _uiEvent.emit(UiEvent.ShowToast("删除失败: ${result.message}"))
                 }
@@ -350,6 +362,7 @@ class TransactionsViewModel @Inject constructor(
 
     fun undoDelete() {
         val transaction = lastDeletedTransaction ?: return
+        lastDeletedTransaction = null   // 立即清掉，防止重复撤销
         viewModelScope.launch {
             val result = if (transaction.id != null) {
                 transactionRepository.restoreTransaction(transaction.id)
@@ -357,8 +370,13 @@ class TransactionsViewModel @Inject constructor(
                 transactionRepository.createTransactions(listOf(transaction)).map { Unit }
             }
             when (result) {
-                is Result.Success -> _uiEvent.emit(UiEvent.ShowToast("已恢复"))
-                is Result.Error -> _uiEvent.emit(UiEvent.ShowToast("撤销失败: ${result.message}"))
+                is Result.Success -> {
+                    _uiEvent.emit(UiEvent.ShowToast("已恢复"))
+                    _uiEvent.emit(UiEvent.RefreshList)
+                }
+                is Result.Error -> {
+                    _uiEvent.emit(UiEvent.ShowToast("撤销失败: ${result.message}"))
+                }
                 is Result.Loading -> Unit
             }
         }

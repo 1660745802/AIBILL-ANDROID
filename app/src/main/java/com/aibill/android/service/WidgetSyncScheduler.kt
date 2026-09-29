@@ -13,9 +13,10 @@ import javax.inject.Singleton
 /**
  * Widget 同步调度器。**ViewModel 通过此对象更新 Widget，无需持有 Application/Context**。
  *
- * 内部维护独立的 [scope]，调用 [scheduleMonthlyUpdate] 时 fire-and-forget。
- * 与 [com.aibill.android.di.ApplicationScope] 不同的是：这里用普通 SupervisorJob，
- * 因为 Widget 更新失败不应影响应用其他部分。
+ * 自建 SupervisorJob + Dispatchers.IO：Widget 同步逻辑独立、不与其他模块协程共享，
+ * 保持 fire-and-forget 语义。子 job 失败已在调用点 try-catch + Timber.e 兜底，
+ * 进程退出时随 JVM 释放。未走 @ApplicationScope 注入是为了减少与全局协程的耦合、
+ * 保持该组件内聚——测试时通过 mock WidgetDataUpdater 间接覆盖即可。
  */
 @Singleton
 class WidgetSyncScheduler @Inject constructor(

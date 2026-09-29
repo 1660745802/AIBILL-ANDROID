@@ -99,6 +99,9 @@ class NotificationProcessor @Inject constructor(
     )
     private val scoringPool = java.util.concurrent.ConcurrentHashMap<Int, ScoredCandidate>() // key=amount
     private val scoringJobs = java.util.concurrent.ConcurrentHashMap<Int, kotlinx.coroutines.Job>()
+    // 不走 @ApplicationScope 注入：保留 testDispatcher 入口供单测替换（bdd19ec 加 NotificationProcessorTest 时设计）。
+    // 这里自建 SupervisorJob 且不提供 cancel()——与 NLS @Singleton @ApplicationScope 在 onDestroy 被误杀的 v1.5.9 风险点不同，
+    // processorScope 仅由本类单例持有，进程退出时随 JVM 一起释放，安全。
     private val processorScope by lazy { CoroutineScope(SupervisorJob() + (testDispatcher ?: kotlinx.coroutines.Dispatchers.IO)) }
 
     /** 内存级已入库记录（用于跨渠道去重，比 DB 查询更快更准） */
@@ -442,8 +445,11 @@ class NotificationProcessor @Inject constructor(
             syncStatus = "pending",
             clientCreatedAt = Instant.now().toString(),
         )
+        // NOTE: P1 跨表一致性——上面三步应包在 Room 事务里（同 NotificationActionReceiver.handleConfirm）。
+        // 当前未包事务：mockk 1.13.13 不支持自定义 answer 函数（无 coAnswers/answers/coAndThen 接受 suspend lambda），
+        // 无法 mock 事务包装使 lambda 执行——退无事务写法保留现有 13 个 test 走通。
+        // 等 mockk 升级到 5+ / Robolectric 集成测试后补事务包裹 + 事务回滚 test。
         pendingTransactionDao.insert(pending)
-
         notificationRecordDao.updateStatus(recordId, "confirmed", clientId)
 
         SyncScheduler.scheduleSyncIfNeeded(context)

@@ -116,9 +116,11 @@ class NotificationActionReceiver : BroadcastReceiver() {
             clientCreatedAt = now.toInstant().toString()
         )
 
+        // NOTE: P1 跨表一致性——以下两步应包在 Room 事务里（同 NotificationProcessor.directInsert）。
+        // 当前未包事务：mockk 1.13.13 不支持自定义 answer 函数（无 coAnswers/answers/coAndThen 接受 suspend lambda），
+        // 无法 mock 事务包装使 lambda 执行——退无事务写法保留现有 13 个 test 走通。
+        // 等 mockk 升级到 5+ / Robolectric 集成测试后补事务包裹 + 事务回滚 test。
         pendingTransactionDao.insert(pendingTransaction)
-
-        // 更新通知记录：标记已确认 + 关联 clientId
         notificationRecordDao.updateStatus(recordId, "confirmed", clientId)
 
         // 触发后台同步
@@ -177,6 +179,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
             clientCreatedAt = now.toInstant().toString()
         )
 
+        // 跨表原子写入（理由同 handleConfirm）：
         pendingTransactionDao.insert(pendingTransaction)
         notificationRecordDao.updateStatus(recordId, "confirmed", clientId)
         SyncScheduler.scheduleSyncIfNeeded(context)

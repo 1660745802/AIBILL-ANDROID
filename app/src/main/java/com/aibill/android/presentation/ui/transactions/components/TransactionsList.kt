@@ -43,7 +43,7 @@ private class DayGroup(val date: String, val items: List<Transaction>)
 fun TransactionsPagingList(
     pagingItems: LazyPagingItems<Transaction>,
     listState: LazyListState,
-    onDelete: (Int) -> Unit,
+    onDelete: (Transaction) -> Unit,
     onItemClick: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -93,7 +93,7 @@ fun TransactionsPagingList(
                 val transaction = group.items[offset]
                 TransactionItem(
                     transaction = transaction,
-                    onDelete = onDelete,
+                    onDelete = { onDelete(transaction) },
                     onClick = { transaction.id?.let { onItemClick(it) } },
                 )
                 HorizontalDivider(
