@@ -14,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -23,6 +24,7 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import com.aibill.android.presentation.ui.transactions.components.TransactionsFilters
 import com.aibill.android.presentation.ui.transactions.components.TransactionsFiltersCallbacks
 import com.aibill.android.presentation.ui.transactions.components.TransactionsPagingList
+import kotlinx.coroutines.launch
 import java.time.YearMonth
 
 /**
@@ -56,22 +58,32 @@ fun TransactionsScreen(
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     val pagingItems = viewModel.transactionsPager.collectAsLazyPagingItems()
+    // 绑定到 Composable 生命周期的 scope，用于在 Flow.collect 的 inline lambda 中
+    // 启动子协程（collect 的 lambda 不是 CoroutineScope 接收者，launch 必须挂在外部 scope）。
+    // 同时确保 screen 离开 composition 时未完成的 snackbar 子协程被取消，UI 不会泄漏。
+    val snackbarScope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         viewModel.uiEvent.collect { event ->
             when (event) {
                 is TransactionsViewModel.UiEvent.ShowToast ->
-                    snackbarHostState.showSnackbar(event.message)
-                is TransactionsViewModel.UiEvent.ShowDeleteUndo -> {
-                    val result = snackbarHostState.showSnackbar(
-                        message = "已删除",
-                        actionLabel = "撤销",
-                        withDismissAction = true,
-                    )
-                    if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                        viewModel.undoDelete()
+                    // 必须在子协程中调用 showSnackbar——否则 collect 会被无限期挂起
+                    // （actionLabel 非空时 SnackbarDuration.Indefinite），阻塞后续
+                    // RefreshList 事件，导致删除后页面不刷新。
+                    snackbarScope.launch {
+                        snackbarHostState.showSnackbar(event.message)
                     }
-                }
+                is TransactionsViewModel.UiEvent.ShowDeleteUndo ->
+                    snackbarScope.launch {
+                        val result = snackbarHostState.showSnackbar(
+                            message = "已删除",
+                            actionLabel = "撤销",
+                            withDismissAction = true,
+                        )
+                        if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                            viewModel.undoDelete()
+                        }
+                    }
                 is TransactionsViewModel.UiEvent.RefreshList ->
                     // PR 修复：billserver 软删除后 Pager 不会自动 refresh
                     // （PagingSource 只读 GET，没有外部变更通知机制）
