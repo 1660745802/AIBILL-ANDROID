@@ -108,12 +108,12 @@ fun ManualRecordScreen(
                 )
 
                 // 金额输入（视觉焦点，大字）
+                // PR 修复：AmountInput 改为 String 受控，直接吃 onAmountTextChanged；
+                // 旧实现把 amountFen → "%.2f" 字符串回写到 TextField，导致键入 "5" 后
+                // 被强制补零为 "5.00"，光标跳到末尾无法继续输入。
                 AmountInput(
-                    amountFen = state.amountFen,
-                    onAmountChange = { fen ->
-                        // 受控 amountFen + amountText 双向：金额变化时回写字符串以保证外部逻辑兼容
-                        viewModel.onAmountTextChanged(formatFenToText(fen))
-                    },
+                    value = state.amountText,
+                    onValueChange = viewModel::onAmountTextChanged,
                     type = state.type,
                 )
 
@@ -202,9 +202,6 @@ fun ManualRecordScreen(
         }
     }
 }
-
-private fun formatFenToText(fen: Int): String =
-    if (fen <= 0) "" else "%.2f".format(fen / 100.0)
 
 @Composable
 private fun SuccessOverlay() {
