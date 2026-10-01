@@ -1,8 +1,22 @@
-# 通知监听 v3 架构
+# 通知监听架构（v3 设计 + v4 现状）
 
 > 项目核心差异化能力。**所有接入通知记账功能的开发者必读**。
 >
-> 三渠道（通知 + 无障碍 + SMS）统一入 `NotificationBuffer` → 跨渠道去重 → AI 解析 → 入库。
+> 三渠道（通知 + 无障碍 + SMS）统一入 `NotificationProcessor` → 评分窗口 → 跨渠道去重 → AI 解析 → 入库。
+
+## 〇、v4 相对 v3 的变更（先读这段，否则下面 L1-L4 会误导你）
+
+| # | 变更 | 原因 |
+|---|---|---|
+| 1 | **删除 `NotificationBuffer` 缓冲层**（原 L2），改为 `NotificationProcessor` 内的**评分窗口**（默认 10s，按 `amount` 做 key） | v3 把多渠道通知合并成一条长文本再喂 AI，A11Y 全支付页 + NLS 短确认能合出 800 字把后端打挂。v4 改为**每渠道独立调 AI**，再用评分窗口挑最优 |
+| 2 | 去重从「入 AI **之前**」改为「AI 结果出来**之后**按 (amount, type) 判重」 | v3 用字符级文本去重，「¥ vs ￥」就漏判；v4 用语义级金额判重，60s 窗口 |
+| 3 | 去重**同时**做内存级 + DB 级双层，DB 兜底跨渠道 | 三渠道可能并发到达，`insertMutex` 串行化 dedup-check + insert 防双写 |
+| 4 | 同渠道同包名同金额在窗口内 = **两笔真实交易**，立即提交前一笔并开新窗口 | 不能把「10 秒内两杯 ¥15 咖啡」合并丢一笔 |
+| 5 | 新增电商描述脱敏（拼多多/淘宝/京东… → "XX购物"） | 避免具体商品名进账单 |
+| 6 | 分享入口只支持 `text/plain`，**没有 OCR** | 曾计划接 ML Kit，未落地 |
+| 7 | 金额上限 = **10 万元**（10,000,000 分），与云控 `processor.max_amount_cents` 一致 | 旧文档写的「1 万元」是错的 |
+
+> 下文 L1/L3/L4 的描述与现状基本一致；**L2（缓冲去重）已被 v4 的评分窗口取代**。
 
 ## 一、数据流总览（L1-L4 分层）
 
@@ -61,7 +75,7 @@
 | 通知监听 | `NotificationListenerService` | 微信/支付宝/银行付款通知 | 通知使用权 |
 | 短信读取 | `BroadcastReceiver(RECEIVE_SMS)` | 银行卡消费短信 | 短信权限 |
 | 无障碍服务 | `PaymentAccessibilityService` | 支付结果页（覆盖无通知场景） | 无障碍权限 |
-| 分享 OCR | `ShareReceiverActivity` + ML Kit | 用户主动截图/分享补录 | 无 |
+| 分享文本 | `ShareReceiverActivity`（`text/plain`） | 用户主动分享文本补录 | 无 |
 
 ## 四、分类学习（CategoryLearningEngine）
 
@@ -74,7 +88,7 @@
 
 | 规则 | 校验内容 |
 |---|---|
-| 金额范围 | 0 < amount ≤ 1,000,000 分（1 万元） |
+| 金额范围 | 0 < amount ≤ 10,000,000 分（**10 万元**） |
 | 类型合法 | expense / income / transfer |
 | 分类存在 | categoryId 在本地分类表中 |
 | 描述长度 | ≤ 200 字符 |
@@ -83,13 +97,7 @@
 
 ## 六、权限引导
 
-| 权限 | 可检测 | 展示方式 |
-|---|---|---|
-| 通知监听 | ✓ | ✓/✗ + "去开启" |
-| 通知弹窗 | ✓ | ✓/✗ + "去开启" |
-| 电池优化白名单 | ✓ | ✓/✗ + "去设置" |
-| 无障碍服务 | ✗ | 常驻"去设置"按钮 |
-| 后台自启动 | ✗ | 常驻"去设置"按钮 |
+检测项与跳设置页逻辑见 [BatteryOptimizationHelper.kt](../app/src/main/java/com/aibill/android/util/BatteryOptimizationHelper.kt)，UI 渲染见 [PermissionGuideScreen.kt](../app/src/main/java/com/aibill/android/presentation/ui/settings/PermissionGuideScreen.kt)。
 
 ---
 

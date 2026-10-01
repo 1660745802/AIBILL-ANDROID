@@ -6,7 +6,7 @@
 > 发布流程 → [RELEASE.md](./RELEASE.md)
 >
 > 对应代码：`app/src/main/java/com/aibill/android/`
-> 适用版本：versionCode 6 / versionName 1.4.0 / minSdk 26 / targetSdk 35
+> 适用版本：versionCode 19 / versionName 1.5.12 / minSdk 26 / targetSdk 35
 
 ---
 
@@ -84,10 +84,9 @@ app/src/main/java/com/aibill/android/
 │   ├── navigation/              # 14 条类型安全路由 + NavHost + BottomNavBar
 │   ├── theme/                   # Theme/Type/Shape/AppButtons
 │   ├── widget/                  # Glance 桌面小组件（QuickRecord/MonthlySummary）
-│   ├── utils/                   # AmountUtils（分↔元）
 │   └── ui/                      # 10 个模块（home/transactions/statistics/...）
 ├── service/                     # 后台服务（20 个：通知/同步/无障碍/小组件/...）
-└── util/                        # NetworkMonitor / AppLogger / 通知解析 / 银行短信正则 / AI 校验
+└── util/                        # NetworkMonitor / AppLogger / AmountUtils / 通知解析 / AI 校验
 ```
 
 ### 2.2 14 条类型安全路由
@@ -214,10 +213,10 @@ GET    https://api.github.com/repos/<owner>/<repo>/releases/latest   # GithubRel
 | 10 | 图标方案 | Material Icons 名称映射 | 服务端返回 icon 字符串 |
 | 11 | 分页策略 | Paging 3 + page/page_size | 与 LazyColumn 集成 |
 | 12 | Room Migration | AutoMigration + schema export | 简单变更自动，复杂手写 |
-| 13 | 网络状态 | NetworkCallback | 网络恢复触发 WorkManager |
+| 13 | 网络状态 | NetworkCallback（`NetworkMonitor`） | 网络「离线→在线」跳变时排 SyncWorker |
 | 14 | 状态恢复 | SavedStateHandle | 进程死亡恢复筛选/滚动 |
 | 15 | 一次性事件 | Channel → receiveAsFlow | 不被 Compose 重组重复消费 |
-| 16 | 图表库 | Vico | Compose 原生，Material 3 |
+| 16 | 图表库 | 原生 Canvas 手绘 | 避免引入 Vico 等重型图表库（见 StatsTrendChart.kt）；APK 体积敏感 |
 | 17 | 日期处理 | java.time | API 26+，无额外依赖 |
 | 18 | 构建类型 | debug / release（R8 + ProGuard） | Release 体积优化 |
 | 19 | ProGuard | 保留 DTO/Entity/Retrofit 接口 | Moshi codegen 需保留 @Json |
@@ -307,7 +306,7 @@ sealed class AuthEvent {
             ├─ YES → 直接调 API 入库 + 写本地缓存 (syncStatus = "synced")
             └─ NO  → 存 Room (syncStatus = "pending", 生成 client_id)
                               ↓
-                    网络恢复 → WorkManager 触发 SyncWorker
+                    NetworkMonitor 监听到「离线→在线」→ 排入 SyncWorker
                               ↓
                     逐条 POST /api/transactions (幂等)
                               ↓
@@ -319,20 +318,59 @@ sealed class AuthEvent {
 - `@HiltWorker` + `@AssistedInject`
 - 逐条同步而非批量，避免部分失败导致已成功的被重试
 - `MAX_RETRY_COUNT = 5`，超过标记 `failed` 不再处理
-- 401 → `Result.failure()` 中断，等待用户重新登录
+- 401 → 标 `failed`（`last_error = "Token expired, need re-login"`）+ `Result.failure()` 中断，等待用户重新登录
 - 网络异常 → 增加 `retryCount`，让 WorkManager 自动重试
 - 异常返回 `Result.retry()` 由 WorkManager 指数退避（10s 起）
 
+**`failed` 是终态**：`getAllPending()` 只捞 `sync_status = 'pending'`，所以 `failed` 记录
+不会被再次同步。因此「401」这种**可恢复**失败必须在用户重新登录时显式重置，
+否则离线记账会静默卡死在本地（详见 §6.4）。
+
+### 6.4 登录 / 换号时的本地数据处置（数据安全关键路径）
+
+`login()` 在 `saveSession()` **之前**读取旧 `userId`（`TokenManager.getUserId()`），
+据此分三条路径：
+
+| 场景 | 判定 | pending 队列 | categories/accounts/notifications |
+|---|---|---|---|
+| **同账号重登**（Token 过期后重登，典型场景） | `oldId != null && oldId == newId` | **保留**；并把 `last_error LIKE '%Token expired%'` 的记录重置回 `pending`（`resetFailedMatching`），再主动排一次同步 | 保留（server 派生缓存，`HomeViewModel.refresh()` 会重新拉；清掉会造成登录后短暂空白） |
+| **换号** | `oldId != null && oldId != newId` | 清空 | 清空 |
+| **首次登录 / 旧版本无 userId** | `oldId == null` | 清空（保守，无法判断是否换号） | 清空 |
+
+> ⚠️ 历史 bug：早期实现**无条件** `clearLocalCache()`。Token 30 天过期（无 refresh
+> token）恰恰是离线数据最容易堆积的时刻，用户重登后所有未同步的记账被物理删除。
+> 提交 `bd39a2b` 的原意是「**换号**清缓存」，条件判断漏了。
+> `AuthRepositoryImplTest` 的 `DATA LOSS regression` 用例锁住此不变量。
+
+> 精准重置的理由：若把**全部** `failed` 重置回 `pending`，「业务错误 / 服务端异常 /
+> 超过最大重试」这些**不可恢复**失败会被反复重试成死循环。
+
+> ⚠️ 同账号判定必须用 `TokenManager.getLastKnownUserId()`，**不能**用 `getUserId()`：
+> 401 时 `AuthInterceptor` 会 `clearSession()` 把 `user_id` 一并清掉，而
+> 「Token 过期 → 重登」正是最需要保住离线队列的场景。因此 `last_known_user_id`
+> 刻意活得比 session 长，只在**显式登出**（`clearSessionAndIdentity()`）时才清。
+
+> ⚠️ `SyncWorker` 在**无 token 时直接 `Result.success()` 短路**，不发请求、不碰队列。
+> `NetworkMonitor` 会在 App 启动时排同步（这是预期行为），若不加此守卫，
+> 未登录状态下每条 pending 都会拿到 401 被误标 `failed`，
+> 而它们本来可以在用户登录后继续上传。
+
 ### 6.3 WorkManager 调度
 
-| Worker | 调度 | 触发时机 |
-|---|---|---|
-| SyncWorker | NetworkType.CONNECTED + Periodic | 网络恢复时 |
-| RulesSyncWorker | Periodic + NetworkType.CONNECTED | 拉取云端规则（ETag/304） |
-| UpdateCheckWorker | Periodic + NetworkType.CONNECTED | GitHub Release 检查 |
-| InsightWorker | Periodic | 统计洞察 |
+| Worker | 类型 | 调度 | 触发时机 |
+|---|---|---|---|
+| SyncWorker | **OneTime** | NetworkType.CONNECTED + APPEND_OR_REPLACE | `NetworkMonitor` 监听到「离线→在线」跳变；通知自动记账；通知中心确认；用户手动点同步；同账号重新登录后 |
+| RulesSyncWorker | Periodic | NetworkType.CONNECTED | 拉取云端规则（ETag/304） |
+| UpdateCheckWorker | Periodic | NetworkType.CONNECTED | GitHub Release 检查 |
 | NlsHealthCheckWorker | Periodic | 通知监听断连恢复 |
 | A11yHealthCheckWorker | Periodic | 无障碍服务健康检查 |
+
+> ⚠️ **SyncWorker 是 OneTime，不是 Periodic，也没有定时兜底。**
+> 离线队列完全依赖上表列出的触发点，其中最关键的是 `NetworkMonitor`
+> （由 `AiBillApp` 在启动时注入以触发 NetworkCallback 注册）。
+> `registerNetworkCallback` 会**立即**回调一次当前网络状态，因此「App 启动时已联网」
+> 也能把积压的 pending 队列排空。
+> 若 `NetworkMonitor` 未被注入，离线记账将**永远不会**自动同步。
 
 **Application 启动调度幂等**：`AiBillApp.scheduleWorkers()` 调用多次不会重复创建任务（各 Worker 用 `KEEP` 策略）。
 
@@ -356,13 +394,22 @@ sealed class AuthEvent {
 
 **迁移策略**：`DatabaseModule.kt` 显式列出 5→6、6→7 Migration，**禁止** `fallbackToDestructiveMigration`（保护 pending 队列不被静默清空）。
 
-### 7.2 DataStore 存储项
+### 7.2 敏感数据：EncryptedSharedPreferences（`TokenManager`）
 
 | Key | 类型 | 说明 |
 |---|---|---|
 | `jwt_token` | String | 用户登录 Token |
-| `user_id` | Int | 当前用户 ID |
+| `user_id` | Int | 当前用户 ID（**换号判定依据**，见 §6.4） |
 | `username` / `nickname` | String | 用户信息 |
+
+`saveSession()` 在**同一个 `commit()`** 里原子写入以上 4 项（用 `apply()` 会出现
+「token 已写入但 userInfo 还在 DataStore」的不一致窗口，进程被杀即丢 token）。
+登出用 `clearSession()` 一次性清空全部 4 项。
+
+### 7.3 DataStore 存储项（非敏感，`UserPreferences`）
+
+| Key | 类型 | 说明 |
+|---|---|---|
 | `server_url` | String | 服务端地址 |
 | `default_account_id` | Int | 默认记账账户 |
 | `theme_mode` | String | light / dark / system |
@@ -371,22 +418,16 @@ sealed class AuthEvent {
 | `hide_from_recents` | Boolean | 从最近任务隐藏 |
 | `last_sync_time` | Long | 最后全量同步时间 |
 
+> 迁移期兼容：DataStore 里仍保留 `user_id` / `username` / `nickname` 的旧值作为**只读
+> fallback**（不删，避免老用户首次启动读到 null）；**所有新写入一律走 `TokenManager`**。
+
 **UserPreferences.kt** 使用 `stateIn(Eagerly)` + `AtomicReference` 暴露热流，避开 Interceptor 同步路径 runBlocking。
 
 ---
 
 ## 八、性能规范
 
-| 维度 | 要求 |
-|---|---|
-| 冷启动 | < 2s 首屏可交互 |
-| 启动耗时 | Application.onCreate 不做 I/O（仅 Timber + Worker schedule） |
-| AI 接口 | 30s 超时，其他 15s |
-| 列表 | LazyColumn + `key()` + `contentType` |
-| 重组 | 大型 Composable 拆 `remember`/`derivedStateOf` |
-| DB 查询 | 索引列（sync_status / received_at），避免全表扫描 |
-| 图片 | Coil + 缓存策略 |
-| 数据缓存 | 分类/账户本地缓存，减少重复请求 |
+冷启动 < 2s 首屏可交互（`Application.onCreate` 不做 I/O）；AI 超时 30s / 其他 15s；列表用 `LazyColumn` + `key()` + `contentType`；DB 索引 `sync_status` / `received_at`；分类/账户本地缓存。
 
 ---
 
@@ -408,12 +449,10 @@ sealed class AuthEvent {
 
 ## 十、错误处理
 
-### 10.1 错误分层
-
 | 层级 | 错误类型 | 处理方式 |
 |---|---|---|
 | Network | IOException / TimeoutException | "网络连接失败"，重试按钮 |
-| HTTP | 4xx / 5xx | 按错误码分类处理 |
+| HTTP | 4xx / 5xx | 按错误码分类处理（4xx = 跳登录 / 5xx = 重试） |
 | Business | code ≠ 0 | 展示服务端 message |
 | Local | Room / DataStore 异常 | 降级处理，记录日志 |
 
@@ -430,9 +469,4 @@ sealed class AuthEvent {
 
 ### 10.3 UI 错误展示
 
-- 网络请求成功：Toast / 数据刷新 / 页面跳转
-- 网络请求失败：Snackbar + 错误信息 + 重试按钮
-- 破坏性操作（删除/退出）：确认弹窗或撤销机制
-- 加载中：Loading 指示器（CircularProgress / Shimmer）
-- 列表为空：空状态插图 + 引导文案
-- 保存成功：明确视觉反馈（Toast/动画）
+成功 = Toast / 数据刷新 / 页面跳转；失败 = Snackbar + 错误信息 + 重试按钮；破坏性操作（删除/退出）= 确认弹窗或撤销机制；加载中 = CircularProgress / Shimmer；空列表 = 空状态插图 + 引导文案。

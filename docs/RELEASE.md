@@ -92,19 +92,14 @@ export AIBILL_ADMIN_PASS=xxx
 
 ---
 
-## 五、何时发版？
-
-- `feat/*` 合到 main 后：正常发版
-- 紧急 bug 修复：提 PR + 直接从 main 发
-
-## 六、前置清单
+## 五、前置清单
 
 1. ✅ `app/build.gradle.kts`：`versionCode` +1、`versionName` 已 bump
 2. ✅ 单元测试 `./gradlew testDebugUnitTest` 通过
 3. ✅ APK 在真机/模拟器手动验证核心路径（AI记账 / 通知记账 / 同步）
 4. ✅ `git status` 干净，所有改动已 commit
 
-## 七、决策：发布到哪？
+## 六、决策：发布到哪？
 
 | 场景 | 命令 |
 |---|---|

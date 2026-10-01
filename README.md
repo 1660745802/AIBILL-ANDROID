@@ -8,7 +8,7 @@ AI 驱动的智能记账 Android 原生应用，复用 [AIBILL 后端](https://g
 - 🤖 **AI 记账**：自然语言输入（"午饭32"），后端 AI 自动解析金额/分类
 - ✏️ **手动记账**：计算器键盘 + 连续记账模式
 - 🔔 **通知自动记账**：监听微信/支付宝/银行通知，自动识别并入账（项目核心差异化能力）
-- 📊 **统计分析**：趋势图 + 分类排行（Vico 图表）
+- 📊 **统计分析**：趋势图 + 分类排行（原生 Canvas 绘制）
 - 📴 **离线可用**：无网络手动记账不中断，联网后 WorkManager 自动同步
 - 🌙 **深色模式**：跟随系统 / 浅色 / 深色
 - 🧠 **智能分类学习**：AI 解析后自动学习商家→分类，稳态 60-70% 命中跳过 AI
@@ -25,9 +25,9 @@ AI 驱动的智能记账 Android 原生应用，复用 [AIBILL 后端](https://g
 | DI | Hilt（含 `@HiltWorker`） |
 | 本地存储 | Room v7（9 张表） + DataStore Preferences |
 | 网络 | Retrofit + OkHttp + Moshi（codegen） |
-| 后台 | WorkManager（6 个 Worker） |
+| 后台 | WorkManager（5 个 Worker：Sync / RulesSync / UpdateCheck / NlsHealth / A11yHealth） |
 | 通知监听 | NotificationListenerService + 无障碍 + SMS 三渠道 |
-| 图表 | Vico |
+| 图表 | 原生 Canvas 手绘（不引第三方图表库） |
 | 桌面 | Glance AppWidget |
 
 ## 🚀 快速开始
@@ -59,23 +59,13 @@ Release 构建需在根目录准备 `keystore.properties`（已在 `.gitignore`�
 
 ## 📂 目录结构
 
+采用 Clean Architecture 三层 + DI/Service/Util 辅助模块。完整模块清单与设计见 [docs/ARCHITECTURE.md §2](docs/ARCHITECTURE.md)。
+
 ```
 app/src/main/java/com/aibill/android/
-├── di/                # Hilt 模块（Network/Database/Repository/Work/CoroutineScope）
-├── domain/            # 业务逻辑层（纯 Kotlin）
-│   ├── model/         # Transaction / Category / User / Result
-│   ├── repository/    # 10 个 Repository 接口
-│   └── usecase/       # CategoryLearningEngine / StreakTracker
-├── data/              # 数据层
-│   ├── local/         # Room (9 Entity + 9 DAO) + DataStore
-│   └── remote/        # Retrofit (10 API) + Interceptor + SafeApiCall
-├── presentation/      # UI 层
-│   ├── navigation/    # 14 条类型安全路由 + NavHost + BottomNavBar
-│   ├── theme/         # Material 3 主题
-│   ├── widget/        # Glance 桌面小组件
-│   └── ui/            # 10 个功能模块（home/transactions/statistics/...）
-├── service/           # 后台服务（20 个：通知/同步/无障碍/小组件/...）
-└── util/              # 全局工具（NetworkMonitor/AppLogger/通知解析/...）
+├── di/        domain/    data/{local,remote}/
+├── presentation/{navigation,theme,widget,ui}/
+├── service/   util/
 ```
 
 ## 📖 文档
