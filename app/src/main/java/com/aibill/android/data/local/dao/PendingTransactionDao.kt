@@ -45,6 +45,25 @@ interface PendingTransactionDao {
     @Query("SELECT * FROM pending_transactions WHERE sync_status = 'failed' ORDER BY updated_at DESC")
     fun observeFailedTransactions(): Flow<List<PendingTransactionEntity>>
 
+    /**
+     * 把「因 401 卡住」的 failed 记录重置回 pending，使其可被 [getAllPending] 再次捞起。
+     *
+     * 背景：SyncWorker 遇到 401 会标 failed 并返回 Result.failure() 等用户重新登录。
+     * 但 failed 状态是**终态**——getAllPending() 只捞 'pending'，所以「Token 过期」
+     * 这种**可恢复**失败在重新登录后原本永远不会被重试，离线记账会静默卡死在本地。
+     *
+     * 只按 [errorPattern] 精确匹配 last_error（而非重置全部 failed），
+     * 避免把「业务错误 / 服务端异常 / 超过最大重试」这些不可恢复的失败也重置成无限重试。
+     */
+    @Query(
+        """
+        UPDATE pending_transactions
+        SET sync_status = 'pending', retry_count = 0, last_error = NULL, updated_at = :now
+        WHERE sync_status = 'failed' AND last_error LIKE :errorPattern
+        """
+    )
+    suspend fun resetFailedMatching(errorPattern: String, now: Long = System.currentTimeMillis()): Int
+
     @Query("SELECT * FROM pending_transactions ORDER BY created_at DESC LIMIT :limit")
     fun observeRecentTransactions(limit: Int = 20): Flow<List<PendingTransactionEntity>>
 

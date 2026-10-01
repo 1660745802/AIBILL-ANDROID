@@ -35,6 +35,7 @@ class SyncWorkerSyncTransactionTest {
     private val transactionApi: TransactionApi = mockk()
     private val syncLock: SyncLock = mockk(relaxed = true)
     private val appLogger: com.aibill.android.util.AppLogger = mockk(relaxed = true)
+    private val tokenManager: com.aibill.android.data.remote.interceptor.TokenManager = mockk(relaxed = true)
 
     private fun makeEntity(
         clientId: String = "C1",
@@ -65,14 +66,19 @@ class SyncWorkerSyncTransactionTest {
      * 1. 用 Robolectric 提供真实 WorkerParameters（测试变重但更稳）
      * 2. 把核心 sync 逻辑抽成纯函数/类（更干净的架构改进）
      */
-    private fun makeWorker(): SyncWorker = SyncWorker(
-        appContext = mockk(relaxed = true),
-        workerParams = mockk(relaxed = true),
-        pendingTransactionDao = pendingDao,
-        transactionApi = transactionApi,
-        syncLock = syncLock,
-        appLogger = appLogger,
-    )
+    /** 默认视为「已登录」，让绝大多数同步用例直接进入同步流程 */
+    private fun makeWorker(hasToken: Boolean = true): SyncWorker {
+        every { tokenManager.hasToken() } returns hasToken
+        return SyncWorker(
+            appContext = mockk(relaxed = true),
+            workerParams = mockk(relaxed = true),
+            pendingTransactionDao = pendingDao,
+            transactionApi = transactionApi,
+            syncLock = syncLock,
+            appLogger = appLogger,
+            tokenManager = tokenManager,
+        )
+    }
 
     private fun transactionDto(
         id: Int = 42,
@@ -361,5 +367,24 @@ class SyncWorkerSyncTransactionTest {
 
         coVerify(exactly = 1) { pendingDao.markSynced("C1", 99, "synced", any()) }
         coVerify(exactly = 1) { pendingDao.updateSyncStatus("C2", "failed", any()) }
+    }
+
+    @Test
+    fun `no token - returns success WITHOUT touching pending queue (NetworkMonitor startup guard)`() = runTest {
+        // 回归：NetworkMonitor 改为在 App 启动时排同步后，未登录也会触发 doWork。
+        // 若不加 token 守卫，每条 pending 都会拿到 401 被标成 failed，
+        // 而它们本来可以在用户重新登录后继续上传。
+        val entity = makeEntity("C1")
+        coEvery { pendingDao.getAllPending() } returns listOf(entity)
+
+        val result = makeWorker(hasToken = false).doWork()
+
+        assertEquals(androidx.work.ListenableWorker.Result.success(), result)
+        // 关键：完全不碰队列
+        coVerify(exactly = 0) { pendingDao.getAllPending() }
+        coVerify(exactly = 0) { pendingDao.updateSyncStatus(any(), any(), any()) }
+        coVerify(exactly = 0) { transactionApi.createTransactions(any()) }
+        // 也不占锁（避免把登录流程卡住）
+        coVerify(exactly = 0) { syncLock.acquire() }
     }
 }

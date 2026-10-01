@@ -10,6 +10,7 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
 import com.aibill.android.data.remote.dto.request.TransactionItemRequest
+import com.aibill.android.data.remote.interceptor.TokenManager
 import com.aibill.android.util.AppLogger
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -25,9 +26,18 @@ class SyncWorker @AssistedInject constructor(
     private val transactionApi: TransactionApi,
     private val syncLock: SyncLock,
     private val appLogger: AppLogger,
+    private val tokenManager: TokenManager,
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
+        // 未登录时**直接短路**：不发任何请求，也不碰 pending 队列。
+        // NetworkMonitor 会在 App 启动时排同步（这是预期的），若此时无 token 还照发，
+        // 每条 pending 都会拿到 401 被标成 failed —— 白白污染队列，
+        // 而它们本来可以在用户重新登录后继续上传。
+        if (!tokenManager.hasToken()) {
+            appLogger.info("SYNC", "无登录 token，跳过同步（pending 队列原样保留）")
+            return Result.success()
+        }
         // PR C1：置 sync lock，AuthRepositoryImpl 换号前会 wait 直到 release
         syncLock.acquire()
         try {
@@ -52,8 +62,10 @@ class SyncWorker @AssistedInject constructor(
                     }
                     SyncResult.UNAUTHORIZED -> {
                         // Token 过期：标记当前记录失败，避免下次 worker 重复触发 401 循环；
-                        // AuthEventBus 已被 AuthInterceptor emit，由 MainActivity 触发跳登录
-                        markFailed(entity.clientId, "Token expired, need re-login")
+                        // AuthEventBus 已被 AuthInterceptor emit，由 MainActivity 触发跳登录。
+                        // 写入的错误串与 ERROR_TOKEN_EXPIRED_PATTERN 配对——用户同账号重新登录后
+                        // AuthRepositoryImpl 会按该模式把这些记录重置回 pending 续传。
+                        markFailed(entity.clientId, ERROR_TOKEN_EXPIRED)
                         unauthorizedSeen = true
                         appLogger.error("SYNC", "401 Token过期: clientId=${entity.clientId}")
                     }
@@ -201,5 +213,17 @@ class SyncWorker @AssistedInject constructor(
         private const val HTTP_UNAUTHORIZED = 401
         private const val STATUS_SYNCED = "synced"
         private const val STATUS_FAILED = "failed"
+
+        /**
+         * 401 失败原因（写入 last_error）。
+         * 与 [ERROR_TOKEN_EXPIRED_PATTERN] 配对使用，改一处必须改另一处。
+         */
+        const val ERROR_TOKEN_EXPIRED = "Token expired, need re-login"
+
+        /**
+         * 供 DAO 按 last_error LIKE 匹配时使用的模式。
+         * AuthRepositoryImpl 登录成功（同账号）后用它把 401 记录重置为 pending。
+         */
+        const val ERROR_TOKEN_EXPIRED_PATTERN = "%Token expired%"
     }
 }
