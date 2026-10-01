@@ -20,6 +20,15 @@ data class TransactionDto(
     @Json(name = "date") val date: String,
     @Json(name = "time") val time: String?,
     @Json(name = "tags") val tags: String? = null,
+    /**
+     * 交易来源：manual / ai / app_notification。
+     *
+     * 可空：后端未返回时为 null，TransactionRepositoryImpl.toDomain() 会 fallback 到 MANUAL。
+     * 加字段对旧后端完全兼容（Moshi 忽略缺失字段），但**必须有它**——
+     * 否则 TransactionRow 的「⚡自动」标记和首页「自动记账 N 笔」计数
+     * 对所有从服务端拉取的数据永远是 0（写死 MANUAL 的历史 bug）。
+     */
+    @Json(name = "source") val source: String? = null,
     @Json(name = "created_at") val createdAt: String?,
     @Json(name = "updated_at") val updatedAt: String?
 ) {

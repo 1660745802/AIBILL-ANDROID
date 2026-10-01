@@ -26,6 +26,16 @@ enum class TransactionSource(val value: String) {
     MANUAL("manual"),
     AI("ai"),
     APP_NOTIFICATION("app_notification");
+
+    companion object {
+        /**
+         * 与 [TransactionType.fromValue] 同理：后端返回未知值时返回 null 而不是抛异常，
+         * 调用方显式 fallback（历史坑：entries.first{} 找不到会抛 NoSuchElementException，
+         * 被 safeApiCall 兜成「未知错误」，用户只看到“保存失败”）。
+         */
+        fun fromValue(value: String?): TransactionSource? =
+            entries.firstOrNull { it.value == value }
+    }
 }
 
 /**

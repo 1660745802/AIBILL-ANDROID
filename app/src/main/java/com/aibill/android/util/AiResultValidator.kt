@@ -12,7 +12,7 @@ import javax.inject.Singleton
  * 校验失败时标 status="needs_confirm"，不静默入库。
  *
  * 校验规则：
- * 1. 金额范围：0 < amount <= 1,000,000（100万分=1万元）
+ * 1. 金额范围：0 < amount <= MAX_AMOUNT_CENTS（当前 10,000,000 分 = ¥100,000，与云控一致）
  * 2. 类型必须为 expense/income/transfer
  * 3. categoryId 如果非 null，必须在本地分类表中存在
  * 4. description 长度合理（≤200 字符）
@@ -28,7 +28,18 @@ class AiResultValidator @Inject constructor(
     )
 
     companion object {
-        private const val MAX_AMOUNT_CENTS = 100_000_00 // 100 万分 = 1 万元
+        /**
+         * 金额上限：**10 万元**（10,000,000 分）。
+         *
+         * 必须与云控规则 [com.aibill.android.service.NotificationRulesManager.ProcessorRules.maxAmountCents]
+         * 保持一致（scripts/rules.json 的 `processor.max_amount_cents`，当前同为 10000000），
+         * 否则会出现「本地校验通过但云控认为超限」或反之的分裂行为。
+         *
+         * 历史坑：本行曾被误写成注释「100 万分 = 1 万元」+ 报错文案「上限 ¥10,000」，
+         * 三处（注释 / 文案 / NOTIFICATION.md）都以为阈值是 ¥10,000，实际是 ¥100,000。
+         * 改数值前请先确认云控配置。
+         */
+        private const val MAX_AMOUNT_CENTS = 10_000_000
         private val VALID_TYPES = setOf("expense", "income", "transfer")
         private const val MAX_DESCRIPTION_LENGTH = 200
     }
@@ -48,7 +59,7 @@ class AiResultValidator @Inject constructor(
         if (amount <= 0) {
             errors.add("金额必须大于 0")
         } else if (amount > MAX_AMOUNT_CENTS) {
-            errors.add("金额超过上限 ¥10,000")
+            errors.add("金额超过上限 ¥${MAX_AMOUNT_CENTS / 100}")
         }
 
         // 2. 类型校验

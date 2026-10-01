@@ -1,5 +1,6 @@
 package com.aibill.android.di
 
+import com.aibill.android.BuildConfig
 import com.aibill.android.data.remote.api.AiApi
 import com.aibill.android.data.remote.api.AuthApi
 import com.aibill.android.data.remote.api.BudgetApi
@@ -45,7 +46,15 @@ object NetworkModule {
         retryInterceptor: RetryInterceptor
     ): OkHttpClient {
         val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            // ⚠️ 必须按构建类型降级：Level.BODY 会把 `Authorization: Bearer <jwt>` 请求头
+            // 和全部交易请求/响应体（金额、备注、标签、AI 原文）打进 logcat，
+            // 任何能读 logcat 的进程/adb 都能拿到。ARCHITECTURE §9「Release 禁止 debug 日志」
+            // 靠的就是这一行。
+            level = if (BuildConfig.DEBUG) {
+                HttpLoggingInterceptor.Level.BODY
+            } else {
+                HttpLoggingInterceptor.Level.NONE
+            }
         }
 
         return OkHttpClient.Builder()

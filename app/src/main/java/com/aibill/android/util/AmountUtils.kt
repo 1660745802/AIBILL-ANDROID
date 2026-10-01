@@ -9,6 +9,14 @@ import kotlin.math.roundToInt
 object AmountUtils {
 
     /**
+     * 单笔记账金额上限：¥1,000,000（= 100,000,000 分）。
+     *
+     * 纯防御性上限：个人日常记账远超此值即为误输入；更重要的是它拦住了
+     * `Double.roundToInt()` 静默 clamp 成 Int.MAX_VALUE 的问题（见 [parseExpression]）。
+     */
+    const val MAX_AMOUNT_FEN = 100_000_000
+
+    /**
      * 分转元字符串（保留2位小数）
      * @param fen 金额（分）
      * @return 格式化的元字符串，如 "12.50"
@@ -19,16 +27,30 @@ object AmountUtils {
 
     /**
      * 计算器表达式求值（支持 +、-、*、/），结果为分。
-     * 输入的数字视为"元"，结果转为"分"返回。
+     * 输入的数字视为“元”，结果转为“分”返回。
      *
-     * @param expr 表达式字符串，如 "10.5+3.2*2"
-     * @return 计算结果（分），无效表达式返回 null
+     * 超出 [MAX_AMOUNT_FEN] 范围时返回 null。
+     *
+     * ⚠️ 必须显式拦上限：Kotlin 的 `Double.roundToInt()` 对超范围值**静默 clamp 到
+     * Int.MAX_VALUE**（而不是抛异常）——所以 “99999999999999999999” 会变成
+     * 2147483647 分 = ¥21,474,836.47，一个**看起来合法但完全错误**的金额，
+     * 会被当作用户输入存进账单。而 20 个 9 刚好在 onAmountInput 的长度限制内，可实际触发。
+     *
+     * @param expr 表达式字符串，如 “10.5+3.2*2”
+     * @return 计算结果（分），无效表达式或超限返回 null
      */
     fun parseExpression(expr: String): Int? {
         return try {
             val trimmed = expr.trim()
             if (trimmed.isEmpty()) return null
             val result = evaluate(trimmed) ?: return null
+            // 先在 Double 域做有限性 + 范围判断，再做 roundToInt（避免被 clamp）
+            if (!result.isFinite() ||
+                result > MAX_AMOUNT_FEN / 100.0 ||
+                result < -MAX_AMOUNT_FEN / 100.0
+            ) {
+                return null
+            }
             (result * 100).roundToInt()
         } catch (_: Exception) {
             null

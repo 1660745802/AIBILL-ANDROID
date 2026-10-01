@@ -172,18 +172,33 @@ class ManualRecordViewModel @Inject constructor(
 
     /**
      * 直接设置金额文本（用于系统键盘输入场景）。
-     * 接受已经过格式校验的纯数字+小数点字符串，转换为分。
+     *
+     * 历史 bug：直接 `Math.round(text.toDouble() * 100).toInt()` 有两个问题——
+     * 1. `.toInt()` 对超范围值**静默截断**（Long.toInt 不抛异常），
+     *    用户输入一串长数字会得到一个完全错误的金额并写进账单；
+     * 2. 本路径**没有**长度限制（onAmountInput 有限制，两条路径不一致）。
+     * 现在统一走 [AmountUtils.parseExpression]（内部 try/catch + 上限拦截，返回 null），
+     * 并复用 [MAX_AMOUNT_TEXT_LENGTH] 与 [AmountUtils.MAX_AMOUNT_FEN] 两个上限。
+     *
+     * @param text 已经过格式校验的纯数字+小数点字符串
      */
     fun onAmountTextChanged(text: String) {
-        val fen = if (text.isEmpty()) 0
-        else Math.round((text.toDoubleOrNull() ?: 0.0) * 100).toInt()
-        _uiState.update { it.copy(amountText = text, amountFen = fen) }
+        val truncated = text.take(MAX_AMOUNT_TEXT_LENGTH)
+        val fen = AmountUtils.parseExpression(truncated)
+        _uiState.update {
+            if (fen == null) {
+                // 非法 / 溢出：保留用户输入的文本（方便看到并手动修），金额保持上一次有效值
+                it.copy(amountText = truncated)
+            } else {
+                it.copy(amountText = truncated, amountFen = fen)
+            }
+        }
     }
 
     fun onAmountInput(char: String) {
         val current = _uiState.value.amountText
         // 限制长度防止溢出
-        if (current.length >= 20) return
+        if (current.length >= MAX_AMOUNT_TEXT_LENGTH) return
         // 防止连续运算符
         val operators = setOf("+", "-", "*", "/")
         if (char in operators && current.isNotEmpty() && current.last().toString() in operators) {
@@ -370,5 +385,10 @@ class ManualRecordViewModel @Inject constructor(
                 _uiState.update { it.copy(categories = list) }
             }
         }
+    }
+
+    private companion object {
+        /** 金额输入文本长度上限（两条输入路径统一，避免系统键盘路径无限制） */
+        const val MAX_AMOUNT_TEXT_LENGTH = 20
     }
 }

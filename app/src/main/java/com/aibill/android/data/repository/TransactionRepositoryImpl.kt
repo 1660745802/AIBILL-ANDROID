@@ -173,7 +173,10 @@ class TransactionRepositoryImpl @Inject constructor(
         date = date,
         time = time,
         tags = tagsList(),
-        source = TransactionSource.MANUAL,
+        // 不再写死 MANUAL：通知自动记账的记录从服务端拉回来时也必须保留 source，
+        // 否则 UI 的「⚡自动」标记 / 首页「自动记账 N 笔」永远不会显示。
+        // 后端未返回 source（旧版本）时 fallback 到 MANUAL，行为与之前一致。
+        source = TransactionSource.fromValue(source) ?: TransactionSource.MANUAL,
         createdAt = createdAt,
     )
 }

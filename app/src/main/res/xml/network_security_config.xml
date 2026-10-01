@@ -5,13 +5,24 @@
   设计决策：全局允许明文 HTTP 是有意为之。
   - 本应用为自部署（自托管后端），用户在「服务器配置」页填入任意 IP/域名
   - 无法预知用户的后端地址，硬编码 domain-config 不现实
-  - 安全权衡：HTTP 请求承载的是用户自己的记账数据（私人），且所有写操作
-    仍走 JWT 鉴权，明文传输仅暴露请求体本身
+  - 安全权衡（请如实理解，不要高估）：HTTP 请求承载的是用户自己的记账数据
+    （私人），但明文传输的**机密性并不成立**——见下方「重要」
 
   缓解措施：
-  - 关键数据（JWT Token）存储在 EncryptedSharedPreferences 中，明文 HTTP
-    不会泄露 Token（Token 仅服务端读取并比对）
+  - 关键数据（JWT Token）存储在 EncryptedSharedPreferences 中（AES256_GCM），
+    设备被物理接触也难以直接读取
   - 提供自签证书支持：NetworkSecurityConfig 可被用户编译时扩展
+
+  重要（不要误以为「明文不泄露 Token」）：
+  - AuthInterceptor 把 token 放在 `Authorization: Bearer <token>` 请求头里。
+    明文 HTTP 下，同一 Wi-Fi / 同一网段的旁路设备可以直接嗅探该请求头，
+    拿到 token 后即可完全冒充该用户读写其全部账单。
+  - EncryptedSharedPreferences 只保护**本地落盘**，不保护**传输链路**。
+  - 因此这是「自部署 LAN 场景下便利性 > 传输机密性」的自觉取舍，
+    而非「明文安全」。对公网 / 不可信网络部署时，用户应自行配置 HTTPS 服务器地址。
+
+  配置权威性：本文件是 cleartext 策略的唯一权威（NSC 存在时 Manifest 的
+  android:usesCleartextTraffic 会被忽略），两处不要写成互相矛盾的配置。
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
