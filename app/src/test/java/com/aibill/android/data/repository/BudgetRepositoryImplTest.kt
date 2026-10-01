@@ -53,26 +53,22 @@ class BudgetRepositoryImplTest {
     }
 
     @Test
-    fun `deleteBudget returns Success Unit on code 0`() = runTest {
+    fun `deleteBudget - Success on code 0, Error on non-zero code`() = runTest {
+        // code=0 → Success(Unit)
         coEvery { budgetApi.deleteBudget(1) } returns ApiResponse(
             code = 0, data = null, message = "ok",
         )
-
-        val result = repo.deleteBudget(1)
-
-        assertTrue(result is Result.Success)
+        val okResult = repo.deleteBudget(1)
+        assertTrue(okResult is Result.Success)
         coVerify(exactly = 1) { budgetApi.deleteBudget(1) }
-    }
 
-    @Test
-    fun `deleteBudget returns Error on non-zero code`() = runTest {
-        coEvery { budgetApi.deleteBudget(1) } returns ApiResponse(
+        // code!=0 → Error(code, message)
+        coEvery { budgetApi.deleteBudget(2) } returns ApiResponse(
             code = 404, data = null, message = "Budget not found",
         )
-
-        val result = repo.deleteBudget(1)
-
-        assertTrue(result is Result.Error)
-        assertEquals(404, (result as Result.Error).code)
+        val errResult = repo.deleteBudget(2)
+        assertTrue(errResult is Result.Error)
+        assertEquals(404, (errResult as Result.Error).code)
+        assertEquals("Budget not found", (errResult as Result.Error).message)
     }
 }

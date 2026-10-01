@@ -96,42 +96,34 @@ class SafeApiCallTest {
     }
 
     @Test
-    fun `HttpException 503 - returns Error with http code`() = runTest {
-        val httpEx = HttpException(
-            Response.error<Any>(503, "server error".toResponseBody("text/plain".toMediaType()))
-        )
-        val result = safeApiCall<String> { throw httpEx }
-        assertTrue(result is Result.Error)
-        val err = result as Result.Error
-        assertEquals(503, err.code)
-        assertTrue(err.message.contains("服务器错误"))
-        assertTrue(err.message.contains("503"))
+    fun `HttpException - returns Error with http code (500 502 503 all covered)`() = runTest {
+        listOf(500, 502, 503).forEach { code ->
+            val httpEx = HttpException(
+                Response.error<Any>(code, "server error".toResponseBody("text/plain".toMediaType()))
+            )
+            val result = safeApiCall<String> { throw httpEx }
+            assertTrue(result is Result.Error, "HttpException $code should be Error")
+            val err = result as Result.Error
+            assertEquals(code, err.code)
+            assertTrue(err.message.contains("服务器错误"))
+            assertTrue(err.message.contains(code.toString()))
+        }
     }
 
     @Test
-    fun `HttpException 500 - returns Error with http code`() = runTest {
-        val httpEx = HttpException(
-            Response.error<Any>(500, "internal".toResponseBody("text/plain".toMediaType()))
-        )
-        val result = safeApiCall<String> { throw httpEx }
-        assertTrue(result is Result.Error)
-        assertEquals(500, (result as Result.Error).code)
-    }
-
-    @Test
-    fun `RuntimeException - returns Result_ERROR_UNKNOWN with message`() = runTest {
-        val result = safeApiCall<String> { throw RuntimeException("unexpected oops") }
-        assertTrue(result is Result.Error)
-        val err = result as Result.Error
-        assertEquals(Result.ERROR_UNKNOWN, err.code)
-        assertTrue(err.message.contains("未知错误"))
-        assertTrue(err.message.contains("unexpected oops"))
-    }
-
-    @Test
-    fun `NullPointerException - caught as unknown error`() = runTest {
-        val result = safeApiCall<String> { throw NullPointerException("NPE") }
-        assertTrue(result is Result.Error)
-        assertEquals(Result.ERROR_UNKNOWN, (result as Result.Error).code)
+    fun `非 IOException or HttpException - returns Result_ERROR_UNKNOWN with message`() = runTest {
+        // 任意 RuntimeException 子类（覆盖 NPE/ClassCast/IllegalState 等）都归类到 UNKNOWN
+        listOf(
+            RuntimeException("unexpected oops"),
+            NullPointerException("NPE"),
+            IllegalStateException("bad state"),
+        ).forEach { ex ->
+            val result = safeApiCall<String> { throw ex }
+            assertTrue(result is Result.Error, "${ex::class.simpleName} should be Error")
+            val err = result as Result.Error
+            assertEquals(Result.ERROR_UNKNOWN, err.code)
+            assertTrue(err.message.contains("未知错误"), "${ex.message} message format")
+            assertTrue(err.message.contains(ex.message!!), "${ex.message} preserves original")
+        }
     }
 }

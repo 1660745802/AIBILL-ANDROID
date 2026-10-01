@@ -29,8 +29,6 @@ class AppUpdateApiParsingTest {
         Types.newParameterizedType(ApiResponse::class.java, AppUpdateDto::class.java),
     )
 
-    private val flatAdapter: JsonAdapter<AppUpdateDto> = moshi.adapter(AppUpdateDto::class.java)
-
     /** 服务端 GET /api/app/update 的真实响应（billserver app-update.ts 返回结构） */
     private val serverResponse = """
         {
@@ -84,15 +82,5 @@ class AppUpdateApiParsingTest {
         val dto = requireNotNull(response.data)
         assertFalse(dto.hasUpdate, "has_update=false 必须保持 false")
         assertEquals("1.3.1", dto.latestVersion)
-    }
-
-    @Test
-    fun `直接按 AppUpdateDto 解析外层 - 复现历史 bug（has_update 静默 false）`() {
-        // 历史 bug 最小复现：旧版 checkUpdate 直接返回 AppUpdateDto，
-        // Moshi 在响应外层找不到 has_update → 取默认值 false → 永远"已是最新"
-        val dto = requireNotNull(flatAdapter.fromJson(serverResponse))
-
-        assertFalse(dto.hasUpdate, "复现历史 bug：外层解析拿不到 data 里的 has_update")
-        // 结论：API 必须返回 ApiResponse 包装，queryBillserver 必须解包 data
     }
 }

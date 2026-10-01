@@ -59,20 +59,24 @@ class FakeStreakRepository : StreakRepository {
 
     // --- Test helpers ---
 
+    /** 注入最后记账日期（模拟"中间隔 N 天"场景，绕过时间流逝） */
     fun setLastRecordDateForTest(date: String?) {
         lastRecordDate = date
     }
 
+    /** 注入当前 streak 值（让 streak 加一/重置分支有非零初始值） */
     fun setCurrentStreakForTest(value: Int) {
         currentStreak = value
         state.value = StreakInfo(currentStreak, longestStreak, totalCount)
     }
 
+    /** 注入历史最高 streak（让 resetIfExpired 后 longestStreak 保留历史最高） */
     fun setLongestStreakForTest(value: Int) {
         longestStreak = value
         state.value = StreakInfo(currentStreak, longestStreak, totalCount)
     }
 
+    /** 注入总笔数（让 checkCountMilestone 测试可以直接构造 100/500/1000 等里程碑） */
     fun setTotalCountForTest(value: Int) {
         totalCount = value
         state.value = StreakInfo(currentStreak, longestStreak, totalCount)
