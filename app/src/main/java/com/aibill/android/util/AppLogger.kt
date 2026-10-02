@@ -69,13 +69,16 @@ class AppLogger @Inject constructor(
         }
     }
 
-    /** App 打开时自动清理 7 天前的日志记录 + 旧日志文件 */
+    /** App 打开时自动清理 2 天前的日志 + 旧日志文件，并按条数上限收缩 */
     /** App 打开时自动清理 2 天前的日志 */
     fun autoCleanOldLogs(context: android.content.Context? = null) {
-        val twoDaysAgo = System.currentTimeMillis() - 2 * 24 * 60 * 60 * 1000L
         scope.launch {
+            val twoDaysAgo = System.currentTimeMillis() - 2 * 24 * 60 * 60 * 1000L
             try {
                 appLogDao.cleanBefore(twoDaysAgo)
+                // 时间清理之外再加条数上限：NLS/A11Y 事件密集时
+                // 单次会话就能写入数千条，2 天窗口内无上限增长。
+                appLogDao.trimToKeep(MAX_LOG_ROWS)
                 context?.cacheDir?.listFiles()?.filter {
                     it.name.startsWith("aibill_log_") && it.lastModified() < twoDaysAgo
                 }?.forEach { it.delete() }
@@ -83,12 +86,16 @@ class AppLogger @Inject constructor(
         }
     }
 
-    /** 导出全部日志为文本（不限条数） */
-    suspend fun exportAsText(): String {
-        val logs = appLogDao.getRecent()
+    /**
+     * 导出最近 N 条日志为文本。
+     * 原实现走全表 [AppLogDao.getRecent]，日志量大时导出既慢又占内存。
+     */
+    suspend fun exportAsText(limit: Int = MAX_LOG_ROWS): String {
+        val logs = appLogDao.getRecent().take(limit)
         return buildString {
             appendLine("=== AIBILL 日志导出 ===")
             appendLine("导出时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}")
+            appendLine("共 $logs 条（上限 $limit，已按时间倒序）")
             appendLine()
             for (log in logs) {
                 val time = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.getDefault())
@@ -96,5 +103,10 @@ class AppLogger @Inject constructor(
                 appendLine("[$time] [${log.level}] [${log.tag}] ${log.message}")
             }
         }
+    }
+
+    companion object {
+        /** 日志表保留条数上限 */
+        const val MAX_LOG_ROWS = 5_000
     }
 }

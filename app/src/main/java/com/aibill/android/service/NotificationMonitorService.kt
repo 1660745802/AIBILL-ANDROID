@@ -74,6 +74,15 @@ class NotificationMonitorService : NotificationListenerService() {
         private const val CONTENT_DEDUP_WINDOW_MS = 5_000L
 
         /**
+         * 已送 AI 的内容记忆窗口。
+         *
+         * 5s 短窗挡不住系统对同一通知的反复 post（实测资讯类推送间隔
+         * 6s / 12s / 5min / 25min），导致同一条新闻标题重复烧 AI 且连续
+         * 5001。长窗命中只跳过「调 AI」，DB 记录与去重逻辑不受影响。
+         */
+        private const val AI_CONTENT_MEMORY_MS = 5 * 60_000L
+
+        /**
          * 支付特征关键词正则（向后兼容：SmsReceiverService 引用此字段）。
          * 运行时会被 rulesManager 覆盖，这里保留作为 static fallback。
          */
@@ -192,6 +201,13 @@ class NotificationMonitorService : NotificationListenerService() {
     /** 内存级去重：防止系统短时间内对同一通知多次触发 onNotificationPosted */
     private val recentNotificationKeys = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
+    /**
+     * 已送 AI 的内容指纹（长窗）。
+     * 放在过滤层之后：只挡「同一条内容被系统反复 post」导致的重复 AI 调用，
+     * 不会影响不同内容的正常交易通知。
+     */
+    private val aiCalledContentKeys = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     private suspend fun handleNotification(sbn: StatusBarNotification) {
         // 1. 动态包名白名单（含云控 sourceMapping + smsPackages + bankPatterns）
         val packageName = sbn.packageName ?: return
@@ -199,45 +215,38 @@ class NotificationMonitorService : NotificationListenerService() {
         // 按需刷新规则（代际无变化则跳过）
         refreshRulesIfNeeded()
 
-        // v6 default_rule 的设计承诺："新增 App 默认自动生效，无需配置"。
-        // 白名单不再一票否决——未配置包名（农信/城商行/新银行等）继续走
-        // 营销词排除 + payment_signal 正则 + AI 兜底的过滤链，
-        // 白名单仅用于日志观测（区分已知/未知来源）。
-        if (!rulesManager.isKnownOrBankPackage(packageName)) {
-            appLogger.debug("NLS", "包名不在白名单，走 default_rule 兜底: pkg=$packageName")
+        // ★ 自身通知必须丢弃（2026-10-01 日志回归）。
+        // 本 App 自己会发两类通知：自动入库的「已记账 · …」和待审的
+        // 「💰 检测到一笔支出 …」。它们会被自己的 NLS 当成新账务再解析一遍，
+        // 实测 16 次 AI 调用里 3 次是自激，产生的第二个候选靠
+        // 60s 金额去重侥幸挡下（AI 稍慢就会真的记两笔）。
+        // 手动记账 / 小组件 / 外部 Intent 走 AutoRecordActionReceiver 直写 DB，
+        // 不经过 NLS，所以这里丢弃自身通知零副作用。
+        if (packageName == applicationContext.packageName) {
+            appLogger.debug("NLS", "自身通知，跳过: pkg=$packageName")
+            return
         }
 
         // 2. 提取通知文本
         val extras = sbn.notification?.extras ?: return
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        val title = sanitizeNotificationText(
+            extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        )
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()
         val infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString().orEmpty()
 
-        // 合并文本：bigText 是 text 的展开完整版，优先用 bigText（text 可能是截断摘要）
-        val fullText = listOf(title, bigText.ifBlank { text }, subText, infoText)
-            .filter { it.isNotBlank() }
-            .distinct()
-            .joinToString(" ")
-        if (fullText.isBlank()) {
-            appLogger.debug("NLS", "空文本: pkg=$packageName")
-            return
-        }
+        // 合并文本：bigText 是 text 的展开完整版，优先用 bigText（text 可能是截断摘要）。
+        // 群聊类通知（QQ/微信）的 bigText 往往以 title 开头，此时不再重复拼 title，
+        // 否则 AI 会收到「209嗨 209嗨 太越林上火型: …」这种双份噪音。
+        val body = sanitizeNotificationText(bigText.ifBlank { text })
+        val fullText = buildFullText(title, body, subText, infoText)
 
-        // 排除系统运行通知和通知分组摘要（无意义）
-        if (fullText.contains("正在运行") || fullText.contains("GroupSummary")) {
-            appLogger.debug("NLS", "系统/分组摘要: pkg=$packageName title=$title")
-            return
-        }
-
-        // 排除营销/广告/优惠券推送（含金额关键词但不是真实账务）——所有渠道生效
-        if (isLikelySpamSms(fullText)) {
-            appLogger.debug("NLS", "营销推送拦截: pkg=$packageName text=${fullText.take(50)}")
-            return
-        }
-
-        // 0. 内存级去重（用内容hash，防系统重复触发+协程竞态）
+        // 0. 内存级去重（用内容hash，防系统重复触发+协程竞态）。
+        //    必须排在下面所有早退分支之前：系统「正在运行」分组摘要会以
+        //    完全相同的文本被 post 数十次（实测单秒 10 条），原先排在
+        //    分支之后导致这层去重对它们完全失效。
         val contentKey = "$packageName:${fullText.hashCode()}"
         val now = System.currentTimeMillis()
         val lastSeen = recentNotificationKeys.put(contentKey, now)
@@ -248,15 +257,66 @@ class NotificationMonitorService : NotificationListenerService() {
         // 每次清理过期 key（>10s），防泄漏
         recentNotificationKeys.entries.removeIf { now - it.value > 10_000L }
 
+        if (fullText.isBlank()) {
+            appLogger.debug("NLS", "空文本: pkg=$packageName")
+            return
+        }
+
+        // 排除系统运行通知和通知分组摘要（无意义）。
+        // 注：分组摘要在 MIUI 上表现为 title 就是「"短信"正在运行」的
+        // 独立通知（text 为空），不是靠类名匹配，所以只判正文。
+        if (fullText.contains("正在运行")) {
+            appLogger.debug("NLS", "系统/分组摘要: pkg=$packageName title=$title")
+            return
+        }
+
+        // 排除营销/广告/优惠券推送（含金额关键词但不是真实账务）——所有渠道生效
+        if (isLikelySpamSms(fullText)) {
+            appLogger.debug("NLS", "营销推送拦截: pkg=$packageName text=${fullText.take(50)}")
+            return
+        }
+
         // 3. 排除层：过滤明显不是账务的通知
         if (!isLikelyFinancial(packageName, title, fullText)) {
             appLogger.debug("NLS", "排除(非账务): pkg=$packageName title=${title.take(30)} text=${fullText.take(50)}")
             return
         }
 
+        // v6 default_rule 的设计承诺："新增 App 默认自动生效，无需配置"。
+        // 白名单不再一票否决，仅用于日志观测（区分已知/未知来源）——移到
+        // 这里打：它原本在函数最前面无条件打印，占了日志表 ~1/3 的行，
+        // 把真正的账务结果行挤出了导出窗口。
+        val knownSource = rulesManager.isKnownOrBankPackage(packageName)
+        if (!knownSource) {
+            appLogger.debug("NLS", "包名不在白名单，走 default_rule 兜底: pkg=$packageName")
+        }
+
         appLogger.info("NLS", "✓通过过滤: pkg=$packageName title=${title.take(30)} fullText=${fullText.take(80)}")
 
-        // 4. 1s 内容去重（防同一条通知被系统多次分发）
+        // 4. 长窗内容记忆：同一条内容 5 分钟内不重复调 AI。
+        //    资讯类 App 会把同一条推送反复 post（实测 6 次调 AI / 5 次 5001），
+        //    5s 短窗拦不住，长窗把重复调用压到 1 次。
+        val aiMemoryKey = "$packageName:${fullText.hashCode()}"
+        aiCalledContentKeys.entries.removeIf { now - it.value > AI_CONTENT_MEMORY_MS }
+        val lastAiCall = aiCalledContentKeys[aiMemoryKey]
+        if (lastAiCall != null && (now - lastAiCall) < AI_CONTENT_MEMORY_MS) {
+            appLogger.debug(
+                "NLS",
+                "长窗内容记忆(${AI_CONTENT_MEMORY_MS / 60_000}min)，跳过重复调AI: pkg=$packageName"
+            )
+            return
+        }
+
+        // 5. 单包 AI 熔断：非支付类包名连续 AI 失败 N 次后静音一段时间。
+        //    只对「不在白名单」的包生效，银行/微信/支付宝永不被熔断，
+        //    避免真交易因网络抖动被误杀。
+        if (!knownSource && notificationProcessor.isAiMuted(packageName)) {
+            appLogger.debug("NLS", "AI 熔断中（该包连续失败），跳过: pkg=$packageName")
+            return
+        }
+        aiCalledContentKeys[aiMemoryKey] = now
+
+        // 6. 1s 内容去重（防同一条通知被系统多次分发）
         val since = System.currentTimeMillis() - DEDUP_WINDOW_MS
         val duplicate = notificationRecordDao.findDuplicate(packageName, fullText, since)
         if (duplicate != null) {
@@ -264,7 +324,7 @@ class NotificationMonitorService : NotificationListenerService() {
             return
         }
 
-        // 5. 直接交给 Processor（AI + 后置按金额去重）
+        // 7. 直接交给 Processor（AI + 后置按金额去重）
         notificationProcessor.process(
             NotificationProcessor.Item(
                 packageName = packageName,
@@ -273,6 +333,53 @@ class NotificationMonitorService : NotificationListenerService() {
                 channel = NotificationProcessor.Channel.NLS,
             )
         )
+    }
+
+    /**
+     * 合并 title / 正文 / 副标题，title 若已是正文前缀则不重复拼接。
+     */
+    private fun buildFullText(title: String, body: String, subText: String, infoText: String): String {
+        val parts = mutableListOf<String>()
+        if (title.isNotBlank() && !body.startsWith(title)) parts.add(title)
+        if (body.isNotBlank()) parts.add(body)
+        if (subText.isNotBlank()) parts.add(sanitizeNotificationText(subText))
+        if (infoText.isNotBlank()) parts.add(sanitizeNotificationText(infoText))
+        return parts.joinToString(" ").trim()
+    }
+
+    /**
+     * 清洗通知原文：剔除控制字符 / 私用区字符 / 变体选择符 / 零宽字符。
+     *
+     * 群名里的 emoji 与代理对经常混进私用区码位（如日志里的 `209<$ÿĀ>`），
+     * 原样送 AI 既浪费 token 又可能触发后端 5001。
+     * 只做减法（黑名单），不做白名单过滤，避免误删正常标点与 CJK。
+     */
+    private fun sanitizeNotificationText(raw: String): String {
+        if (raw.isEmpty()) return raw
+        val sb = StringBuilder(raw.length)
+        var lastWasSpace = false
+        for (ch in raw) {
+            val code = ch.code
+            val drop = code < 0x20 ||                       // C0 控制字符（\n \t 交给下面的空白归一）
+                    code == 0x7F ||                        // DEL
+                    code == 0xFFFD ||                      // 替换字符 U+FFFD
+                    code in 0xE000..0xF8FF ||               // 私用区
+                    code in 0xF0000..0xFFFFD ||             // 私用区（增补平面 A）
+                    code in 0x100000..0x10FFFD ||           // 私用区（增补平面 B）
+                    code in 0xFE00..0xFE0F ||               // 变体选择符
+                    code in 0x200B..0x200F ||               // 零宽字符
+                    code == 0x2060 ||                      // 单词连接符
+                    Character.getType(ch) == Character.FORMAT.toInt()
+            if (drop) continue
+            val isSpace = ch.isWhitespace()
+            if (isSpace) {
+                if (!lastWasSpace && sb.isNotEmpty()) sb.append(' ')
+            } else {
+                sb.append(ch)
+            }
+            lastWasSpace = isSpace
+        }
+        return sb.toString().trim()
     }
 
     /**

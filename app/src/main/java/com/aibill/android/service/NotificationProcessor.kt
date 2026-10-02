@@ -108,6 +108,57 @@ class NotificationProcessor @Inject constructor(
     private data class ProcessedEntry(val amount: Int, val channel: Channel, val packageName: String, val time: Long)
     private val recentProcessed = java.util.concurrent.ConcurrentLinkedDeque<ProcessedEntry>()
 
+    /** 单包 AI 熔断状态：连续失败次数 + 熔断到期时刻 */
+    private data class AiBreaker(
+        val failures: Int,
+        val lastFailureAt: Long,
+        val mutedUntil: Long,
+    )
+    private val aiBreakers = java.util.concurrent.ConcurrentHashMap<String, AiBreaker>()
+
+    /**
+     * 该来源是否处于 AI 熔断静音期。
+     *
+     * 资讯/推送类 App 会把同一条内容反复 post，而 payment_signal 正则
+     * （含裸「元」「消费」等）无法把新闻标题与真实账务区分开，于是
+     * 「同一条新闻标题 6 次调 AI、5 次 5001」。
+     *
+     * 熔断按来源计数：**仅由调用方对「不在白名单」的包查询**
+     * （见 NotificationMonitorService），银行/微信/支付宝永不被静音，
+     * 避免网络抖动导致真实账单被误杀。
+     */
+    fun isAiMuted(packageName: String, now: Long = System.currentTimeMillis()): Boolean {
+        val breaker = aiBreakers[packageName] ?: return false
+        if (now < breaker.mutedUntil) return true
+        // 熔断已到期：清零后重新计数，避免一次抖动就永久静音
+        if (breaker.mutedUntil > 0L) {
+            aiBreakers.remove(packageName, breaker)
+        }
+        return false
+    }
+
+    /** 记录一次 AI 调用结果，用于驱动单包熔断。 */
+    fun recordAiOutcome(packageName: String, success: Boolean, now: Long = System.currentTimeMillis()) {
+        if (success) {
+            aiBreakers.remove(packageName)
+            return
+        }
+        val previous = aiBreakers[packageName]
+        val failures = (previous?.failures ?: 0) + 1
+        val mutedUntil = if (failures >= AI_FAIL_THRESHOLD) now + AI_BREAKER_COOLDOWN_MS else 0L
+        aiBreakers[packageName] = AiBreaker(failures, now, mutedUntil)
+        if (mutedUntil > 0L) {
+            appLogger.warn(
+                "NLS",
+                "AI 熔断开启: pkg=$packageName 连续失败 $failures 次，静音 ${AI_BREAKER_COOLDOWN_MS / 1000}s"
+            )
+        }
+        // 顺手清理长时间无失败记录的条目，防 map 无限增长
+        if (aiBreakers.size > MAX_BREAKER_ENTRIES) {
+            aiBreakers.entries.removeIf { now - it.value.lastFailureAt > AI_BREAKER_COOLDOWN_MS * 4 }
+        }
+    }
+
     /**
      * 跨渠道去重判断（内存级）：
      * - 不同 channel 或不同包名 + 同金额 + 60s 内 → 重复
@@ -152,9 +203,16 @@ class NotificationProcessor @Inject constructor(
             val cleanedText = cleanMarketingSuffix(item.fullText)
             val response = aiApi.parse(mapOf("input" to cleanedText))
             if (response.code != 0 || response.data == null) {
-                appLogger.warn("NLS", "AI失败: code=${response.code}")
+                recordAiOutcome(item.packageName, success = false)
+                // 必须带 message：5001 既可能是模型拒答也可能是超时/超长，
+                // 只打 code 时排障完全无从下手（ApiResponse.message 一直有值）。
+                appLogger.warn(
+                    "NLS",
+                    "AI失败: code=${response.code} msg=${response.message} pkg=${item.packageName}"
+                )
                 return
             }
+            recordAiOutcome(item.packageName, success = true)
             val items = response.data.items
             if (items.isEmpty()) {
                 appLogger.info("NLS", "AI判定非支付，丢弃")
@@ -206,9 +264,21 @@ class NotificationProcessor @Inject constructor(
             )
             tryCommit(candidate)
         } catch (e: Exception) {
+            recordAiOutcome(item.packageName, success = false)
             appLogger.error("NLS", "AI异常: ${e.message}")
             Timber.w(e, "AI 解析失败，丢弃: ${item.packageName}")
         }
+    }
+
+    companion object {
+        /** 连续失败多少次后对该来源静音 */
+        private const val AI_FAIL_THRESHOLD = 3
+
+        /** 熔断静音时长 */
+        private const val AI_BREAKER_COOLDOWN_MS = 5 * 60_000L
+
+        /** 熔断表条数上限，超过后触发过期清理 */
+        private const val MAX_BREAKER_ENTRIES = 64
     }
 
     // ═══════════════════════════════════════════════════════════════

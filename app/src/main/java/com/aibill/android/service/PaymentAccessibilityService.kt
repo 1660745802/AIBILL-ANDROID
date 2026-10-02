@@ -138,6 +138,9 @@ class PaymentAccessibilityService : AccessibilityService() {
     /** CONTENT_CHANGED 节流：同页面 3s 内只处理一次 */
     private val contentChangeThrottle = ConcurrentHashMap<String, Long>()
 
+    /** 同页面全树扫描节流：STATE + CONTENT 统一走这里（延迟重试不走） */
+    private val scanThrottle = ConcurrentHashMap<String, Long>()
+
     /** 延迟重试：每个页面最多挂起一次，切页后旧 token 会自动失效 */
     private val pendingRetryTokens = ConcurrentHashMap.newKeySet<String>()
 
@@ -157,6 +160,16 @@ class PaymentAccessibilityService : AccessibilityService() {
     companion object {
         private const val DEBOUNCE_MS = 8_000L
         private const val CONTENT_CHANGE_THROTTLE_MS = 3_000L
+
+        /**
+         * 同页面重复扫描节流。
+         *
+         * 微信/支付宝在一次 Activity 切换里会连发 STATE + CONTENT（乃至两次
+         * STATE）事件，而原先 contentChangeThrottle 只作用于 CONTENT 分支，
+         * STATE 分支零去重 → 同一页面全树扫描 + 落库两次（日志里大量成对
+         * 出现的 A11Y_PAGE 即来源于此）。
+         */
+        private const val SCAN_THROTTLE_MS = 1_500L
         private const val RETRY_DELAY_MS = 500L
         private const val PACKAGE_WECHAT = "com.tencent.mm"
         private const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
@@ -326,14 +339,27 @@ class PaymentAccessibilityService : AccessibilityService() {
     ) {
         try {
             val shortClassName = className.substringAfterLast('.')
+            val pageToken = PaymentAccessibilityRecognition.pageToken(packageName, className, windowId)
 
-            // 单次遍历收集页面文本；详细树日志仅在最终命中/漏识别时按需构建。
+            // 同页面短时间重复事件（STATE+CONTENT 双触发）不重复全树扫描。
+            // 延迟重试必须绕过节流，否则渐进渲染的金额会被节流吃掉。
+            if (!isRetry) {
+                val scanNow = System.currentTimeMillis()
+                val lastScan = scanThrottle[pageToken] ?: 0L
+                if (scanNow - lastScan < SCAN_THROTTLE_MS) {
+                    return
+                }
+                scanThrottle[pageToken] = scanNow
+                if (scanThrottle.size > 64) {
+                    scanThrottle.entries.removeIf { scanNow - it.value > 10_000L }
+                }
+            }
+
+            // 单次遍历收集页面文本；后续判断（排除词/历史日期/商家上下文）全部复用
+            // 这一份结果——原实现每个判断都重新 collectAllNodeTexts 整棵树，
+            // 单次事件最多跑 4 遍全树遍历。
             val allTexts = mutableListOf<String>()
             collectAllNodeTexts(rootNode, allTexts)
-            appLogger.debug(
-                "A11Y_PAGE",
-                "[$packageName/$shortClassName] texts=${allTexts.size} retry=$isRetry ${allTexts.take(20).joinToString("|")}",
-            )
 
             // 判断是否为内嵌支付 App
             val isEmbeddedApp = packageName in embeddedPaymentApps
@@ -348,13 +374,26 @@ class PaymentAccessibilityService : AccessibilityService() {
                         "A11Y_MISS",
                         "有金额无成功词: [$shortClassName] ${allTexts.take(15).joinToString("|")} tree=${buildNodeTree(rootNode, maxDepth = 5)}",
                     )
+                } else {
+                    // 普通页面（如微信主界面/聊天列表）既无成功词也无金额：只记一行
+                    // 汇总，不把聊天标题等原文落库（既刷屏又泄露隐私）。
+                    appLogger.debug(
+                        "A11Y_SKIP",
+                        "非支付页: pkg=$packageName class=$shortClassName texts=${allTexts.size}"
+                    )
                 }
                 return
             }
 
+            // 命中成功词后才记页面文本：这是排查漏识别真正需要的内容
+            appLogger.debug(
+                "A11Y_PAGE",
+                "[$packageName/$shortClassName] texts=${allTexts.size} retry=$isRetry ${allTexts.take(20).joinToString("|")}",
+            )
+
             // 条件2：排除非支付结果页
             val activeExcludeKeywords = if (isEmbeddedApp) commonExcludeKeywords else wechatAlipayExcludeKeywords + commonExcludeKeywords
-            if (hasAnyKeyword(rootNode, activeExcludeKeywords)) {
+            if (hasAnyKeyword(allTexts, activeExcludeKeywords)) {
                 appLogger.debug("A11Y_SKIP", "排除词命中: [$shortClassName] pkg=$packageName")
                 return
             }
@@ -384,7 +423,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             }
 
             // 条件4：不是历史账单（只检查金额节点附近文本）
-            if (!isRecentPayment(rootNode, amountText)) {
+            if (!isRecentPayment(allTexts, amountText)) {
                 appLogger.debug("A11Y_SKIP", "历史日期拦截: [$shortClassName] amount=$amountText")
                 return
             }
@@ -394,7 +433,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             val summary = if (merchant != null) {
                 "支付成功 $amountText $merchant"
             } else {
-                val context = collectNearbyText(rootNode, amountText)
+                val context = collectNearbyText(allTexts, amountText)
                 "支付成功 $amountText $context"
             }
 
@@ -410,7 +449,6 @@ class PaymentAccessibilityService : AccessibilityService() {
 
             // cooldown：同规范化金额+页面 N 分钟内只触发一次
             val amountKey = PaymentAccessibilityRecognition.amountKey(amountText) ?: return
-            val pageToken = PaymentAccessibilityRecognition.pageToken(packageName, className, windowId)
             val merchantKey = merchant?.trim()?.lowercase().orEmpty()
             val deduKey = "$amountKey|$merchantKey|$pageToken"
             val dedupTtl = PaymentAccessibilityRecognition.dedupTtl(cooldownMs)
@@ -489,10 +527,8 @@ class PaymentAccessibilityService : AccessibilityService() {
     // ═══════════════════════════════════════════════════════════════
 
     /** Exclusion rules are substring rules (for example, "购物车" in "加入购物车"). */
-    private fun hasAnyKeyword(root: AccessibilityNodeInfo, keywords: List<String>): Boolean {
+    private fun hasAnyKeyword(texts: List<String>, keywords: List<String>): Boolean {
         if (keywords.isEmpty()) return false
-        val texts = mutableListOf<String>()
-        collectAllNodeTexts(root, texts)
         return PaymentAccessibilityRecognition.containsExcludeKeyword(texts, keywords)
     }
 
@@ -573,10 +609,7 @@ class PaymentAccessibilityService : AccessibilityService() {
      * v4 改进：只检查金额节点附近（上下 5 个节点）的日期文本，
      * 避免页面底部/顶部无关文本（如 "昨天 13:00 发货"）触发误杀。
      */
-    private fun isRecentPayment(root: AccessibilityNodeInfo, amountText: String): Boolean {
-        val allTexts = mutableListOf<String>()
-        collectAllNodeTexts(root, allTexts)
-
+    private fun isRecentPayment(allTexts: List<String>, amountText: String): Boolean {
         // 找到金额所在位置，只检查附近范围
         val amountClean = amountText.replace("¥", "").replace("￥", "")
         val amountIdx = allTexts.indexOfFirst { it.contains(amountClean) }
@@ -595,9 +628,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     /**
      * 收集金额节点附近的文本作为上下文。
      */
-    private fun collectNearbyText(root: AccessibilityNodeInfo, amountText: String): String {
-        val allTexts = mutableListOf<String>()
-        collectAllNodeTexts(root, allTexts)
+    private fun collectNearbyText(allTexts: List<String>, amountText: String): String {
         val amountIdx = allTexts.indexOfFirst { it.contains(amountText.replace("¥", "").replace("￥", "")) }
         if (amountIdx < 0) return allTexts.take(5).joinToString(" ")
         val start = (amountIdx - 3).coerceAtLeast(0)
