@@ -43,6 +43,19 @@ object UpdateNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+        // 通知主体点击 → 与「立即更新」按钮同样的下载行为。
+        //
+        // 2026-10-01：之前整个 Builder 没有 setContentIntent()，点通知主体
+        // 是标准 no-op——不打开 Activity、不触发广播。forceUpdate=true 时更是
+        // setOngoing(true) + 隐藏「稍后」+ 无 contentIntent → 点不动也划不掉，
+        // 通知永远挂在通知栏。
+        // 用独立的 requestCode（而非复用 downloadPending）避免系统把主体点击
+        // 与 action 按钮当作同一个点击目标。
+        val contentPending = PendingIntent.getBroadcast(
+            context, 2, downloadIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
         // 「稍后」按钮 → 关闭通知（无副作用），让用户主动去 Settings 触发
         // P0-2：forceUpdate=true 时隐藏「稍后」，强制用户升级
         val dismissIntent = Intent(context, UpdateInstallReceiver::class.java).apply {
@@ -62,6 +75,7 @@ object UpdateNotifier {
             .setContentText(changelogText.lines().first())
             .setStyle(NotificationCompat.BigTextStyle().bigText(changelogText))
             .setPriority(if (info.forceUpdate) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(contentPending)
             .addAction(0, "立即更新", downloadPending)
 
         if (!info.forceUpdate) {
