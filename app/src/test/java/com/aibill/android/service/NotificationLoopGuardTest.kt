@@ -1,5 +1,7 @@
 package com.aibill.android.service
 
+import com.aibill.android.data.local.dao.NotificationRecordDao
+import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.remote.dto.response.AiParseResponseDto
 import com.aibill.android.data.remote.dto.response.AiParsedItemDto
 import com.aibill.android.data.remote.dto.response.ApiResponse
@@ -9,9 +11,12 @@ import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
+import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import retrofit2.HttpException
 
 /**
  * 自身通知回环 + 单包 AI 熔断的回归测试
@@ -29,13 +34,16 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class NotificationLoopGuardTest {
 
-    private fun newProcessor(aiApi: AiApi): NotificationProcessor {
+    private fun newProcessor(
+        aiApi: AiApi,
+        dao: NotificationRecordDao = mockk(relaxed = true),
+    ): NotificationProcessor {
         val context = mockk<android.content.Context>(relaxed = true)
         return NotificationProcessor(
             context = context,
             aiApi = aiApi,
             aiResultValidator = AiResultValidator(mockk(relaxed = true)),
-            notificationRecordDao = mockk(relaxed = true),
+            notificationRecordDao = dao,
             pendingTransactionDao = mockk(relaxed = true),
             userPreferences = mockk(relaxed = true) {
                 coEvery { aiParseEnabled } returns kotlinx.coroutines.flow.flowOf(true)
@@ -157,5 +165,52 @@ class NotificationLoopGuardTest {
     fun `未知包默认不熔断`() = runTest {
         val processor = newProcessor(failingApi())
         assertFalse(processor.isAiMuted("com.never.seen.app", now = 1_000L))
+    }
+
+    // ── B2：401 待补偿队列 ──
+
+    /** 构造指定 HTTP 状态码的 HttpException */
+    private fun httpErr(code: Int): HttpException =
+        HttpException(retrofit2.Response.error<Any>(code, "{}".toResponseBody(null)))
+
+    @Test
+    fun `B2 回归：AI 401 → 落库待补偿而不是丢弃`() = runTest {
+        val dao = mockk<NotificationRecordDao>(relaxed = true)
+        val inserted = mutableListOf<NotificationRecordEntity>()
+        coEvery { dao.insert(capture(inserted)) } returns 1L
+        val processor = newProcessor(mockk<AiApi>().also {
+            coEvery { it.parse(any()) } throws httpErr(401)
+        }, dao)
+
+        val real = NotificationProcessor.Item(
+            packageName = "cmb.pb",
+            title = "招商银行",
+            fullText = "招商银行 您账户2415发生快捷支付扣款，人民币20.00",
+            channel = NotificationProcessor.Channel.NLS,
+        )
+        processor.process(real)
+
+        val queued = inserted.filter { it.status == NotificationProcessor.STATUS_AUTH_PENDING }
+        assertEquals(1, queued.size, "401 必须写入待补偿队列，实际写入=$inserted")
+        assertEquals("cmb.pb", queued.first().packageName)
+        assertTrue(queued.first().content.contains("人民币20.00"), "待补偿记录必须保留完整原文")
+    }
+
+    @Test
+    fun `B2 回归：非 401 的 HTTP 错误不入待补偿队列`() = runTest {
+        val dao = mockk<NotificationRecordDao>(relaxed = true)
+        val inserted = mutableListOf<NotificationRecordEntity>()
+        coEvery { dao.insert(capture(inserted)) } returns 1L
+        val processor = newProcessor(mockk<AiApi>().also {
+            coEvery { it.parse(any()) } throws httpErr(500)
+        }, dao)
+
+        processor.process(
+            NotificationProcessor.Item("cmb.pb", "招商银行", "扣款50.00元", NotificationProcessor.Channel.NLS)
+        )
+        assertTrue(
+            inserted.none { it.status == NotificationProcessor.STATUS_AUTH_PENDING },
+            "500 不应入待补偿队列（重登也救不回来）",
+        )
     }
 }

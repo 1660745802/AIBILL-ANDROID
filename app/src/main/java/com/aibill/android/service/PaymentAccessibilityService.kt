@@ -21,10 +21,22 @@ internal object PaymentAccessibilityRecognition {
     fun pageState(packageName: String, className: String, windowId: Int): Pair<String, String> =
         className to pageToken(packageName, className, windowId)
 
-    fun isRootForEvent(rootPackage: String?, rootWindowId: Int, eventPackage: String, eventWindowId: Int): Boolean {
-        if (rootPackage != eventPackage) return false
-        return rootWindowId < 0 || eventWindowId < 0 || rootWindowId == eventWindowId
-    }
+    /**
+     * root 是否可用于处理该事件：**仅跨包才拒绝**。
+     *
+     * **刻意不比较 windowId。** 同包不同 windowId 是常态（2026-10-04 实测）：
+     * - `class=Dialog  root=MISMATCH(rootWin=37735 evWin=37741)` ← 支付宝支付完成瞬间
+     * - `class=FrameLayout root=MISMATCH(rootWin=39136 evWin=39235)` ← 微信视频通话全程
+     *
+     * 旧实现在 windowId 不等时直接 return，会把整批真交易丢掉（日志里那笔
+     * ¥20.00 就是这么丢的，NLS 侧又同时碰上 401 + 排除词误杀）。
+     * 放宽后的误扫风险由调用方多重兜底承担：debounce(8s) + cooldown(30s)
+     * + 评分窗口 + 金额去重。
+     *
+     * @param rootPackage `rootInActiveWindow` 的包名
+     */
+    fun isRootForEvent(rootPackage: String?, eventPackage: String): Boolean =
+        rootPackage == eventPackage
 
     fun amountKey(amountText: String): String? {
         val value = amountText
@@ -241,7 +253,7 @@ class PaymentAccessibilityService : AccessibilityService() {
                     return
                 }
                 if (!PaymentAccessibilityRecognition.isRootForEvent(
-                        root.packageName?.toString(), root.windowId, packageName, windowId,
+                        root.packageName?.toString(), packageName,
                     )) {
                     appLogger.debug("A11Y_EVENT", "$eventTypeName pkg=$packageName class=${className.substringAfterLast('.')} root=MISMATCH(rootPkg=${root.packageName} rootWin=${root.windowId} evWin=$windowId)")
                     return
@@ -256,15 +268,19 @@ class PaymentAccessibilityService : AccessibilityService() {
                     return
                 }
                 if (!PaymentAccessibilityRecognition.isRootForEvent(
-                        root.packageName?.toString(), root.windowId, packageName, savedWindowId,
+                        root.packageName?.toString(), packageName,
                     )) {
                     return
                 }
                 val activity = currentActivity[packageName]
-                if (activity == null) {
-                    appLogger.debug("A11Y_EVENT", "CONTENT pkg=$packageName 无已知Activity，跳过")
-                    return
-                }
+                    // ★ 兑底：首个 STATE 尚未到达时，CONTENT 事件会拿到 null 而被整批丢掉。
+                    //   实测 `A11Y_EVENT CONTENT 无已知Activity，跳过` 出现在支付宝支付
+                    //   页上。STATE 分支本来就有 `?: className` 兑底，这里补齐对称逻辑。
+                    ?: ev.className?.toString()?.takeIf { isActivityClassName(it) }
+                    ?: run {
+                        appLogger.debug("A11Y_EVENT", "CONTENT pkg=$packageName 无可用 Activity，跳过")
+                        return
+                    }
                 if (!isPotentialPaymentActivity(activity, packageName)) {
                     // 非支付相关Activity的CONTENT_CHANGED，不记日志（太多）
                     return
@@ -496,7 +512,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             pendingRetryTokens.remove(pageToken)
             val retryRoot = rootInActiveWindow ?: return@postDelayed
             if (!PaymentAccessibilityRecognition.isRootForEvent(
-                    retryRoot.packageName?.toString(), retryRoot.windowId, packageName, windowId,
+                    retryRoot.packageName?.toString(), packageName,
                 )) return@postDelayed
             val currentTexts = mutableListOf<String>()
             collectAllNodeTexts(retryRoot, currentTexts)

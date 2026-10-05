@@ -18,6 +18,19 @@ interface NotificationRecordDao {
     @Query("SELECT * FROM notification_records WHERE status = 'confirmed' ORDER BY received_at DESC LIMIT 20")
     fun observeConfirmed(): Flow<List<NotificationRecordEntity>>
 
+    /**
+     * 因 AI 鉴权失败（401）而未能解析的待补偿记录。
+     *
+     * 2026-10-04：token 过期时 AI 调用抛 401，旧实现直接 catch 后丢弃，
+     * 真实交易（招行 20.00 / 交通卡 1.80）静默消失且用户无感知。
+     * 现改为落库标记，等用户重新登录后由 [NotificationProcessor] 重放。
+     *
+     * 复用现有表（status 是自由字符串）而非新建表 → **无需 Room migration**。
+     * 该状态不命中任何 observe* 查询，不会混进待审/通知中心列表。
+     */
+    @Query("SELECT * FROM notification_records WHERE status = 'auth_pending' AND received_at > :since ORDER BY received_at ASC")
+    suspend fun findAuthPending(since: Long): List<NotificationRecordEntity>
+
     @Query("SELECT * FROM notification_records WHERE (status IN ('raw', 'parsed')) OR (status = 'confirmed' AND received_at > :confirmedSince) ORDER BY received_at DESC LIMIT 50")
     fun observeAllWithConfirmedSince(confirmedSince: Long): Flow<List<NotificationRecordEntity>>
 
@@ -48,6 +61,10 @@ interface NotificationRecordDao {
 
     @Query("DELETE FROM notification_records WHERE status = 'ignored' AND received_at < :before")
     suspend fun cleanIgnoredBefore(before: Long)
+
+    /** 清理过期的待补偿记录（避免无限堆积） */
+    @Query("DELETE FROM notification_records WHERE status = 'auth_pending' AND received_at < :before")
+    suspend fun cleanAuthPendingBefore(before: Long)
 
     @Query("SELECT * FROM notification_records WHERE package_name = :packageName AND received_at >= :since ORDER BY received_at DESC LIMIT 1")
     suspend fun findRecentByPackage(packageName: String, since: Long): NotificationRecordEntity?

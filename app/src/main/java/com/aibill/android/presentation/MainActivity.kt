@@ -25,6 +25,7 @@ import com.aibill.android.presentation.theme.AiBillTheme
 import com.aibill.android.presentation.ui.auth.AppLockScreen
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import android.widget.Toast
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -32,6 +33,9 @@ class MainActivity : FragmentActivity() {
 
     @Inject
     lateinit var authEventBus: AuthEventBus
+
+    @Inject
+    lateinit var tokenManager: com.aibill.android.data.remote.interceptor.TokenManager
 
     @Inject
     lateinit var appLogger: com.aibill.android.util.AppLogger
@@ -49,6 +53,7 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         navigateTo = resolveNavigateTo(intent)
         observeAuthEvents()
+        notifyIfSessionExpiredSilently()
         appLogger.autoCleanOldLogs(this)
 
         // ★ 同步初始化锁定态（解决 PR #41 覆盖不到的冷启动 race）
@@ -143,6 +148,27 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * 补登过期提示（D1）。
+     *
+     * 背景：`AuthEventBus` 是无 replay 的 SharedFlow，而这里只在 `STARTED`
+     * 期间 collect。当 401 发生在**后台**（典型场景：通知监听服务调 AI 时
+     * token 过期）时，MainActivity 不在前台 → 事件被丢弃，但
+     * `AuthInterceptor` 已经调了 `clearSession()`。用户下次打开 App 只能看到
+     * 登录页，完全不知道「什么时候、被什么踢的」。
+     *
+     * 这里在冷启动时主动查一次：**曾经登录过（lastKnownUserId 存在）但当前
+     * 没有 token** → 判定为 token 过期而非首次安装，给出明确说明。
+     */
+    private fun notifyIfSessionExpiredSilently() {
+        val wasLoggedInBefore = tokenManager.getLastKnownUserId() != null
+        val hasSession = tokenManager.hasToken()
+        if (wasLoggedInBefore && !hasSession) {
+            appLogger.info("AUTH", "检测到登录态被静默清除（疑似后台 401），展示过期提示")
+            Toast.makeText(this, "登录已过期，请重新登录", Toast.LENGTH_LONG).show()
         }
     }
 }

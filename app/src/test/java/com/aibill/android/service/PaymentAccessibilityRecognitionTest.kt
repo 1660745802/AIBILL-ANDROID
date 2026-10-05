@@ -70,12 +70,14 @@ class PaymentAccessibilityRecognitionTest {
     }
 
     @Test
-    fun `root must match package and valid window`() {
-        assertTrue(PaymentAccessibilityRecognition.isRootForEvent("com.example", 4, "com.example", 4))
-        assertTrue(PaymentAccessibilityRecognition.isRootForEvent("com.example", -1, "com.example", 4))
-        assertTrue(PaymentAccessibilityRecognition.isRootForEvent("com.example", 4, "com.example", -1))
-        assertFalse(PaymentAccessibilityRecognition.isRootForEvent("com.other", 4, "com.example", 4))
-        assertFalse(PaymentAccessibilityRecognition.isRootForEvent("com.example", 5, "com.example", 4))
+    fun `root 必须同包（跨包才拒绝，不比较 windowId）`() {
+        assertTrue(PaymentAccessibilityRecognition.isRootForEvent("com.example", "com.example"))
+        // 同包一律放行：微信通话 / 支付宝指纹层都是独立 window，
+        // 严格相等会把真交易整批丢掉（2026-10-04 实测漏记，见 isRootForEvent 注释）
+        assertTrue(PaymentAccessibilityRecognition.isRootForEvent("com.example", "com.example"))
+        // 只有跨包（或 root 为 null）才是真错位
+        assertFalse(PaymentAccessibilityRecognition.isRootForEvent("com.other", "com.example"))
+        assertFalse(PaymentAccessibilityRecognition.isRootForEvent(null, "com.example"))
     }
 
     @Test

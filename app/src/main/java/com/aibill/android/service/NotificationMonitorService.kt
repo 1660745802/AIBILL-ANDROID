@@ -82,6 +82,9 @@ class NotificationMonitorService : NotificationListenerService() {
          */
         private const val AI_CONTENT_MEMORY_MS = 5 * 60_000L
 
+        /** 去重日志采样间隔：同一包名的去重命中最多每分钟记一条 */
+        private const val DEDUP_LOG_SAMPLE_MS = 60_000L
+
         /**
          * 支付特征关键词正则（向后兼容：SmsReceiverService 引用此字段）。
          * 运行时会被 rulesManager 覆盖，这里保留作为 static fallback。
@@ -136,11 +139,15 @@ class NotificationMonitorService : NotificationListenerService() {
         defaultExcludeContent = rules.nls.defaultExcludeContent
         lastRulesGeneration = currentGen
 
-        appLogger.info("NLS", "规则已加载 gen=$currentGen " +
-            "wechatDirectPassTitles=${wechatDirectPassTitles.size} " +
-            "bankPatterns=${bankPackagePatterns.size} " +
-            "spamKeywords=${smsSpamKeywords.size} " +
-            "knownPackages=${rulesManager.getAllKnownPackages().size}")
+        appLogger.info(
+            "NLS",
+            "规则已加载 app=${com.aibill.android.BuildConfig.VERSION_NAME}" +
+                "(${com.aibill.android.BuildConfig.VERSION_CODE}) gen=$currentGen " +
+                "wechatDirectPassTitles=${wechatDirectPassTitles.size} " +
+                "bankPatterns=${bankPackagePatterns.size} " +
+                "spamKeywords=${smsSpamKeywords.size} " +
+                "knownPackages=${rulesManager.getAllKnownPackages().size}"
+        )
     }
 
     /**
@@ -208,6 +215,9 @@ class NotificationMonitorService : NotificationListenerService() {
      */
     private val aiCalledContentKeys = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
+    /** 去重日志采样：同一包名的去重命中日志最小间隔 */
+    private val lastDedupLoggedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     private suspend fun handleNotification(sbn: StatusBarNotification) {
         // 1. 动态包名白名单（含云控 sourceMapping + smsPackages + bankPatterns）
         val packageName = sbn.packageName ?: return
@@ -251,7 +261,13 @@ class NotificationMonitorService : NotificationListenerService() {
         val now = System.currentTimeMillis()
         val lastSeen = recentNotificationKeys.put(contentKey, now)
         if (lastSeen != null && (now - lastSeen) < CONTENT_DEDUP_WINDOW_MS) {
-            appLogger.debug("NLS", "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName")
+            // 去重是常态（微信视频通话、系统服务会刷出大量重复通知），
+            // 每次都写日志会瞬间冲掉账务结果行（曾出现单秒 6 条）。
+            // 采样：同一包名 60s 内只记一次。
+            if (now - (lastDedupLoggedAt[packageName] ?: 0L) > DEDUP_LOG_SAMPLE_MS) {
+                lastDedupLoggedAt[packageName] = now
+                appLogger.debug("NLS", "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName")
+            }
             return
         }
         // 每次清理过期 key（>10s），防泄漏
@@ -411,7 +427,10 @@ class NotificationMonitorService : NotificationListenerService() {
     private fun evaluateByConfig(cfg: com.aibill.android.service.PerPackageRule, title: String, fullText: String): Boolean {
         // 1. 排除词优先（命中直接拒绝）
         if (cfg.excludeTitleContains.any { title.contains(it) }) return false
-        if (cfg.excludeContentContains.any { fullText.contains(it) }) return false
+        // 正文排除词命中时，与 default_rule 分支保持**同一语义**：含强交易特征
+        // （尾号/卡号/入账/支出…）时不否决，交给后续放行条件 / AI 判定。
+        // 否则会出现「营销词 + 真交易」被误杀（详见 NotificationRulesManager.isMarketingByWords）。
+        if (NotificationRulesManager.isMarketingByWords(fullText, cfg.excludeContentContains)) return false
         // 2. 全放行
         if (cfg.passAll) return true
         // 3. title 精确/包含放行

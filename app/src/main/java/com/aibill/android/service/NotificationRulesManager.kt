@@ -104,10 +104,7 @@ class NotificationRulesManager @Inject constructor(
      */
     fun isLikelyMarketing(text: String): Boolean {
         val rules = getRules()
-        val hitMarketingWord = rules.sms.spamKeywords.any { text.contains(it) } ||
-            rules.nls.defaultExcludeContent.any { text.contains(it) }
-        if (!hitMarketingWord) return false
-        return STRONG_TXN_MARKERS.none { text.contains(it) }
+        return isMarketingByWords(text, rules.sms.spamKeywords + rules.nls.defaultExcludeContent)
     }
 
     private fun loadInitialRules(): RulesSnapshot {
@@ -268,6 +265,27 @@ class NotificationRulesManager @Inject constructor(
     companion object {
         private const val KEY_JSON = "notification_rules_json"
         private const val KEY_ETAG = "notification_rules_etag"
+
+        /**
+         * 按**指定词表**判定是否营销（命中词表 且 不含强交易特征）。
+         *
+         * 与 [isLikelyMarketing] 同语义，区别只是词表由调用方传入。
+         *
+         * 存在原因（2026-10-01 真实漏记）：支付宝走 per_package 分支，
+         * `evaluateByConfig` 的 `exclude_content_contains` 是**无条件一票否决**，
+         * 没有 default_rule 那层强交易特征豁免。于是真实交易
+         * `交易提醒 你有一笔20.00元的支出，点击领取9个支付宝积分`
+         * 因命中 `领取` 被直接拒收——尽管它含 `支出`（强交易特征）。
+         * 两条路径对同一语义给出相反结论，属逻辑不一致而非配置取舍。
+         *
+         * 放在 companion（而非实例方法）是为了让单测直接锁这段真实逻辑，
+         * 而不是在测试文件里复刻一份会漂移的拷贝。
+         */
+        fun isMarketingByWords(text: String, words: List<String>): Boolean {
+            if (words.isEmpty()) return false
+            if (words.none { text.contains(it) }) return false
+            return STRONG_TXN_MARKERS.none { text.contains(it) }
+        }
 
         /**
          * 强交易特征词：命中任一即视为"形似真实交易"，营销词不再一票否决，

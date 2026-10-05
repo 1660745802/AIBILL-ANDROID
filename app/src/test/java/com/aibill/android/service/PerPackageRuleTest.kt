@@ -38,7 +38,9 @@ class PerPackageRuleTest {
 
     private fun evaluateByConfig(cfg: PerPackageRule, title: String, fullText: String): Boolean {
         if (cfg.excludeTitleContains.any { title.contains(it) }) return false
-        if (cfg.excludeContentContains.any { fullText.contains(it) }) return false
+        // 与 NotificationMonitorService.evaluateByConfig 保持一致：
+        // 排除词命中时走强交易特征豁免（直接调真实实现，不复刻一份拷贝）
+        if (NotificationRulesManager.isMarketingByWords(fullText, cfg.excludeContentContains)) return false
         if (cfg.passAll) return true
         if (cfg.passTitleExact.any { title == it }) return true
         if (cfg.passTitleContains.any { title.contains(it) }) return true
@@ -89,11 +91,17 @@ class PerPackageRuleTest {
 
     // === 支付宝配置 ===
 
+    // 支付宝线上真实配置（与 scripts/rules.json nls.per_package 保持一致）。
+    // 之前这里是精简版，缺了「领取」等词，导致 B1 回归用例无法复现线上行为。
     private val alipayRule = PerPackageRule(
         packageName = "com.eg.android.AlipayGphone",
-        passTitleContains = listOf("交易提醒", "支付", "账单"),
-        excludeTitleContains = listOf("卡包", "会员", "蚂蚁"),
-        excludeContentContains = listOf("秒杀", "礼包", "可领", "失效", "即将过期"),
+        passTitleContains = listOf("交易提醒", "支付", "账单", "花呗", "余额", "到账", "收款", "退款"),
+        excludeTitleContains = listOf("卡包", "会员", "蚂蚁", "积分", "领奖", "活动"),
+        excludeContentContains = listOf(
+            "秒杀", "礼包", "可领", "待领取", "至高", "首绑", "领取", "抽奖", "优惠券",
+            "满减", "限时", "福利", "特惠", "立减", "补贴", "返现", "失效",
+            "即将过期", "快过期", "再不用", "来不及",
+        ),
     )
 
     @Test
@@ -141,5 +149,38 @@ class PerPackageRuleTest {
         )
         // passAll=true 但命中排除词 → 拒绝
         assertFalse(evaluateByConfig(rule, "标题", "这是广告内容"))
+    }
+
+    // ===== B1：排除词 + 强交易特征不应误杀（2026-10-01 真实漏记）=====
+
+    @Test
+    fun `B1 回归：交易提醒含支出+领取 → 不应被排除词误杀`() {
+        // 真实事故原文：因命中「领取」被直接拒收，导致 ¥20.00 真实交易漏记
+        val real = "交易提醒 你有一笔20.00元的支出，点击领取9个支付宝积分。"
+        assertTrue(
+            evaluateByConfig(alipayRule, "交易提醒", real),
+            "含强交易特征「支出」时不应被排除词一票否决",
+        )
+    }
+
+    @Test
+    fun `B1 回归：纯营销仍被拦截（豁免不放松整体口径）`() {
+        // 无强交易特征的营销文案仍应被拒
+        val ad = "领券中心 立即领取50元满减券，下单立减10元"
+        assertFalse(evaluateByConfig(alipayRule, "领券中心", ad))
+    }
+
+    @Test
+    fun `B1 回归：卡包类仍被 title 排除词拦截`() {
+        assertFalse(evaluateByConfig(alipayRule, "卡包", "你有 3 张优惠券待使用"))
+    }
+
+    @Test
+    fun `强交易特征豁免语义：命中词表且有特征 → 不判营销`() {
+        val words = listOf("领取", "优惠")
+        assertFalse(NotificationRulesManager.isMarketingByWords("你有一笔20.00元的支出，点击领取积分", words))
+        assertTrue(NotificationRulesManager.isMarketingByWords("点击领取优惠券", words))
+        assertFalse(NotificationRulesManager.isMarketingByWords("不含任何词", words))
+        assertFalse(NotificationRulesManager.isMarketingByWords("含词", emptyList()))
     }
 }

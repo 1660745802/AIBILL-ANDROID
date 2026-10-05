@@ -51,6 +51,7 @@ class AuthRepositoryImplTest {
     private val categoryDao: CategoryDao = mockk(relaxed = true)
     private val accountDao: AccountDao = mockk(relaxed = true)
     private val notificationDao: NotificationRecordDao = mockk(relaxed = true)
+    private val notificationProcessor: com.aibill.android.service.NotificationProcessor = mockk(relaxed = true)
     private val syncLock: SyncLock = mockk(relaxed = true)
     private val workManagerProvider: WorkManagerProvider = mockk(relaxed = true)
 
@@ -74,6 +75,7 @@ class AuthRepositoryImplTest {
         categoryDao = categoryDao,
         accountDao = accountDao,
         notificationRecordDao = notificationDao,
+        notificationProcessor = notificationProcessor,
         syncLock = syncLock,
         workManagerProvider = workManagerProvider,
     )

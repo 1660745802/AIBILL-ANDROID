@@ -165,12 +165,12 @@ class NotificationProcessorTest {
     )
 
     private fun setupValidatorValid() {
-        coEvery { aiResultValidator.validate(any(), any(), any(), any()) } returns
+        coEvery { aiResultValidator.validate(any(), any(), any(), any(), any()) } returns
             AiResultValidator.ValidationResult(isValid = true)
     }
 
     private fun setupValidatorInvalid() {
-        coEvery { aiResultValidator.validate(any(), any(), any(), any()) } returns
+        coEvery { aiResultValidator.validate(any(), any(), any(), any(), any()) } returns
             AiResultValidator.ValidationResult(isValid = false, errors = listOf("invalid"))
     }
 

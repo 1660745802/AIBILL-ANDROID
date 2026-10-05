@@ -23,6 +23,19 @@ object NotificationSourceMapping {
         "com.huawei.message" to "短信",
         "com.oppo.mms" to "短信",
         "com.vivo.mms" to "短信",
+        // === 通信运营商（话费/套餐账单）===
+        // 2026-10-04：未配置时 friendlyName 回落到原始包名，
+        // 账目里直接显示 com.greenpoint.android.mc10086.activity
+        "com.greenpoint.android.mc10086.activity" to "中国移动",
+        "com.greenpoint.android.mc" to "中国移动",
+        "com.chinamobile.ict" to "中国移动",
+        "com.ct.client" to "中国电信",
+        "com.ct10086" to "中国电信",
+        "com.unicom" to "中国联通",
+        "com.wo" to "中国联通",
+        // === 交通卡 ===
+        "com.miui.tsmclient" to "交通卡",
+        "com.ykt.wallet" to "交通卡",
         // === 国有大行 ===
         "com.icbc" to "工商银行",
         "com.chinamworld.bocmbci" to "中国银行",

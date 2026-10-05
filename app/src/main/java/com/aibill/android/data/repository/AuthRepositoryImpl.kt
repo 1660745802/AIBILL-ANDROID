@@ -15,6 +15,7 @@ import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.User
 import com.aibill.android.domain.repository.AuthRepository
+import com.aibill.android.service.NotificationProcessor
 import com.aibill.android.service.SyncWorker
 import kotlinx.coroutines.delay
 import timber.log.Timber
@@ -30,6 +31,7 @@ class AuthRepositoryImpl @Inject constructor(
     private val categoryDao: CategoryDao,
     private val accountDao: AccountDao,
     private val notificationRecordDao: NotificationRecordDao,
+    private val notificationProcessor: NotificationProcessor,
     private val syncLock: SyncLock,
     private val workManagerProvider: WorkManagerProvider,
 ) : AuthRepository {
@@ -77,6 +79,12 @@ class AuthRepositoryImpl @Inject constructor(
                 )
                 // DataStore 仍同步一份供 Flow 订阅
                 userPreferences.setUserInfo(data.user.id, data.user.username, data.user.nickname)
+                // B2：同账号重登 → 重放因 401 未解析的通知。
+                // 换号/首次登录走的是上面的 clearLocalCache 分支，队列已被一起清掉
+                // （那是另一个用户的数据，本来就不该重放），所以只在这里调。
+                if (sameAccount) {
+                    notificationProcessor.replayAuthPending()
+                }
                 Result.Success(data.user.toDomain())
             }
             is Result.Error -> result

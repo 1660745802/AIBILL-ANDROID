@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import retrofit2.HttpException
 import timber.log.Timber
 import java.time.Instant
 import java.time.LocalDate
@@ -235,6 +236,9 @@ class NotificationProcessor @Inject constructor(
                 type = aiItem.type,
                 categoryId = aiItem.categoryId,
                 description = aiItem.description,
+                // 必传：校验 5 靠它拦「金额从群名误取」的幻觉（A1）。
+                // 用清洗前的 item.fullText，与实际送 AI 的文本一致。
+                sourceText = cleanedText,
             )
 
             val finalCategoryId = learnedCategoryId ?: aiItem.categoryId
@@ -263,10 +267,84 @@ class NotificationProcessor @Inject constructor(
                 receivedAt = item.receivedAt,
             )
             tryCommit(candidate)
+        } catch (e: HttpException) {
+            // B2：鉴权失败不能丢交易。
+            // 2026-10-04：token 过期时 AI 抛 401，旧实现与其他异常一并
+            // 「记一行日志就丢」，导致招行 20.00 / 交通卡 1.80 两笔真实交易
+            // 静默消失，用户无感知。改为落库标记，用户重新登录后重放。
+            recordAiOutcome(item.packageName, success = false)
+            if (e.code() == 401) {
+                enqueueAuthPending(item)
+                appLogger.warn(
+                    "NLS",
+                    "AI 鉴权失败(401)，交易转入待补偿: pkg=${item.packageName} text=${item.fullText.take(60)}"
+                )
+            } else {
+                appLogger.error("NLS", "AI HTTP 异常 ${e.code()}: ${e.message()}")
+                Timber.w(e, "AI HTTP 失败，丢弃: ${item.packageName}")
+            }
         } catch (e: Exception) {
             recordAiOutcome(item.packageName, success = false)
             appLogger.error("NLS", "AI异常: ${e.message}")
             Timber.w(e, "AI 解析失败，丢弃: ${item.packageName}")
+        }
+    }
+
+    /**
+     * 把因 401 未能解析的通知存入待补偿队列。
+     *
+     * 复用 [NotificationRecordEntity]（content 已存全文，status 是自由字符串），
+     * 状态用 `auth_pending`，不新建表 → 无需 Room migration。
+     */
+    private suspend fun enqueueAuthPending(item: Item) {
+        try {
+            notificationRecordDao.insert(
+                NotificationRecordEntity(
+                    packageName = item.packageName,
+                    title = item.title.ifBlank { null },
+                    content = item.fullText,
+                    status = STATUS_AUTH_PENDING,
+                    receivedAt = item.receivedAt,
+                )
+            )
+        } catch (e: Exception) {
+            // 落库失败也不能让异常向上抛崩协程
+            appLogger.error("NLS", "待补偿队列写入失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 重放待补偿队列。
+     *
+     * 由 [com.aibill.android.data.repository.AuthRepositoryImpl] 在**同账号**重新
+     * 登录成功后调用（换号/首次登录会走 clearLocalCache 把队列一起清掉——
+     * 那是另一个用户的数据，本来就不该重放）。
+     *
+     * 逐条重新走 [process]，解析成功会正常入库并转 confirmed/parsed；
+     * 仍失败则删除，避免死循环。
+     */
+    suspend fun replayAuthPending() {
+        val since = System.currentTimeMillis() - AUTH_PENDING_TTL_MS
+        val pending = notificationRecordDao.findAuthPending(since)
+        if (pending.isEmpty()) return
+        appLogger.info("NLS", "重放待补偿交易: ${pending.size} 条（登录已恢复）")
+        for (record in pending) {
+            try {
+                process(
+                    Item(
+                        packageName = record.packageName,
+                        title = record.title.orEmpty(),
+                        fullText = record.content,
+                        channel = Channel.NLS,
+                        receivedAt = record.receivedAt,
+                    )
+                )
+            } catch (e: Exception) {
+                appLogger.error("NLS", "待补偿重放异常: ${e.message}")
+            }
+            // 重放后无论成败都清掉这条队列记录：
+            // 成功 → 新的 confirmed/parsed 记录已建立；失败 → 不再无限重试
+            notificationRecordDao.updateStatus(record.id, STATUS_AUTH_REPLAYED, null)
         }
     }
 
@@ -279,6 +357,15 @@ class NotificationProcessor @Inject constructor(
 
         /** 熔断表条数上限，超过后触发过期清理 */
         private const val MAX_BREAKER_ENTRIES = 64
+
+        /** 待补偿记录的状态：AI 因 401 未能解析，等重登录后重放 */
+        const val STATUS_AUTH_PENDING = "auth_pending"
+
+        /** 重放后的终态（不再参与重放） */
+        private const val STATUS_AUTH_REPLAYED = "auth_replayed"
+
+        /** 待补偿保留时长：超过 24h 的交易 AI 分类已过时，不再自动重放 */
+        private const val AUTH_PENDING_TTL_MS = 24 * 60 * 60 * 1000L
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -421,15 +508,13 @@ class NotificationProcessor @Inject constructor(
             val idx = text.indexOf(cutoff)
             if (idx > 0) return text.substring(0, idx).trim()
         }
-        // 2. 逗号后含营销关键词则截断（从云控规则读取）
-        if (rules.marketingCommaKeywords.isNotEmpty()) {
-            val commaIdx = text.indexOf("，")
-            if (commaIdx > 0) {
-                val tail = text.substring(commaIdx)
-                if (rules.marketingCommaKeywords.any { tail.contains(it) }) {
-                    return text.substring(0, commaIdx).trim()
-                }
-            }
+        // 2. 营销词首次出现处截断。
+        //    原实现要求「逗号**之后**才看营销词」，而营销文案的分隔符常常是换行/空格：
+        //    「…12包抽纸0元领千份放量！\n实付159元再享40元红包返利>」里的 \n 不是「，」
+        //    → commaIdx = -1 → 整段营销文案原样送 AI，把促销推送记成真实支出。
+        for (keyword in rules.marketingCommaKeywords) {
+            val idx = text.indexOf(keyword)
+            if (idx > 0) return text.substring(0, idx).trim()
         }
         return text
     }

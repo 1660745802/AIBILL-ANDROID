@@ -16,6 +16,7 @@ import javax.inject.Singleton
  * 2. 类型必须为 expense/income/transfer
  * 3. categoryId 如果非 null，必须在本地分类表中存在
  * 4. description 长度合理（≤200 字符）
+ * 5. **金额货币佐证**：原文必须出现货币单位，否则金额可能是从群名/联系人名误取的幻觉
  */
 @Singleton
 class AiResultValidator @Inject constructor(
@@ -42,16 +43,33 @@ class AiResultValidator @Inject constructor(
         private const val MAX_AMOUNT_CENTS = 10_000_000
         private val VALID_TYPES = setOf("expense", "income", "transfer")
         private const val MAX_DESCRIPTION_LENGTH = 200
+
+        /**
+         * 货币单位白名单（用于校验 5 的金额佐证）。
+         *
+         * 2026-10-01 真实事故：QQ 群通知 `209[嗨] [QQ红包]…：[红包]国庆快乐`
+         * 被 AI 抽成 ¥209.00 income 入库并同步服务端——但**原文里根本没有金额**，
+         * 209 来自**群名**「209[嗨]」（NLS 把 title 拼到了正文前）。
+         *
+         * 用法：不校验「金额是否等于原文某处数字」（A1 里 209 确实在原文里，
+         * 那个检查抓不到），而是校验原文**有没有货币单位**——真实交易必有，
+         * 从名字里抓数字的幻觉通知必无。
+         */
+        private val CURRENCY_UNITS = listOf("¥", "￥", "元", "人民币", "RMB", "CNY", "块")
     }
 
     /**
      * 校验单条 AI 解析结果
+     *
+     * @param sourceText 触发本次解析的**通知/页面原文**。必传——校验 5 依赖它，
+     *   传 null 或空串等于关掉幻觉防护，不允许这样调用。
      */
     suspend fun validate(
         amount: Int,
         type: String,
         categoryId: Int?,
         description: String?,
+        sourceText: String,
     ): ValidationResult {
         val errors = mutableListOf<String>()
 
@@ -78,6 +96,11 @@ class AiResultValidator @Inject constructor(
         // 4. 描述长度校验
         if (description != null && description.length > MAX_DESCRIPTION_LENGTH) {
             errors.add("描述过长: ${description.length} 字符")
+        }
+
+        // 5. 金额货币佐证：原文必须出现货币单位
+        if (amount > 0 && CURRENCY_UNITS.none { sourceText.contains(it, ignoreCase = true) }) {
+            errors.add("原文无货币单位佐证，金额可能从群名/联系人名误取")
         }
 
         if (errors.isNotEmpty()) {
