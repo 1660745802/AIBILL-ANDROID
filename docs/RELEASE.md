@@ -95,6 +95,7 @@ export AIBILL_ADMIN_PASS=xxx
 ## 五、前置清单
 
 1. ✅ `app/build.gradle.kts`：`versionCode` +1、`versionName` 已 bump
+   > 变更版本号前必须先向维护者确认目标版本号，详见 [CONTRIBUTING.md §1.3](./CONTRIBUTING.md)；未经确认不得自行 bump
 2. ✅ 单元测试 `./gradlew testDebugUnitTest` 通过
 3. ✅ APK 在真机/模拟器手动验证核心路径（AI记账 / 通知记账 / 同步）
 4. ✅ `git status` 干净，所有改动已 commit

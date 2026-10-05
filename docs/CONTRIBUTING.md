@@ -36,6 +36,21 @@ main              ← 生产分支，PR + CI 通过才能合并
 
 ---
 
+### 1.3 版本号变更规则（硬性）
+
+> **默认不动 `versionCode` / `versionName`。**
+
+| 规则 | 说明 |
+|---|---|
+| **只在明确要求发版时才改** | 仅当项目维护者明确说「走发版流程」「发版」「打 tag」时才动版本号。普通的 fix / feat / docs / test / refactor 提交**一律不碰** `app/build.gradle.kts` |
+| **改前必须确认版本号** | 在提交任何版本号变更前，先把打算用的 `versionCode` / `versionName` 发给维护者确认，**得到明确同意后才能改** |
+| **不得自行推断授权** | 「可以」「行」「ok」这类对上一条问题的回答，**不构成对版本号变更的授权**。版本号是发布链路上的关键决策，必须单独确认 |
+| **bump 是独立的 chore commit** | 历史上 `fix`/`feat` commit 从不改 `build.gradle.kts`，版本号一律单独提 `chore: bump versionCode X → Y, versionName A → B` |
+
+**为什么单独强调**：tag 一旦打在某个 commit 上，该版本就不能再包含后续 commit。看到「tag 已存在」而顺手 bump，会把一批未经确认的修复卷进已发布版本的下一个 patch，绕过维护者的发布节奏控制。
+
+---
+
 ## 二、测试规范
 
 ### 2.1 测试金字塔
@@ -139,7 +154,7 @@ main              ← 生产分支，PR + CI 通过才能合并
 - 禁止生成含 `TODO` / `FIXME` 的代码提交到 develop
 - AI 生成的 Compose 组件必须支持 `@Preview`
 - AI 辅助生成的代码在 commit body 标注：`AI-assisted: 核心逻辑由 AI 生成，已 review 并调整`
-- **AI 不可做**：跳过测试、引入 `libs.versions.toml` 外的依赖、修改已稳定接口签名、生成超过 300 行的单文件
+- **AI 不可做**：跳过测试、引入 `libs.versions.toml` 外的依赖、修改已稳定接口签名、生成超过 300 行的单文件、**未经确认修改 `versionCode` / `versionName`（见 §1.3）**
 
 ---
 
