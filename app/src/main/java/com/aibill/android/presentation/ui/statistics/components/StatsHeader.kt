@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import com.aibill.android.presentation.components.SegmentedControl
 import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.theme.semantic
@@ -80,13 +81,14 @@ fun StatsHeader(
                     color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center,
                     maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier
                         .clip(CircleShape)
                         .clickable(onClick = onJumpToCurrent)
-                        .padding(
-                            horizontal = Tokens.Spacing.sm,
-                            vertical = Tokens.Spacing.xs,
-                        ),
+                        // 定宽：「本月」是 2 字、"2026年11月"是 8 字，宽度差很大。
+                        // 不定宽的话，切月份会挤压右侧分段控件，导致「支出/收入」折行。
+                        .width(MONTH_LABEL_WIDTH)
+                        .padding(vertical = Tokens.Spacing.xs),
                 )
                 StepperIconButton(
                     icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -97,10 +99,12 @@ fun StatsHeader(
 
             // ── 收支分段控件（中性色）──
             SegmentedControl(
+                // 定宽：外层是 SpaceBetween，不给定宽的话 weight(1f) 的分段宽度
+                // 随可用空间浮动，月份文字一变就挤压 → 「支出/收入」折行
+                modifier = Modifier.width(CONTROL_WIDTH),
                 selected = selectedTab,
                 onSelected = onTabChanged,
                 options = IncomeExpenseOptions,
-                modifier = Modifier.widthIn(min = Tokens.List.dividerIndent),
             )
         }
         HorizontalDivider(
@@ -149,3 +153,12 @@ private fun StepperIconButton(
         }
     }
 }
+
+/** 月份标签定宽：容纳 "2026年12月" 且切换时不挤压右侧控件。 */
+private val MONTH_LABEL_WIDTH = 108.dp
+
+/**
+ * 收支分段控件定宽。两段各 66dp：标签 13sp 下「支出」约 26dp，
+ * 加 12dp×2 内边距 = 50dp，留有余量，绝不折行。
+ */
+private val CONTROL_WIDTH = 132.dp

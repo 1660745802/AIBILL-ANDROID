@@ -66,7 +66,7 @@ fun TypeSegmentedControl(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = horizontalPadding, vertical = Tokens.Spacing.sm)
+            .padding(horizontal = horizontalPadding, vertical = Tokens.Spacing.xs)
             .height(Tokens.TouchTarget.normal)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
@@ -104,6 +104,8 @@ fun TypeSegmentedControl(
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                     color = fg,
+                    maxLines = 1,
+                    softWrap = false,
                 )
             }
         }
@@ -164,7 +166,11 @@ fun SegmentedControl(
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                     color = fg,
-                    modifier = Modifier.padding(horizontal = Tokens.Spacing.lg),
+                    // 两字标签（"支出"/"收入"）一旦被挤压就会折成两行。
+                    // 父容器再紧也不许换行 —— 宁可被截断也不要破坏行高。
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(horizontal = Tokens.Spacing.md),
                 )
             }
         }

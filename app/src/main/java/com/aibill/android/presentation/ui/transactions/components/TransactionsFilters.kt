@@ -67,9 +67,19 @@ fun TransactionsFilters(
     availableTags: List<String>,
     callbacks: TransactionsFiltersCallbacks = TransactionsFiltersCallbacks(),
     modifier: Modifier = Modifier,
+    /**
+     * 筛选 Sheet 是否可见（受控）。
+     *
+     * 状态提到页面层，是为了让 **TopBar 的「筛选」图标** 和筛选区里的
+     * `FilterTriggerChip` 共用同一个入口。之前状态藏在本组件内部，
+     * TopBar 的图标无处可调，只能做一个"把列表滚到顶"的假动作 ——
+     * 而筛选区本来就在列表上方、永远可见，所以那个点击**毫无效果**。
+     */
+    filterSheetVisible: Boolean = false,
+    onFilterSheetVisibleChange: (Boolean) -> Unit = {},
 ) {
     val semantics = MaterialTheme.semantic
-    var showFilterSheet by remember { mutableStateOf(false) }
+    val showFilterSheet = filterSheetVisible
 
     // 生效筛选数量：分类(1) + 每个标签(1) + 时段非「全部」(1)
     val dateActive = state.filterDateLabel != "全部"
@@ -105,7 +115,7 @@ fun TransactionsFilters(
             FilterTriggerChip(
                 label = "筛选",
                 activeCount = activeCount,
-                onClick = { showFilterSheet = true },
+                onClick = { onFilterSheetVisibleChange(true) },
                 icon = Icons.Outlined.Tune,
             )
         }
@@ -188,7 +198,7 @@ fun TransactionsFilters(
             val closeSheet = {
                 sheetScope.launch {
                     sheetState.hide()
-                    showFilterSheet = false
+                    onFilterSheetVisibleChange(false)
                 }
                 Unit
             }

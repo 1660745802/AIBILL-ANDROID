@@ -306,7 +306,7 @@ private fun AmountDisplayPanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = Tokens.Spacing.xl, vertical = Tokens.Spacing.md),
+            .padding(horizontal = Tokens.Spacing.xl, vertical = Tokens.Spacing.sm),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
@@ -422,7 +422,7 @@ private fun SaveButton(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(Tokens.TouchTarget.large)
+            .height(Tokens.TouchTarget.normal)
             .clip(RoundedCornerShape(Tokens.Radius.md))
             .background(container)
             .clickable(enabled = canSave, onClick = onClick),
@@ -699,7 +699,6 @@ private fun AiQuickInputBar(
         OutlinedTextField(
             value = inputText,
             onValueChange = onInputChanged,
-            modifier = Modifier.weight(1f),
             placeholder = {
                 Text(
                     "午饭 32 星巴克",
@@ -718,6 +717,11 @@ private fun AiQuickInputBar(
             singleLine = true,
             enabled = !isParsing,
             shape = RoundedCornerShape(Tokens.Radius.sm),
+            // 默认 OutlinedTextField 高 56dp，这里压到 48dp（= 触控目标下限），
+            // 把省下的高度让给分类选择区
+            modifier = Modifier
+                .weight(1f)
+                .height(Tokens.TouchTarget.normal),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
             keyboardActions = KeyboardActions(onGo = { if (inputText.isNotBlank()) onParse() }),
             colors = OutlinedTextFieldDefaults.colors(
@@ -727,7 +731,7 @@ private fun AiQuickInputBar(
         Spacer(Modifier.width(Tokens.Spacing.sm))
         Box(
             modifier = Modifier
-                .height(Tokens.TouchTarget.large)
+                .height(Tokens.TouchTarget.normal)
                 .clip(RoundedCornerShape(Tokens.Radius.sm))
                 .background(
                     if (inputText.isNotBlank() && !isParsing) MaterialTheme.colorScheme.primaryContainer

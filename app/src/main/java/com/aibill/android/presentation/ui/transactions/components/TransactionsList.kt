@@ -27,7 +27,7 @@ import com.aibill.android.presentation.theme.Tokens
 /**
  * 按日分组（组合期从**同一份快照**计算，保证边界与 key 一致）。
  */
-private class DayGroup(val date: String, val items: List<Transaction>)
+internal class DayGroup(val date: String, val items: List<Transaction>, val startIndex: Int)
 
 /**
  * Paging 3 流水列表渲染（带按日分组 + 粘性日期头）。
@@ -88,10 +88,25 @@ fun TransactionsPagingList(
         return
     }
 
-    // ===== 关键修复：一次性捕获快照，禁止在 key lambda 中再读 peek() =====
-    val txList: List<Transaction> = List(pagingItems.itemCount) { index ->
-        pagingItems.peek(index)
+    // ===== 不变量 1（PR #69）：一次性捕获快照，禁止在 key lambda 中再读 peek() =====
+    //
+    // ===== 不变量 2（本次修复）：渲染时必须用 get 而不是 peek =====
+    //
+    // `peek(index)` 不产生 Paging 的 access hint，`get(index)` 才会。上一版这里
+    // 只调 peek，于是 Paging 永远不知道「用户已经看到第几项」，`LoadParams.Append`
+    // 永远不触发，列表被钉死在 initialLoadSize=20 那一批（= 最新 20 条、全在当月），
+    // 历史月份永远加载不出来。这就是「默认勾选全部，但翻到底只到当月」的根因。
+    //
+    // 做法：渲染仍用不可变快照（key 稳定性不受影响），但额外用该项的**绝对下标**
+    // 调一次 `pagingItems[index]`，只为把视口位置报回 Paging，返回值不参与渲染。
+    // 同时保留「快照下标 → pagingItems 绝对下标」的映射：
+    // filterNotNull() 可能让快照下标与 pagingItems 下标不一致，
+    // access hint 必须报到真实的绝对下标上。
+    val snapshot: List<IndexedValue<Transaction>> = List(pagingItems.itemCount) { index ->
+        pagingItems.peek(index)?.let { IndexedValue(index, it) }
     }.filterNotNull()
+    val txList: List<Transaction> = snapshot.map { it.value }
+    val indexMap: List<Int> = snapshot.map { it.index }
 
     val groups: List<DayGroup> = buildDayGroups(txList)
 
@@ -115,6 +130,12 @@ fun TransactionsPagingList(
                 key = { offset -> itemKey(group.items[offset]) },
                 contentType = { "transaction" },
             ) { offset ->
+                // 把视口位置报回 Paging（触发 append 预取）。返回值不用。
+                // 注意：只能放在**内容** lambda，不能放 key lambda —— 后者在布局阶段执行，
+                // 会踩 PR #69 的 key 不一致崩溃。
+                @Suppress("UNUSED_VARIABLE")
+                val accessHint = pagingItems[indexMap[group.startIndex + offset]]
+
                 val transaction = group.items[offset]
                 TransactionItem(
                     transaction = transaction,
@@ -151,23 +172,25 @@ fun TransactionsPagingList(
  * 按连续相同日期分组。组内 items 互不重叠 → item key 全局唯一；
  * 每条交易只属于一个组 → 不会出现同一 id 的 key 重复。
  */
-private fun buildDayGroups(list: List<Transaction>): List<DayGroup> {
+internal fun buildDayGroups(list: List<Transaction>): List<DayGroup> {
     if (list.isEmpty()) return emptyList()
     val groups = mutableListOf<DayGroup>()
     val currentItems = mutableListOf(list.first())
+    var currentStart = 0
     for (i in 1 until list.size) {
         val tx = list[i]
         if (tx.date == currentItems.last().date) {
             currentItems.add(tx)
         } else {
-            groups.add(DayGroup(currentItems.first().date, currentItems.toList()))
+            groups.add(DayGroup(currentItems.first().date, currentItems.toList(), currentStart))
+            currentStart = i
             currentItems.clear()
             currentItems.add(tx)
         }
     }
-    groups.add(DayGroup(currentItems.first().date, currentItems.toList()))
+    groups.add(DayGroup(currentItems.first().date, currentItems.toList(), currentStart))
     return groups
 }
 
 /** 稳定 item key（同一交易始终同一 key；不同交易不会冲突） */
-private fun itemKey(tx: Transaction): String = "${tx.id ?: ""}:${tx.clientId}"
+internal fun itemKey(tx: Transaction): String = "${tx.id ?: ""}:${tx.clientId}"

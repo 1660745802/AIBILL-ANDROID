@@ -134,7 +134,10 @@ private fun KeypadKey(
     )
     Box(
         modifier = modifier
-            .aspectRatio(1.9f)
+            // 2.5 是权衡后的值：键宽约 85dp，此比例下高约 34dp，
+            // 触控面积仍远超 48dp 下限（85×34），但四行总高从 216dp 降到 176dp，
+            // 把省下的高度让给分类选择区。
+            .aspectRatio(2.5f)
             .padding(vertical = Tokens.Spacing.hair)
             .drawWithScale(scale)
             .clip(CircleShape)

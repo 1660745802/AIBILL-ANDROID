@@ -118,6 +118,9 @@ fun TransactionsScreen(
         null
     }
 
+    // 筛选 Sheet 可见性。TopBar 的「筛选」图标与筛选区里的触发按钮共用它。
+    var showFilterSheet by remember { mutableStateOf(false) }
+
     // 长按操作目标（null 表示不显示操作 Sheet）。
     var actionTarget by remember { mutableStateOf<Transaction?>(null) }
 
@@ -165,11 +168,7 @@ fun TransactionsScreen(
                 actions = {
                     FilterAction(
                         activeCount = activeCount,
-                        onClick = {
-                            // TopBar 的「筛选」直接把列表滚回顶部，露出筛选区；
-                            // 深层筛选交互在筛选区的 FilterTriggerChip 内（Sheet）。
-                            snackbarScope.launch { listState.animateScrollToItem(0) }
-                        },
+                        onClick = { showFilterSheet = true },
                     )
                 },
             )
@@ -178,6 +177,8 @@ fun TransactionsScreen(
         Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             TransactionsFilters(
                 state = uiState,
+                filterSheetVisible = showFilterSheet,
+                onFilterSheetVisibleChange = { showFilterSheet = it },
                 categories = uiState.categories,
                 availableTags = uiState.availableTags,
                 callbacks = TransactionsFiltersCallbacks(
