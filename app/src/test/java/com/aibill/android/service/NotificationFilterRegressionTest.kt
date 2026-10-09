@@ -131,4 +131,45 @@ class NotificationFilterRegressionTest {
             "无强交易特征时应判营销",
         )
     }
+
+    // ── v10：汇总/日报通知（代码层判定，因含「支出」无法用词表拦）──
+
+    @Test
+    @DisplayName("记账日报被识别为汇总通知")
+    fun `记账日报是汇总通知`() {
+        // 实测这两条被误记成单笔支出
+        assertTrue(NlsTextClassifier.isSummaryNotification("【记账日报】昨天共有1笔支出 昨日支出28.90元，共1笔"))
+        assertTrue(
+            NlsTextClassifier.isSummaryNotification(
+                "【记账日报】昨日消费支出比平日高500.77% 昨日支出1868.98元，共2笔"
+            )
+        )
+    }
+
+    @Test
+    @DisplayName("v10 8 个广告词都在词表里")
+    fun `v10 词表完整性`() {
+        val required = listOf(
+            "芭芭农场", "一分钱领", "红包已就位", "红包正在向你招手",
+            "话费红包", "名额有限", "燃油费", "膨胀券",
+        )
+        for (w in required) {
+            assertTrue(w in rules.excludeWords, "v10 新增词缺失：$w")
+        }
+    }
+
+    @Test
+    @DisplayName("含『共支出N元』的真实账单通知不能被当汇总")
+    fun `真实账单通知不误判为汇总`() {
+        // 量词是「次」「元」而非「笔」——这是与日报的关键区别
+        val real = listOf(
+            "您在美团记账成功93.00元 今日消费1次，共支出93.00元",
+            "您在支付宝记账成功10.00元 今日消费2次，共支出45.87元",
+            "您在支付宝记账成功600.00元 今日消费2次，共支出616.80元",
+        )
+        for (t in real) {
+            assertFalse(NlsTextClassifier.isSummaryNotification(t), "真实账单通知被误判为汇总：$t")
+            assertTrue(passes(t), "真实账单通知被误杀：$t")
+        }
+    }
 }

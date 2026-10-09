@@ -25,6 +25,46 @@ import timber.log.Timber
  * - 砍掉 NotificationBuffer 长窗口去重（移到 NotificationProcessor 里按金额后置去重）
  * - 每条通知直接调 AI，短文本（≤ 200 字）通过率 100%
  */
+/**
+ * NLS 文本分类：识别「统计摘要」类通知。
+ *
+ * 单独一个 object 而不是内联到 [NotificationMonitorService]——它是纯函数，
+ * 可直接单测（服务里无法直接测）。
+ */
+internal object NlsTextClassifier {
+
+    /**
+     * 是否为「汇总/日报」类通知——这类是**统计摘要**而不是单笔交易，
+     * 记进账本会造成重复/虚假消费。
+     *
+     * 背景（2026-10-05 服务端 `/api/admin/ai-parse-logs` 全量 1403 条实测）：
+     * ```
+     * 【记账日报】昨天共有1笔支出 昨日支出28.90元，共1笔              → 被记成 ¥28.90
+     * 【记账日报】昨日消费支出比平日高500.77% 昨日支出1868.98元，共2笔 → 被记成 ¥1868.98
+     * ```
+     * 这类通知的金额是**昨日/今日总计**，不是新增交易；且当天的单笔通常已由
+     * 银行/支付渠道单独通知记过一次 → 造成重复记账。
+     *
+     * **为什么不能靠 `default_rule.exclude_content_contains` 拦**：
+     * 词表命中后还要过 `STRONG_TXN_MARKERS` 豁免（见 NotificationRulesManager），
+     * 而日报文案里含「支出」（第二条例还含「消费」），两者都在 markers 里
+     * → 豁免生效照样放行。把「支出」移出 markers 会误杀 61 条真实交易
+     * （实测它们仅靠这一个词豁免）。所以走独立的代码层判定。
+     *
+     * **特征选择**：用「共 N 笔」（数字 + 量词「笔」）。
+     * 真实账单通知写的是「今日消费1次，共支出93.00元」——量词是「次」「元」而非「笔」；
+     * 实测 1403 条里「共N笔」只出现在日报汇总中，真交易 0 例。
+     */
+    private val SUMMARY_PATTERNS = listOf(
+        Regex("""记账日报|消费日报|账单日报|收支日报|每日账单"""),
+        Regex("""(昨日|今日|本日|上周|本月).{0,12}共\s*\d+\s*笔"""),
+        Regex("""共\s*\d+\s*笔"""),
+    )
+
+    fun isSummaryNotification(text: String): Boolean =
+        SUMMARY_PATTERNS.any { it.containsMatchIn(text) }
+}
+
 class NotificationMonitorService : NotificationListenerService() {
 
     @EntryPoint
@@ -283,6 +323,14 @@ class NotificationMonitorService : NotificationListenerService() {
         // 独立通知（text 为空），不是靠类名匹配，所以只判正文。
         if (fullText.contains("正在运行")) {
             appLogger.debug("NLS", "系统/分组摘要: pkg=$packageName title=$title")
+            return
+        }
+
+        // 排除「记账日报」等统计汇总通知：金额是区间总计而非单笔交易。
+        // 必须早于营销词表判断——日报含「支出」会触发强交易特征豁免，
+        // 靠词表拦不住（实测 1403 条 AI 日志里被误记 2 次）。
+        if (NlsTextClassifier.isSummaryNotification(fullText)) {
+            appLogger.debug("NLS", "汇总/日报通知（非单笔交易）: pkg=$packageName text=${fullText.take(50)}")
             return
         }
 
