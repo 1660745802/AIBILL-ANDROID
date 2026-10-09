@@ -25,7 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PieChart
-import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -55,7 +55,7 @@ data class BottomBarNavigationItem(
 
 private val bottomNavItems = listOf(
     BottomBarNavigationItem("首页", Icons.Default.Home, Route.Home),
-    BottomBarNavigationItem("流水", Icons.Default.ReceiptLong, Route.Transactions()),
+    BottomBarNavigationItem("流水", Icons.AutoMirrored.Filled.ReceiptLong, Route.Transactions()),
     BottomBarNavigationItem("统计", Icons.Default.PieChart, Route.Statistics),
     BottomBarNavigationItem("我的", Icons.Default.AccountCircle, Route.Profile),
 )
