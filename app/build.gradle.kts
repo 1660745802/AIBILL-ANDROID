@@ -81,6 +81,7 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -156,10 +157,15 @@ dependencies {
     // Testing
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)
+    testImplementation(libs.junit4)
+    testRuntimeOnly(libs.junit5.vintage)
     testImplementation(libs.mockk)
     testImplementation(libs.turbine)
     testImplementation(libs.coroutines.test)
     testImplementation(libs.robolectric)
+    // Compose UI 不变量测试：锁住「分页列表渲染时必须用 get 触发 access hint」
+    testImplementation(libs.compose.ui.test)
+    testImplementation(libs.compose.ui.test.manifest)
     testImplementation(libs.mockwebserver)
     testImplementation(libs.room.testing)
     androidTestImplementation(platform(libs.compose.bom))
