@@ -264,10 +264,13 @@ object NotificationHelper {
     }
 
     /**
-     * 显示无障碍服务断连提醒通知
-     * 当心跳检测发现无障碍服务被系统关闭时调用
+     * 显示无障碍服务断连提醒通知。
+     *
+     * @param connected true = 设置开关仍开着、但服务已被系统断开（需到设置里
+     *   重新关闭再开启）；false = 开关已被关闭。两者处置动作相同但文案不同——
+     *   开关已开的情况下说「重新开启」，用户会以为不用做任何事。
      */
-    fun showA11yDisconnectedNotification(context: Context) {
+    fun showA11yDisconnectedNotification(context: Context, connected: Boolean = false) {
         createNotificationChannel(context)
 
         val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
@@ -279,7 +282,10 @@ object NotificationHelper {
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("⚠️ 无障碍记账已断开")
-            .setContentText("支付页面自动识别已停止，点击前往设置重新开启")
+            .setContentText(
+                if (connected) "开关仍开着，但服务已被系统断开，需到设置里重新关闭再开启"
+                else "支付页面自动识别已停止，点击前往设置重新开启"
+            )
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)

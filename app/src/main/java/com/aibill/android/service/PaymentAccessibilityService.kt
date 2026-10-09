@@ -185,10 +185,28 @@ class PaymentAccessibilityService : AccessibilityService() {
         private const val RETRY_DELAY_MS = 500L
         private const val PACKAGE_WECHAT = "com.tencent.mm"
         private const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
+
+        /**
+         * 服务是否已成功连接到无障碍框架。
+         *
+         * 与「设置里的开关是否打开」是两件事：
+         * 国内 ROM 经常在后台杀掉无障碍服务进程/断开连接，但设置开关仍是开的。
+         * [A11yHealthCheckWorker] 之前只看开关，完全检测不到这种「开着但没连上」
+         * 的真实故障——而这恰恰是自动记账静默失效最常见的原因。
+         *
+         * 进程被杀时这个静态值会随进程一起消失 → 读到的 false 会退化成
+         * 「进程没在跑」，与「开关开着但没连上」无法区分。因此 Worker 侧
+         * 只用它做**辅助信号**，主判据仍是设置开关。
+         */
+        @Volatile
+        @JvmStatic
+        var isServiceConnected: Boolean = false
+            private set
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        isServiceConnected = true
         val entryPoint = EntryPointAccessors.fromApplication(applicationContext, A11yEntryPoint::class.java)
         notificationProcessor = entryPoint.notificationProcessor()
         appLogger = entryPoint.appLogger()
@@ -525,11 +543,18 @@ class PaymentAccessibilityService : AccessibilityService() {
         }, RETRY_DELAY_MS)
     }
 
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        isServiceConnected = false
+        return super.onUnbind(intent)
+    }
+
     override fun onInterrupt() {
+        isServiceConnected = false
         appLogger.warn("A11Y", "无障碍服务被中断")
     }
 
     override fun onDestroy() {
+        isServiceConnected = false
         super.onDestroy()
         appLogger.warn("A11Y", "无障碍服务销毁")
         handler.removeCallbacksAndMessages(null)
