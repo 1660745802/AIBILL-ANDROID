@@ -3,7 +3,6 @@ package com.aibill.android.di
 import com.aibill.android.BuildConfig
 import com.aibill.android.data.remote.api.AiApi
 import com.aibill.android.data.remote.api.AuthApi
-import com.aibill.android.data.remote.api.BudgetApi
 import com.aibill.android.data.remote.api.CategoryApi
 import com.aibill.android.data.remote.api.NotificationRulesApi
 import com.aibill.android.data.remote.api.SettingsApi
@@ -107,11 +106,6 @@ object NetworkModule {
     @Singleton
     fun provideStatsApi(retrofit: Retrofit): StatsApi =
         retrofit.create(StatsApi::class.java)
-
-    @Provides
-    @Singleton
-    fun provideBudgetApi(retrofit: Retrofit): BudgetApi =
-        retrofit.create(BudgetApi::class.java)
 
     @Provides
     @Singleton
