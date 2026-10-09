@@ -37,6 +37,7 @@ import com.aibill.android.presentation.components.AppTopBar
 import com.aibill.android.presentation.components.EmptyState
 import com.aibill.android.presentation.components.GroupedList
 import com.aibill.android.presentation.components.GroupedRow
+import com.aibill.android.presentation.components.TrailingIconButton
 import com.aibill.android.presentation.theme.AmountTypography
 import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.Tokens
@@ -187,13 +188,11 @@ private fun AccountRow(
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(
-                        Icons.Default.MoreVert,
-                        contentDescription = "更多操作",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                TrailingIconButton(
+                    icon = Icons.Default.MoreVert,
+                    contentDescription = "更多操作",
+                    onClick = { menuExpanded = true },
+                )
                 DropdownMenu(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false },

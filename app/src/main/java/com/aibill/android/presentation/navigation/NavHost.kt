@@ -6,18 +6,20 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.aibill.android.presentation.theme.Tokens
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -48,6 +50,21 @@ private val BottomBarRouteNames = listOf(
     Route.Profile::class.qualifiedName,
 )
 
+/**
+ * 需要「记一笔」入口的页面。
+ *
+ * 依据生产数据（550 笔记录里 500 笔来自通知自动入账、手动仅 42 笔，
+ * 占比 7.6%），手动记账不是高频动作，不该以 ExtendedFAB 那种视觉权重
+ * 常驻每一个页面。
+ *
+ * 只留在「看流水」和「看今日」两个语境里 —— 统计是复盘、我的是设置，
+ * 那两页放记账入口属于噪音。
+ */
+private val RecordFabRouteNames = listOf(
+    Route.Home::class.qualifiedName,
+    Route.Transactions::class.qualifiedName,
+)
+
 @Composable
 fun AiBillNavHost(
     startDestination: Route,
@@ -58,6 +75,7 @@ fun AiBillNavHost(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val showBottomBar = BottomBarRouteNames.any { currentRoute?.startsWith(it ?: "") == true }
+    val showRecordFab = RecordFabRouteNames.any { currentRoute?.startsWith(it ?: "") == true }
 
     // 处理来自通知/外部 Intent 的跳转请求（一次性消费，避免解锁/重建时误跳）
     LaunchedEffect(navigateTo) {
@@ -72,18 +90,23 @@ fun AiBillNavHost(
             if (showBottomBar) BottomNavBar(navController)
         },
         floatingActionButton = {
-            if (showBottomBar) {
-                // 用 ExtendedFAB 而不是裸「+」：
-                // 一个孤零零的加号在四个 Tab 里既不说明是什么操作，
-                // 也和旁边的「流水」「统计」不在同一视觉层级上。
-                // 展开态带「记一笔」文案，用户第一次打开就知道该点哪里。
-                ExtendedFloatingActionButton(
+            if (showRecordFab) {
+                // 圆形小尺寸 FAB：改版前是带文字的 ExtendedFAB，在四个 Tab 全局常驻，
+                // 视觉重量压过页面内容。改成 48dp 圆形、只在两个相关页面出现，
+                // 既保住了「记一笔」的一键可达，又不再和内容抢注意力。
+                // contentDescription 里写清楚是"记一笔"，无障碍不靠看图标猜。
+                FloatingActionButton(
                     onClick = { navController.navigateToManualRecord() },
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
-                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text("记一笔") },
-                )
+                    shape = CircleShape,
+                    modifier = Modifier.size(Tokens.TouchTarget.normal),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "记一笔",
+                    )
+                }
             }
         },
     ) { innerPadding ->

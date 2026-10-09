@@ -4,16 +4,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -27,6 +28,7 @@ import com.aibill.android.presentation.components.EmptyState
 import com.aibill.android.presentation.components.ErrorState
 import com.aibill.android.presentation.components.GroupedList
 import com.aibill.android.presentation.components.GroupedRow
+import com.aibill.android.presentation.components.TrailingIconButton
 import com.aibill.android.presentation.components.LoadingState
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -139,6 +141,7 @@ private fun TrashRow(
     val isExpense = transaction.type == com.aibill.android.domain.model.TransactionType.EXPENSE
     val prefix = if (isExpense) "-" else "+"
     val amountColor = if (isExpense) MaterialTheme.semantic.expense else MaterialTheme.semantic.income
+    var menuExpanded by remember { mutableStateOf(false) }
 
     GroupedRow(
         title = transaction.description
@@ -154,21 +157,44 @@ private fun TrashRow(
                 style = AmountTypography.Stat,
                 color = amountColor,
             )
-            IconButton(onClick = onRestore, modifier = Modifier.size(Tokens.TouchTarget.normal)) {
-                Icon(
-                    Icons.Default.RestoreFromTrash,
-                    contentDescription = "恢复",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(Tokens.IconSize.md),
+            // 统一走溢出菜单（与分类管理/账户管理一致）。
+            // 顺带把「永久删除」收进菜单里，不再裸露在行尾 —— 破坏性操作不该
+            // 和「恢复」这种可逆操作并排放在最容易被手指误触的位置。
+            Box {
+                TrailingIconButton(
+                    icon = Icons.Default.MoreVert,
+                    contentDescription = "更多操作",
+                    onClick = { menuExpanded = true },
                 )
-            }
-            IconButton(onClick = onPermanentDelete, modifier = Modifier.size(Tokens.TouchTarget.normal)) {
-                Icon(
-                    Icons.Default.DeleteForever,
-                    contentDescription = "永久删除",
-                    tint = MaterialTheme.semantic.danger,
-                    modifier = Modifier.size(Tokens.IconSize.md),
-                )
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(Icons.Default.RestoreFromTrash, contentDescription = null)
+                        },
+                        text = { Text("恢复") },
+                        onClick = {
+                            menuExpanded = false
+                            onRestore()
+                        },
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.DeleteForever,
+                                contentDescription = null,
+                                tint = MaterialTheme.semantic.danger,
+                            )
+                        },
+                        text = { Text("永久删除", color = MaterialTheme.semantic.danger) },
+                        onClick = {
+                            menuExpanded = false
+                            onPermanentDelete()
+                        },
+                    )
+                }
             }
         },
     )

@@ -36,6 +36,7 @@ import com.aibill.android.presentation.components.CategoryAvatar
 import com.aibill.android.presentation.components.EmptyState
 import com.aibill.android.presentation.components.GroupedList
 import com.aibill.android.presentation.components.GroupedRow
+import com.aibill.android.presentation.components.TrailingIconButton
 import com.aibill.android.presentation.components.Pill
 import com.aibill.android.presentation.components.PillTone
 import com.aibill.android.presentation.components.SegmentedControl
@@ -204,13 +205,11 @@ private fun CategoryRow(
                 },
             )
             Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(
-                        Icons.Default.MoreVert,
-                        contentDescription = "更多操作",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                TrailingIconButton(
+                    icon = Icons.Default.MoreVert,
+                    contentDescription = "更多操作",
+                    onClick = { menuExpanded = true },
+                )
                 DropdownMenu(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false },

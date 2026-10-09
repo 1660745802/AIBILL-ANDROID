@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aibill.android.presentation.theme.AppTextStyles
@@ -320,7 +321,12 @@ fun GroupedRow(
         }
         if (trailing != null) {
             trailing()
-            Spacer(Modifier.size(Tokens.Spacing.sm))
+            // 只有后面真的跟着 chevron 时才留间隙。原来无条件加 8dp，
+            // 导致 showChevron=false 的行（分类/账户/回收站）图标整体偏左，
+            // 与左侧头像的 16dp 边距不对称。
+            if (showChevron && onClick != null) {
+                Spacer(Modifier.size(Tokens.Spacing.sm))
+            }
         }
         if (showChevron && onClick != null) {
             Icon(
@@ -435,5 +441,40 @@ fun StatCell(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+/**
+ * 尾部图标按钮（「更多」/「还原」等）。
+ *
+ * 为什么不用 `IconButton`：M3 的 IconButton 自带约 12dp 内边距，
+ * 叠上列表行的 16dp 内边距后，图标实际离右边缘 28dp，
+ * 而左侧头像离左边缘 16dp —— 两边不对称，看起来图标"偏左"。
+ *
+ * 这里把图标右对齐到内容边界（与左侧头像同为 16dp），
+ * 同时保留 48dp 触控区，可达性不打折。
+ */
+@Composable
+fun TrailingIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    iconSize: Dp = Tokens.IconSize.sm,
+) {
+    Box(
+        modifier = modifier
+            .size(Tokens.TouchTarget.normal)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(iconSize),
+        )
     }
 }

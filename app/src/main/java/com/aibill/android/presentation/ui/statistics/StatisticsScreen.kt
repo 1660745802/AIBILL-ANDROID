@@ -116,7 +116,7 @@ private fun StatsContent(
             start = Tokens.Spacing.screenHorizontal,
             end = Tokens.Spacing.screenHorizontal,
             top = Tokens.Spacing.lg,
-            bottom = Tokens.Spacing.screenBottomWithFab,
+            bottom = Tokens.Spacing.screenBottom,
         ),
         verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
     ) {

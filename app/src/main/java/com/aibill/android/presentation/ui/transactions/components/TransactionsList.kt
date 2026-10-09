@@ -1,6 +1,7 @@
 package com.aibill.android.presentation.ui.transactions.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -97,6 +98,8 @@ fun TransactionsPagingList(
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize(),
+        // 底部留出 FAB 高度，否则最后一笔流水会被浮起的「记一笔」挡住。
+        contentPadding = PaddingValues(bottom = Tokens.Spacing.screenBottomWithFab),
     ) {
         groups.forEachIndexed { groupIndex, group ->
             // header key 带 groupIndex：即使数据未按日期排序（日期交错）也不会撞 key
