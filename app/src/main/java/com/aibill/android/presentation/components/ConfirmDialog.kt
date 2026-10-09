@@ -5,6 +5,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.theme.DangerButton
+import com.aibill.android.presentation.theme.PrimaryButton
+import com.aibill.android.presentation.theme.Tokens
+import com.aibill.android.presentation.theme.semantic
 
 /**
  * 通用确认对话框。所有"是否 X"的二次确认都走这个组件。
@@ -40,20 +44,31 @@ fun ConfirmDialog(
 ) {
     AlertDialog(
         onDismissRequest = { if (cancelable) onDismiss() },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(Tokens.Radius.xl),
         title = {
             Text(
-                title,
-                color = if (isDestructive) MaterialTheme.colorScheme.error
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = if (isDestructive) MaterialTheme.semantic.danger
                 else MaterialTheme.colorScheme.onSurface,
             )
         },
-        text = { Text(message) },
-        confirmButton = {
-            AppTextButton(
-                text = confirmText,
-                onClick = onConfirm,
-                isDestructive = isDestructive,
+        text = {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        },
+        confirmButton = {
+            // 破坏性操作的确认按钮用**实心** danger 色而不是文字按钮：
+            // 文字按钮在一堆中性文字里太容易被忽略，而误点「删除/退出」代价很高。
+            if (isDestructive) {
+                DangerButton(text = confirmText, onClick = onConfirm)
+            } else {
+                PrimaryButton(text = confirmText, onClick = onConfirm, tall = false)
+            }
         },
         dismissButton = {
             AppTextButton(text = cancelText, onClick = onDismiss)

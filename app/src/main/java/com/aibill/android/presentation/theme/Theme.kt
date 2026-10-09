@@ -8,6 +8,8 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
@@ -21,12 +23,12 @@ private val LightColorScheme = lightColorScheme(
     secondaryContainer = TealSecondaryContainerLight,
     onSecondaryContainer = TealOnSecondaryContainerLight,
     tertiary = TertiaryLight,
-    error = ExpenseColor,
+    error = ErrorLight,
     onError = Color.White,
     errorContainer = ErrorContainerLight,
     onErrorContainer = OnErrorContainerLight,
     background = BackgroundLight,
-    onBackground = OnSurfaceLight,
+    onBackground = OnBackgroundLight,
     surface = Color.White,
     onSurface = OnSurfaceLight,
     surfaceVariant = SurfaceVariantLight,
@@ -46,39 +48,44 @@ private val DarkColorScheme = darkColorScheme(
     primaryContainer = TealDark,
     onPrimaryContainer = TealContainerLight,
     secondary = SecondaryDark,
-    onSecondary = TealOnSecondaryContainerLight,
+    onSecondary = TealOnSecondaryContainerDark,
     secondaryContainer = SecondaryContainerDark,
-    onSecondaryContainer = TealSecondaryContainerLight,
+    onSecondaryContainer = TealOnSecondaryContainerDark,
     tertiary = TertiaryDark,
     error = ErrorDark,
     onError = OnErrorDark,
     errorContainer = ErrorContainerDark,
-    onErrorContainer = ErrorContainerLight,
+    onErrorContainer = OnErrorContainerDark,
     background = BackgroundDark,
-    onBackground = OnSurfaceDark,
+    onBackground = OnBackgroundDark,
     surface = SurfaceDark,
     onSurface = OnSurfaceDark,
-    surfaceVariant = OnSurfaceVariantLight,
-    onSurfaceVariant = OutlineVariantLight,
+    surfaceVariant = SurfaceVariantDark,
+    onSurfaceVariant = OnSurfaceVariantDark,
     surfaceContainerLowest = SurfaceContainerLowestDark,
     surfaceContainerLow = SurfaceContainerLowDark,
     surfaceContainer = SurfaceContainerDark,
     surfaceContainerHigh = SurfaceContainerHighDark,
     surfaceContainerHighest = SurfaceContainerHighestDark,
     outline = OutlineDark,
-    outlineVariant = OnSurfaceVariantLight,
+    outlineVariant = OutlineVariantDark,
 )
 
 /**
  * 全局主题。
  *
  * @param themeMode "system"（跟随系统）/ "light" / "dark"
- * @param dynamicColor Android 12+ 启用 Material You 动态取色（跟随系统壁纸）
+ * @param dynamicColor Android 12+ 启用 Material You 动态取色（跟随系统壁纸）。
+ *   **默认已改为关闭**（见 `UserPreferences.dynamicColorEnabled`）。
+ *   原因：记账 App 的 `primary`（品牌青绿）与「支出红 / 收入绿」是一整套配套的
+ *   语义契约。跟随壁纸取色会让 primary 变成用户壁纸里的任意颜色，出现
+ *   「主按钮和支出金额同色」「选中 chip 和危险操作同色」这类语义冲突。
+ *   想尝鲜的用户仍可在 设置 → 外观 里手动打开。
  */
 @Composable
 fun AiBillTheme(
     themeMode: String = "system",
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val darkTheme = when (themeMode) {
@@ -97,10 +104,26 @@ fun AiBillTheme(
         else -> LightColorScheme
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        shapes = AppShapes,
-        typography = AppTypography,
-        content = content,
-    )
+    // 语义色始终跟随明暗，**不受动态取色影响**：
+    // 支出/收入的含义不能被壁纸改掉。
+    val semantics = if (darkTheme) DarkSemantics else LightSemantics
+
+    CompositionLocalProvider(LocalSemanticColors provides semantics) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            shapes = AppShapes,
+            typography = AppTypography,
+            content = content,
+        )
+    }
+}
+
+/**
+ * 取当前主题的明暗（供 Canvas 等拿不到 MaterialTheme 语义色的绘制逻辑使用）。
+ */
+@Composable
+@ReadOnlyComposable
+fun currentIsDark(): Boolean {
+    val bg = MaterialTheme.colorScheme.background
+    return (0.299f * bg.red + 0.587f * bg.green + 0.114f * bg.blue) < 0.5f
 }

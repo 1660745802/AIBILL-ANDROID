@@ -5,9 +5,6 @@ import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -16,8 +13,6 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import com.aibill.android.data.remote.interceptor.AuthEvent
 import com.aibill.android.data.remote.interceptor.AuthEventBus
 import com.aibill.android.presentation.navigation.AiBillNavHost
@@ -74,12 +69,9 @@ class MainActivity : FragmentActivity() {
                             onNavigationHandled = { navigateTo = null },
                         )
                     } else {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CircularProgressIndicator()
-                        }
+                        // 走共享 LoadingState，保证启动加载态的指示器尺寸/颜色
+                        // 和应用内其它加载态一致（原来是裸 CircularProgressIndicator()）。
+                        com.aibill.android.presentation.components.LoadingState()
                     }
                 }
             }

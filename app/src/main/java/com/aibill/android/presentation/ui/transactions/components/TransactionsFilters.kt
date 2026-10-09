@@ -1,8 +1,6 @@
 package com.aibill.android.presentation.ui.transactions.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,16 +8,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -33,22 +25,27 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aibill.android.domain.model.Category
-import com.aibill.android.presentation.theme.ExpenseColor
-import com.aibill.android.presentation.theme.IncomeColor
+import com.aibill.android.presentation.components.AppChip
+import com.aibill.android.presentation.components.ChipRow
+import com.aibill.android.presentation.components.FilterTriggerChip
+import com.aibill.android.presentation.components.FlowChips
+import com.aibill.android.presentation.components.RemovableFilterChip
+import com.aibill.android.presentation.theme.PrimaryButtonBlock
 import com.aibill.android.presentation.theme.Tokens
+import com.aibill.android.presentation.theme.semantic
 import kotlinx.coroutines.launch
 
 /**
- * 流水筛选区。**重构为 3 行紧凑布局**：
- * - 行 1：时段（本周/本月/上月/全部 + 自定义“更多”）
- * - 行 2：类型（全部/支出/收入）+ 筛选触发按钮
- * - 行 3：已选筛选摘要（按需）
+ * 流水筛选区。**重设计为「一行常驻 + 按需展开」**：
+ * - 常驻行：`全部 / 支出 / 收入`（共享 [AppChip]，支出/收入选中态用语义色）
+ *   + 右侧 [FilterTriggerChip]（显示生效的筛选数量）。
+ * - 摘要行（仅当有分类/标签筛选时出现）：[RemovableFilterChip] 横排 + 「清空」。
+ * - 时段 / 分类 / 标签全部折进 BottomSheet；时段是 Sheet 内第一个分区。
  *
- * 设计原则：
- * - 不显示冗余信息（筛选标签太长用"更多 ▾"代替）
- * - 标签/账户从 chip 行移到 sheet
+ * 高度从旧版 3 行（~140dp）压到 1~2 行，把可视区还给列表。
  */
 data class TransactionsFiltersCallbacks(
     val onClearDate: () -> Unit = {},
@@ -71,361 +68,154 @@ fun TransactionsFilters(
     callbacks: TransactionsFiltersCallbacks = TransactionsFiltersCallbacks(),
     modifier: Modifier = Modifier,
 ) {
-    var showDatePicker by remember { mutableStateOf(false) }
+    val semantics = MaterialTheme.semantic
     var showFilterSheet by remember { mutableStateOf(false) }
 
-    Column(modifier = modifier.fillMaxWidth()) {
-        // ============ 行 1：时段 ============
-        DateFilterRow(
-            filterDateLabel = state.filterDateLabel,
-            onClearDate = callbacks.onClearDate,
-            onJumpToCurrentMonth = callbacks.onJumpToCurrentMonth,
-            onSelectLastMonth = callbacks.onSelectLastMonth,
-            onSelectThisWeek = callbacks.onSelectThisWeek,
-            onShowCustomDatePicker = { showDatePicker = true },
-        )
+    // 生效筛选数量：分类(1) + 每个标签(1) + 时段非「全部」(1)
+    val dateActive = state.filterDateLabel != "全部"
+    val activeCount = (if (state.filterCategoryId != null) 1 else 0) +
+        state.filterTags.size +
+        (if (dateActive) 1 else 0)
 
-        if (showDatePicker) {
-            DateRangePickerDialog(
-                onDismiss = { showDatePicker = false },
-                onConfirm = { start, end ->
-                    callbacks.onSelectCustomDate(start, end)
-                    showDatePicker = false
-                },
+    val selectedCategoryName = state.filterCategoryId
+        ?.let { id -> categories.firstOrNull { it.id == id }?.name }
+    val hasSummary = selectedCategoryName != null || state.filterTags.isNotEmpty() || dateActive
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        // ============ 常驻行：类型 + 筛选触发 ============
+        ChipRow {
+            AppChip(
+                selected = state.filterType == "all",
+                onClick = { callbacks.onTypeChanged("all") },
+                label = "全部",
+            )
+            AppChip(
+                selected = state.filterType == "expense",
+                onClick = { callbacks.onTypeChanged("expense") },
+                label = "支出",
+                accent = semantics.expense,
+            )
+            AppChip(
+                selected = state.filterType == "income",
+                onClick = { callbacks.onTypeChanged("income") },
+                label = "收入",
+                accent = semantics.income,
+            )
+            Spacer(modifier = Modifier.width(Tokens.Spacing.xxs))
+            FilterTriggerChip(
+                label = "筛选",
+                activeCount = activeCount,
+                onClick = { showFilterSheet = true },
+                icon = Icons.Outlined.Tune,
             )
         }
 
-        // ============ 行 2：类型 + 筛选触发按钮（不含已选筛选）============
-        TypeAndFilterRow(
-            state = state,
-            onTypeChanged = callbacks.onTypeChanged,
-            onFilterClick = { showFilterSheet = true },
-        )
+        // ============ 摘要行：已生效筛选（可点即删） ============
+        if (hasSummary) {
+            ChipRow(verticalPadding = Tokens.Spacing.xxs) {
+                if (dateActive) {
+                    RemovableFilterChip(
+                        label = state.filterDateLabel,
+                        onRemove = callbacks.onClearDate,
+                    )
+                }
+                if (selectedCategoryName != null) {
+                    RemovableFilterChip(
+                        label = selectedCategoryName,
+                        onRemove = { callbacks.onCategoryChanged(null) },
+                    )
+                }
+                state.filterTags.forEach { tag ->
+                    RemovableFilterChip(
+                        label = "#$tag",
+                        onRemove = { callbacks.onTagToggled(tag) },
+                    )
+                }
+                Spacer(modifier = Modifier.width(Tokens.Spacing.xxs))
+                Text(
+                    text = "清空",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .height(Tokens.Chip.height)
+                        .padding(horizontal = Tokens.Spacing.xs)
+                        .clickableText {
+                            callbacks.onClearDate()
+                            callbacks.onCategoryChanged(null)
+                            callbacks.onClearAllTags()
+                        },
+                )
+            }
+        }
 
-        // ============ 行 3：已选筛选摘要（仅在有筛选时显示）============
-        SelectedFiltersRow(
-            state = state,
-            categories = categories,
-            onClearCategory = { callbacks.onCategoryChanged(null) },
-            onClearTag = { callbacks.onTagToggled(it) },
-        )
+        // ============ 期间合计（有日期筛选且有数据时）============
+        if (state.filterStartDate != null && (state.periodExpense > 0 || state.periodIncome > 0)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = Tokens.Spacing.screenHorizontal,
+                        vertical = Tokens.Spacing.xs,
+                    ),
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
+            ) {
+                if (state.periodExpense > 0) {
+                    com.aibill.android.presentation.components.AmountText(
+                        amount = state.periodExpense,
+                        type = com.aibill.android.domain.model.TransactionType.EXPENSE,
+                        style = com.aibill.android.presentation.theme.AmountTypography.Chip,
+                        showSign = false,
+                        color = semantics.expense,
+                    )
+                }
+                if (state.periodIncome > 0) {
+                    com.aibill.android.presentation.components.AmountText(
+                        amount = state.periodIncome,
+                        type = com.aibill.android.domain.model.TransactionType.INCOME,
+                        style = com.aibill.android.presentation.theme.AmountTypography.Chip,
+                        showSign = false,
+                        color = semantics.income,
+                    )
+                }
+            }
+        }
 
         // ============ 筛选 Sheet ============
-        // 条件渲染 + 关闭时先播完 hide 动画再销毁：
-        // scope.launch { sheetState.hide(); showFilterSheet = false }
-        // hide() 挂起直到动画结束，然后才置 false → if 条件变 false → 销毁。
+        // 条件渲染 + 关闭时先播完 hide 动画再销毁。
         if (showFilterSheet) {
             val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
             val sheetScope = rememberCoroutineScope()
+            val closeSheet = {
+                sheetScope.launch {
+                    sheetState.hide()
+                    showFilterSheet = false
+                }
+                Unit
+            }
             ModalBottomSheet(
-                onDismissRequest = {
-                    sheetScope.launch {
-                        sheetState.hide()
-                        showFilterSheet = false
-                    }
-                },
+                onDismissRequest = { closeSheet() },
                 sheetState = sheetState,
             ) {
                 FilterSheetContent(
                     state = state,
                     categories = categories,
                     availableTags = availableTags,
-                    onCategorySelected = { callbacks.onCategoryChanged(it) },
-                    onTagToggled = callbacks.onTagToggled,
-                    onClearAll = {
-                        callbacks.onCategoryChanged(null)
-                        callbacks.onClearAllTags()
-                    },
-                    onClose = {
-                        sheetScope.launch {
-                            sheetState.hide()
-                            showFilterSheet = false
-                        }
-                    },
+                    callbacks = callbacks,
+                    onClose = closeSheet,
                 )
             }
         }
-
-        // ============ 当前筛选下的合计（按需）============
-        if (state.filterStartDate != null && (state.periodExpense > 0 || state.periodIncome > 0)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = Tokens.Spacing.xl, vertical = Tokens.Spacing.xs),
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
-            ) {
-                if (state.periodExpense > 0) {
-                    Text(
-                        text = "支出 ¥${"%.2f".format(state.periodExpense / 100.0)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = ExpenseColor,
-                    )
-                }
-                if (state.periodIncome > 0) {
-                    Text(
-                        text = "收入 ¥${"%.2f".format(state.periodIncome / 100.0)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = IncomeColor,
-                    )
-                }
-            }
-        }
-    }
-}
-
-// =============================================================================
-// 行 1：时段筛选 chip 行
-// =============================================================================
-
-@Composable
-private fun DateFilterRow(
-    filterDateLabel: String,
-    onClearDate: () -> Unit,
-    onJumpToCurrentMonth: () -> Unit,
-    onSelectLastMonth: () -> Unit,
-    onSelectThisWeek: () -> Unit,
-    onShowCustomDatePicker: () -> Unit,
-) {
-    val isCustomRange = filterDateLabel != "全部" &&
-            filterDateLabel != "本月" &&
-            filterDateLabel != "上月" &&
-            filterDateLabel != "本周"
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = Tokens.Spacing.xl, vertical = Tokens.Spacing.sm),
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        FilterChip(
-            selected = filterDateLabel == "本周",
-            onClick = onSelectThisWeek,
-            label = { Text("本周") },
-        )
-        FilterChip(
-            selected = filterDateLabel == "本月",
-            onClick = onJumpToCurrentMonth,
-            label = { Text("本月") },
-        )
-        FilterChip(
-            selected = filterDateLabel == "上月",
-            onClick = onSelectLastMonth,
-            label = { Text("上月") },
-        )
-        FilterChip(
-            selected = filterDateLabel == "全部",
-            onClick = onClearDate,
-            label = { Text("全部") },
-        )
-        // 自定义范围：紧凑"更多"按钮代替长标签 chip
-        MoreDateButton(
-            label = if (isCustomRange) filterDateLabel else "更多",
-            isSelected = isCustomRange,
-            onClick = onShowCustomDatePicker,
-        )
     }
 }
 
 /**
- * 自定义日期按钮：紧凑，标签动态变化。
+ * 不占 48dp 触控区的轻量文字点击（用于「清空」这种次要操作）。
  */
-@Composable
-private fun MoreDateButton(
-    label: String,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .background(
-                color = if (isSelected) MaterialTheme.colorScheme.secondaryContainer
-                else MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = RoundedCornerShape(16.dp),
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Icon(
-            Icons.Default.KeyboardArrowDown,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
-            tint = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
+private fun Modifier.clickableText(onClick: () -> Unit): Modifier =
+    this.then(Modifier.clickable(onClick = onClick))
 
 // =============================================================================
-// 行 3：折叠筛选按钮 + 当前筛选摘要
-// =============================================================================
-
-@Composable
-private fun TypeAndFilterRow(
-    state: com.aibill.android.presentation.ui.transactions.TransactionsViewModel.TransactionsUiState,
-    onTypeChanged: (String) -> Unit,
-    onFilterClick: () -> Unit,
-) {
-    val hasFilter = state.filterCategoryId != null || state.filterTags.isNotEmpty()
-    val filterCount = (if (state.filterCategoryId != null) 1 else 0) + state.filterTags.size
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = Tokens.Spacing.xl, vertical = Tokens.Spacing.xs),
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        FilterChip(
-            selected = state.filterType == "all",
-            onClick = { onTypeChanged("all") },
-            label = { Text("全部") },
-        )
-        FilterChip(
-            selected = state.filterType == "expense",
-            onClick = { onTypeChanged("expense") },
-            label = { Text("支出") },
-            colors = FilterChipDefaults.filterChipColors(
-                selectedContainerColor = ExpenseColor.copy(alpha = 0.12f),
-                selectedLabelColor = ExpenseColor,
-            ),
-        )
-        FilterChip(
-            selected = state.filterType == "income",
-            onClick = { onTypeChanged("income") },
-            label = { Text("收入") },
-            colors = FilterChipDefaults.filterChipColors(
-                selectedContainerColor = IncomeColor.copy(alpha = 0.12f),
-                selectedLabelColor = IncomeColor,
-            ),
-        )
-        FilterTriggerButton(
-            label = "筛选",
-            count = filterCount,
-            isActive = hasFilter,
-            onClick = onFilterClick,
-        )
-    }
-}
-
-/**
- * 行 3：已选筛选摘要（仅在有筛选时显示，独立行避免挤占类型筛选）。
- */
-@Composable
-private fun SelectedFiltersRow(
-    state: com.aibill.android.presentation.ui.transactions.TransactionsViewModel.TransactionsUiState,
-    categories: List<Category>,
-    onClearCategory: () -> Unit,
-    onClearTag: (String) -> Unit,
-) {
-    val categoryName = state.filterCategoryId
-        ?.let { id -> categories.firstOrNull { it.id == id }?.let { "${it.icon} ${it.name}" } }
-    val hasFilter = categoryName != null || state.filterTags.isNotEmpty()
-    if (!hasFilter) return
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = Tokens.Spacing.xl, vertical = Tokens.Spacing.xs),
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (categoryName != null) {
-            RemovableChip(
-                text = categoryName,
-                onRemove = onClearCategory,
-            )
-        }
-        state.filterTags.forEach { tag ->
-            RemovableChip(
-                text = "#$tag",
-                onRemove = { onClearTag(tag) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun FilterTriggerButton(
-    label: String,
-    count: Int,
-    isActive: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .background(
-                color = if (isActive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                else MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = RoundedCornerShape(16.dp),
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Icon(
-            Icons.Default.Tune,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
-            tint = if (isActive) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = if (isActive) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (count > 0) {
-            Text(
-                text = "·$count",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-    }
-}
-
-@Composable
-private fun RemovableChip(text: String, onRemove: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .background(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = RoundedCornerShape(16.dp),
-            )
-            .clickable(onClick = onRemove)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-            text = "×",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-// =============================================================================
-// 筛选 Sheet
+// 筛选 Sheet 内容：时段（第一分区）→ 分类 → 标签 → 完成按钮
 // =============================================================================
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -434,12 +224,25 @@ private fun FilterSheetContent(
     state: com.aibill.android.presentation.ui.transactions.TransactionsViewModel.TransactionsUiState,
     categories: List<Category>,
     availableTags: List<String>,
-    onCategorySelected: (Int?) -> Unit,
-    onTagToggled: (String) -> Unit,
-    onClearAll: () -> Unit,
+    callbacks: TransactionsFiltersCallbacks,
     onClose: () -> Unit,
 ) {
-    Column(modifier = Modifier.padding(Tokens.Spacing.lg)) {
+    val semantics = MaterialTheme.semantic
+    var showDatePicker by remember { mutableStateOf(false) }
+    val hasAnyFilter = state.filterCategoryId != null ||
+        state.filterTags.isNotEmpty() ||
+        state.filterDateLabel != "全部"
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = Tokens.Spacing.screenHorizontal,
+                end = Tokens.Spacing.screenHorizontal,
+                bottom = Tokens.Spacing.lg,
+            ),
+    ) {
+        // 标题行
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -449,106 +252,119 @@ private fun FilterSheetContent(
                 text = "筛选",
                 style = MaterialTheme.typography.titleMedium,
             )
-            if (state.filterCategoryId != null || state.filterTags.isNotEmpty()) {
+            if (hasAnyFilter) {
                 Text(
                     text = "清空",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable {
-                        onClearAll()
+                    modifier = Modifier.clickableText {
+                        callbacks.onClearDate()
+                        callbacks.onCategoryChanged(null)
+                        callbacks.onClearAllTags()
                     },
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(Tokens.Spacing.md))
-
-        if (categories.isNotEmpty()) {
-            Text(
-                text = "分类",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(modifier = Modifier.height(Tokens.Spacing.xs))
-            // 全部分类 + 各分类（网格式 chip）
-            FlowChipGroup(
-                items = listOf<Pair<Int?, String>>(null to "全部") +
-                        categories.map { it.id to "${it.icon} ${it.name}" },
-                selectedId = state.filterCategoryId,
-                onSelect = onCategorySelected,
-            )
-        }
-
-        if (availableTags.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(Tokens.Spacing.md))
-            Text(
-                text = "标签",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(modifier = Modifier.height(Tokens.Spacing.xs))
-            FlowChipGroup(
-                items = availableTags.map { it to "#$it" },
-                selectedIds = state.filterTags.toSet(),
-                onToggle = { onTagToggled(it) },
-            )
-        }
-
         Spacer(modifier = Modifier.height(Tokens.Spacing.lg))
 
-        androidx.compose.material3.Button(
+        // ---- 分区 1：时段 ----
+        SheetSectionLabel("时段")
+        FlowChips {
+            val label = state.filterDateLabel
+            AppChip(
+                selected = label == "本周",
+                onClick = callbacks.onSelectThisWeek,
+                label = "本周",
+            )
+            AppChip(
+                selected = label == "本月",
+                onClick = callbacks.onJumpToCurrentMonth,
+                label = "本月",
+            )
+            AppChip(
+                selected = label == "上月",
+                onClick = callbacks.onSelectLastMonth,
+                label = "上月",
+            )
+            AppChip(
+                selected = label == "全部",
+                onClick = callbacks.onClearDate,
+                label = "全部",
+            )
+            val isCustom = label != "全部" && label != "本月" &&
+                label != "上月" && label != "本周"
+            AppChip(
+                selected = isCustom,
+                onClick = { showDatePicker = true },
+                label = if (isCustom) label else "自定义",
+            )
+        }
+
+        // ---- 分区 2：分类 ----
+        if (categories.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(Tokens.Spacing.lg))
+            SheetSectionLabel("分类")
+            FlowChips {
+                AppChip(
+                    selected = state.filterCategoryId == null,
+                    onClick = { callbacks.onCategoryChanged(null) },
+                    label = "全部",
+                )
+                categories.forEach { cat ->
+                    AppChip(
+                        selected = state.filterCategoryId == cat.id,
+                        onClick = { callbacks.onCategoryChanged(cat.id) },
+                        label = cat.name,
+                    )
+                }
+            }
+        }
+
+        // ---- 分区 3：标签 ----
+        if (availableTags.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(Tokens.Spacing.lg))
+            SheetSectionLabel("标签")
+            FlowChips {
+                availableTags.forEach { tag ->
+                    AppChip(
+                        selected = tag in state.filterTags,
+                        onClick = { callbacks.onTagToggled(tag) },
+                        label = "#$tag",
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(Tokens.Spacing.xl))
+
+        PrimaryButtonBlock(
+            text = "完成",
             onClick = onClose,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("完成")
-        }
+        )
+    }
+
+    if (showDatePicker) {
+        DateRangePickerDialog(
+            onDismiss = { showDatePicker = false },
+            onConfirm = { start, end ->
+                callbacks.onSelectCustomDate(start, end)
+                showDatePicker = false
+            },
+        )
     }
 }
 
-/** 单选 chip 组（用于分类） */
-@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun FlowChipGroup(
-    items: List<Pair<Int?, String>>,
-    selectedId: Int?,
-    onSelect: (Int?) -> Unit,
-) {
-    androidx.compose.foundation.layout.FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs),
-        verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs),
-    ) {
-        items.forEach { (id, label) ->
-            FilterChip(
-                selected = id == selectedId,
-                onClick = { onSelect(id) },
-                label = { Text(label) },
-            )
-        }
-    }
-}
-
-/** 多选 chip 组（用于标签） */
-@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun FlowChipGroup(
-    items: List<Pair<String, String>>,
-    selectedIds: Set<String>,
-    onToggle: (String) -> Unit,
-) {
-    androidx.compose.foundation.layout.FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs),
-        verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs),
-    ) {
-        items.forEach { (id, label) ->
-            FilterChip(
-                selected = id in selectedIds,
-                onClick = { onToggle(id) },
-                label = { Text(label) },
-            )
-        }
-    }
+private fun SheetSectionLabel(text: String) {
+    Text(
+        text = text,
+        style = com.aibill.android.presentation.theme.AppTextStyles.SectionLabel,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(bottom = Tokens.Spacing.sm),
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -580,5 +396,3 @@ private fun DateRangePickerDialog(
         )
     }
 }
-
-

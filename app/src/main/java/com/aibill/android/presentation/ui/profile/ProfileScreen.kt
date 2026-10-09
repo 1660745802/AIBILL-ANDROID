@@ -1,11 +1,9 @@
 package com.aibill.android.presentation.ui.profile
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,19 +14,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Category
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -41,19 +34,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aibill.android.presentation.components.AppHeroCard
 import com.aibill.android.presentation.components.AppTopBar
 import com.aibill.android.presentation.components.ConfirmDialog
+import com.aibill.android.presentation.components.GroupedDivider
+import com.aibill.android.presentation.components.GroupedList
+import com.aibill.android.presentation.components.GroupedRow
+import com.aibill.android.presentation.components.Pill
+import com.aibill.android.presentation.components.PillTone
+import com.aibill.android.presentation.components.SectionHeader
+import com.aibill.android.presentation.components.StatCell
 import com.aibill.android.presentation.theme.AiBillTheme
-import com.aibill.android.presentation.theme.BrandGradientSubtle
+import com.aibill.android.presentation.theme.AmountTypography
 import com.aibill.android.presentation.theme.Tokens
+import com.aibill.android.presentation.theme.semantic
 
 /**
  * Profile 页所有导航回调（合并到一个参数，避免 LongParameterList）。
@@ -128,62 +126,95 @@ fun ProfileScreen(
                 )
             }
 
+            // ============ 内容与数据 ============
             item(key = "section_content") {
-                SectionLabel("我的内容")
+                SectionHeader(title = "内容与数据")
             }
-            item(key = "content_card") {
-                MenuCard {
-                    ProfileMenuItem(
-                        icon = Icons.Default.Category,
+            item(key = "content_group") {
+                GroupedList {
+                    GroupedRow(
                         title = "分类管理",
                         subtitle = "管理收支分类",
+                        icon = Icons.Default.Category,
+                        iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        iconBackground = MaterialTheme.colorScheme.surfaceContainerHighest,
                         onClick = navigation.onCategoryManage,
                     )
-                    MenuDivider()
-                    ProfileMenuItem(
-                        icon = Icons.Default.AccountBalance,
+                    GroupedDivider()
+                    GroupedRow(
                         title = "账户管理",
                         subtitle = "管理钱包和银行卡",
+                        icon = Icons.Default.AccountBalanceWallet,
+                        iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        iconBackground = MaterialTheme.colorScheme.surfaceContainerHighest,
                         onClick = navigation.onAccountManage,
                     )
-                    MenuDivider()
-                    ProfileMenuItem(
-                        icon = Icons.Default.Delete,
+                    GroupedDivider()
+                    GroupedRow(
                         title = "回收站",
                         subtitle = "已删除的记录",
-                        badge = trashCount.takeIf { it > 0 },
+                        icon = Icons.Default.DeleteOutline,
+                        iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        iconBackground = MaterialTheme.colorScheme.surfaceContainerHighest,
                         onClick = navigation.onTrash,
+                        trailing = {
+                            if (trashCount > 0) {
+                                Pill(text = "$trashCount", tone = PillTone.Neutral)
+                            }
+                        },
                     )
                 }
             }
 
+            // ============ 自动化与安全 ============
             item(key = "section_automation") {
-                SectionLabel("自动化")
+                SectionHeader(title = "自动化与安全")
             }
-            item(key = "automation_card") {
-                MenuCard {
-                    ProfileMenuItem(
-                        icon = Icons.Default.Notifications,
+            item(key = "automation_group") {
+                GroupedList {
+                    GroupedRow(
                         title = "通知中心",
                         subtitle = "查看待确认的自动记账",
+                        icon = Icons.Default.NotificationsActive,
+                        iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        iconBackground = MaterialTheme.colorScheme.surfaceContainerHighest,
                         onClick = navigation.onNotificationCenter,
                     )
-                    MenuDivider()
-                    ProfileMenuItem(
-                        icon = Icons.Default.Shield,
+                    GroupedDivider()
+                    GroupedRow(
                         title = "权限与保活",
                         subtitle = "通知监听、自启动、电池优化",
+                        icon = Icons.Default.Security,
+                        iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        iconBackground = MaterialTheme.colorScheme.surfaceContainerHighest,
                         onClick = navigation.onPermissionGuide,
+                    )
+                    GroupedDivider()
+                    GroupedRow(
+                        title = "设置",
+                        subtitle = "外观、隐私、数据与关于",
+                        icon = Icons.Default.Settings,
+                        iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        iconBackground = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        onClick = navigation.onSettings,
                     )
                 }
             }
 
-            item(key = "danger_card") {
+            // ============ 退出登录（降级为普通一行） ============
+            item(key = "logout_group") {
                 Spacer(modifier = Modifier.height(Tokens.Spacing.sm))
-                DangerCard(
-                    title = "退出登录",
-                    onClick = { showLogoutConfirm = true },
-                )
+                GroupedList {
+                    GroupedRow(
+                        title = "退出登录",
+                        icon = Icons.AutoMirrored.Filled.Logout,
+                        iconTint = MaterialTheme.semantic.danger,
+                        iconBackground = MaterialTheme.semantic.dangerContainer.copy(alpha = 0.4f),
+                        titleColor = MaterialTheme.semantic.danger,
+                        showChevron = false,
+                        onClick = { showLogoutConfirm = true },
+                    )
+                }
             }
         }
     }
@@ -194,12 +225,14 @@ fun ProfileScreen(
 // =============================================================================
 
 /**
- * 用户 Hero 卡（主题色渐变）。
+ * 用户 Hero 卡。
  *
  * 设计要点：
- * - 头像用首字符圆形（避免 emoji 跨设备不一致）
- * - 副标题展示用户名（@username）
- * - 底部单指标：累计笔数（**不展示金额**，避免和首页/统计冲突）
+ * - 放弃写死的品牌渐变，改用 [AppHeroCard] 的 `surfaceContainerHigh` 纯色调分层，
+ *   明暗模式自动成立（渐变版深色模式会糊）。
+ * - 头像用首字符圆形（避免 emoji 跨设备不一致）。
+ * - 底部用共享 [StatCell] 展示唯一成就指标：累计记账笔数。
+ * - 右上角一个「已同步」小 [Pill]。
  */
 @Composable
 private fun UserHeroCard(
@@ -207,270 +240,58 @@ private fun UserHeroCard(
     username: String,
     totalTransactions: Int,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(Tokens.Radius.xl),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-    ) {
-        // 柔和品牌渐变背景下的文字色：
-        // - Light mode：浅 teal 渐变 + 深 teal 文字 (onPrimaryContainer)
-        // - Dark mode：接受以 teal 系色文本表达（柔和优先）
-        val heroTextColor = MaterialTheme.colorScheme.onPrimaryContainer
-        val heroTextSecondary = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-        val heroAvatarBg = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-        val heroAvatarText = MaterialTheme.colorScheme.onPrimaryContainer
-        val heroIconTint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(brush = BrandGradientSubtle, shape = RoundedCornerShape(Tokens.Radius.xl))
-                .padding(horizontal = Tokens.Spacing.xxl, vertical = Tokens.Spacing.xl),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // 头像：主色 container + 深 teal 文字（柔和统一）
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .background(color = heroAvatarBg, shape = CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = displayName.firstOrNull()?.toString() ?: "U",
-                        color = heroAvatarText,
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-                Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = displayName,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = heroTextColor,
-                    )
-                    if (username.isNotBlank()) {
-                        Text(
-                            text = "@$username",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = heroTextSecondary,
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(Tokens.Spacing.xl))
-
-            // 成就指标：单列“累计笔数”（零金额）
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                StatCell(
-                    icon = Icons.Default.Category,
-                    label = "累计笔数",
-                    value = "$totalTransactions 笔",
-                    iconTint = heroIconTint,
-                    labelColor = heroTextSecondary,
-                    valueColor = heroTextColor,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatCell(
-    icon: ImageVector,
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier,
-    iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-    labelColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-    valueColor: Color = MaterialTheme.colorScheme.onSurface,
-) {
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = iconTint,
-            modifier = Modifier.size(Tokens.IconSize.md),
-        )
-        Spacer(modifier = Modifier.size(Tokens.Spacing.sm))
-        Column {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = labelColor,
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = valueColor,
-            )
-        }
-    }
-}
-
-@Composable
-private fun SectionLabel(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(start = Tokens.Spacing.xs),
-    )
-}
-
-@Composable
-private fun MenuCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(Tokens.Radius.lg),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = Tokens.Elevation.low),
-    ) {
-        Column(content = content)
-    }
-}
-
-@Composable
-private fun MenuDivider() {
-    HorizontalDivider(
-        modifier = Modifier.padding(start = 64.dp, end = Tokens.Spacing.lg),
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-        thickness = Tokens.Border.thin,
-    )
-}
-
-@Composable
-private fun ProfileMenuItem(
-    icon: ImageVector,
-    title: String,
-    subtitle: String? = null,
-    iconBg: Color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-    tint: Color = MaterialTheme.colorScheme.primary,
-    badge: Int? = null,
-    onClick: () -> Unit = {},
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = Tokens.Spacing.lg, vertical = Tokens.Spacing.md),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // 左侧图标圆角方块
-        Box(
-            modifier = Modifier
-                .size(Tokens.Avatar.md)
-                .background(color = iconBg, shape = RoundedCornerShape(10.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
-        }
-        Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
-        // 中间标题+副标题
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                title,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Medium,
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            if (subtitle != null) {
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        // 右侧：Badge 或 Chevron
-        if (badge != null) {
-            BadgePill(count = badge)
-            Spacer(modifier = Modifier.size(Tokens.Spacing.sm))
-        }
-        Icon(
-            Icons.Default.ChevronRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-            modifier = Modifier.size(Tokens.IconSize.sm),
-        )
-    }
-}
-
-/**
- * 数字徽章（低调灰底 pill）。仅在 count > 0 时显示。
- */
-@Composable
-private fun BadgePill(count: Int) {
-    Box(
-        modifier = Modifier
-            .background(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = RoundedCornerShape(Tokens.Radius.pill),
-            )
-            .padding(horizontal = Tokens.Spacing.sm, vertical = 2.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = "$count",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
-/**
- * 危险操作项。低饱和 errorContainer 背景，柔和但仍可识别。
- */
-@Composable
-private fun DangerCard(title: String, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(Tokens.Radius.lg),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+    AppHeroCard(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Tokens.Spacing.lg, vertical = Tokens.Spacing.md),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                Icons.AutoMirrored.Filled.Logout,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier.size(Tokens.IconSize.md),
-            )
+            // 头像：主色 container + 深 teal 文字
+            Box(
+                modifier = Modifier
+                    .size(Tokens.Avatar.hero)
+                    .background(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = CircleShape,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = displayName.firstOrNull()?.toString() ?: "U",
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
             Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
-            Text(
-                title,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                fontWeight = FontWeight.Medium,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.weight(1f),
-            )
-            Icon(
-                Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.5f),
-                modifier = Modifier.size(Tokens.IconSize.sm),
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = displayName,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (username.isNotBlank()) {
+                    Text(
+                        text = "@$username",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Pill(text = "已同步", tone = PillTone.Primary)
         }
+
+        Spacer(modifier = Modifier.height(Tokens.Spacing.xl))
+
+        // 唯一成就指标：累计记账笔数（等宽数字，不展示金额）
+        StatCell(
+            label = "累计记账",
+            value = "$totalTransactions 笔",
+            valueStyle = AmountTypography.Stat,
+        )
     }
 }
 

@@ -119,11 +119,15 @@ class UserPreferences @Inject constructor(
 
     // --- Dynamic Color（Android 12+ Material You） ---
     /**
-     * PR C1：用户是否启用 Material You 动态取色（跟随系统壁纸色调）。
-     * 默认 true；用户可在 Settings → 主题 中关闭以恢复品牌 Teal 配色。
+     * 用户是否启用 Material You 动态取色（跟随系统壁纸色调）。
+     *
+     * 默认 **false**：记账 App 的 primary（品牌青绿）与「支出红 / 收入绿」是一整套
+     * 配套的语义契约。跟随壁纸取色会让 primary 变成壁纸里的任意颜色，出现
+     * 「主按钮和支出金额同色」「选中 chip 和危险操作同色」这类语义冲突。
+     * 想尝鲜的用户可在 Settings → 外观 手动打开。
      */
     val dynamicColorEnabled: Flow<Boolean> = dataStore.data.map {
-        it[Keys.DYNAMIC_COLOR_ENABLED] ?: true
+        it[Keys.DYNAMIC_COLOR_ENABLED] ?: false
     }
 
     suspend fun setDynamicColorEnabled(enabled: Boolean) {

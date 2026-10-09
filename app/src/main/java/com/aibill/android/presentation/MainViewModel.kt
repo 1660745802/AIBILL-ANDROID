@@ -43,9 +43,15 @@ class MainViewModel @Inject constructor(
         viewModelScope, SharingStarted.Eagerly, "system",
     )
 
-    /** 是否启用 Material You 动态取色（Android 12+） */
+    /**
+     * 是否启用 Material You 动态取色（Android 12+）。
+     *
+     * 初始值必须和 `UserPreferences.dynamicColorEnabled` 的默认值一致（false）：
+     * 否则 DataStore 首次 emit 之前，UI 会先用 `true` 渲染一帧动态色再翻转成品牌色，
+     * 冷启动时肉眼可见地闪一下。
+     */
     val dynamicColorEnabled: StateFlow<Boolean> = userPreferences.dynamicColorEnabled.stateIn(
-        viewModelScope, SharingStarted.Eagerly, true,
+        viewModelScope, SharingStarted.Eagerly, false,
     )
 
     /** 是否从最近任务中隐藏 */

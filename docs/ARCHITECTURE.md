@@ -82,7 +82,8 @@ app/src/main/java/com/aibill/android/
 ├── presentation/
 │   ├── MainActivity.kt + MainViewModel.kt
 │   ├── navigation/              # 14 条类型安全路由 + NavHost + BottomNavBar
-│   ├── theme/                   # Theme/Type/Shape/AppButtons
+│   ├── theme/                   # 设计令牌：Tokens/Colors/Type/Shape/Motion/AppButtons
+│   ├── components/              # 共享 UI 组件：卡片/分组列表/Chip/空态/金额/列表行
 │   ├── widget/                  # Glance 桌面小组件（QuickRecord/MonthlySummary）
 │   └── ui/                      # 10 个模块（home/transactions/statistics/...）
 ├── service/                     # 后台服务（20 个：通知/同步/无障碍/小组件/...）
@@ -469,4 +470,6 @@ sealed class AuthEvent {
 
 ### 10.3 UI 错误展示
 
-成功 = Toast / 数据刷新 / 页面跳转；失败 = Snackbar + 错误信息 + 重试按钮；破坏性操作（删除/退出）= 确认弹窗或撤销机制；加载中 = CircularProgress / Shimmer；空列表 = 空状态插图 + 引导文案。
+成功 = Toast / 数据刷新 / 页面跳转；失败 = Snackbar + 错误信息 + 重试按钮；破坏性操作（删除/退出）= 确认弹窗或撤销机制；加载中 = `LoadingState`；空列表 = `EmptyState`（矢量图标 + 邀请行动文案）。
+
+**UI 层的实现约定详见 [UI-DESIGN.md](UI-DESIGN.md)**：设计令牌、语义色（红=支出/绿=收入，明暗自适应）、等宽数字排版、共享组件清单、卡片数量上限、动态取色为何默认关闭。

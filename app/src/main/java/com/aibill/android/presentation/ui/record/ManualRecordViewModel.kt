@@ -59,7 +59,11 @@ class ManualRecordViewModel @Inject constructor(
 
     sealed class UiEvent {
         data class ShowToast(val message: String) : UiEvent()
-        data object SaveSuccess : UiEvent()
+        /**
+         * 保存成功。自带展示文案，让 UI 层不必再靠关键字匹配去分辨成功/失败
+         * （原先 UI 还要额外弹一个 Toast，形成双重反馈）。
+         */
+        data class SaveSuccess(val message: String) : UiEvent()
     }
 
     private val _uiState = MutableStateFlow(RecordUiState())
@@ -228,6 +232,13 @@ class ManualRecordViewModel @Inject constructor(
         _uiState.update { it.copy(amountText = newText, amountFen = parsed) }
     }
 
+    /**
+     * 结算当前表达式（把 `12+3` 算成 `15.00`）。
+     *
+     * ⚠️ 当前**没有 UI 调用点**——自绘数字键盘上没有「=」键（改版前也没有）。
+     * 保留是因为 [AmountUtils.parseExpression] 本身支持四则运算，
+     * 将来若在键盘上加运算符就必须接上它。删除前请确认没有外部依赖。
+     */
     fun onAmountEquals() {
         val current = _uiState.value.amountText
         val parsed = AmountUtils.parseExpression(current)
@@ -341,8 +352,7 @@ class ManualRecordViewModel @Inject constructor(
             val result = transactionRepository.createTransactions(listOf(transaction))
             when (result) {
                 is Result.Success -> {
-                    _uiEvent.send(UiEvent.ShowToast("记录成功"))
-                    _uiEvent.send(UiEvent.SaveSuccess)
+                    _uiEvent.send(UiEvent.SaveSuccess("已记录，继续记下一笔"))
                     streakTracker.onTransactionRecorded()
                     resetForm()
                 }
@@ -350,8 +360,7 @@ class ManualRecordViewModel @Inject constructor(
                     // PR #29：仅网络错误（ERROR_NETWORK）才落离线，业务错误（422/5001 等）弹 Snackbar 让用户修正
                     if (result.code == Result.ERROR_NETWORK) {
                         transactionRepository.createTransactionOffline(transaction)
-                        _uiEvent.send(UiEvent.ShowToast("已离线保存"))
-                        _uiEvent.send(UiEvent.SaveSuccess)
+                        _uiEvent.send(UiEvent.SaveSuccess("已离线保存，联网后会自动补传"))
                         resetForm()
                     } else {
                         _uiEvent.send(UiEvent.ShowToast("保存失败: ${result.message}"))

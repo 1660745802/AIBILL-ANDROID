@@ -1,11 +1,9 @@
 package com.aibill.android.presentation.ui.settings
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,22 +17,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.KeyOff
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -52,7 +48,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -61,14 +56,23 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.presentation.components.AppTopBar
+import com.aibill.android.presentation.components.GroupedDivider
+import com.aibill.android.presentation.components.GroupedList
+import com.aibill.android.presentation.components.GroupedRow
+import com.aibill.android.presentation.components.SectionHeader
+import com.aibill.android.presentation.components.SegmentedControl
 import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.Tokens
+import com.aibill.android.presentation.theme.semantic
 
 /**
  * 设置页。**重设计**：
- * - 顶部账号卡（点击展开改密）
- * - 5 个语义分组：智能与自动 / 隐私与安全 / 外观 / 数据 / 关于
- * - 所有设置项走 [SettingsCard] + 统一图标/标题/副标题/控件样式
+ * - 顶部账号卡（点击展开改密），作为唯一的视觉重点
+ * - 语义分组：账号 / 智能与自动 / 隐私与安全 / 外观 / 数据 / 关于
+ * - 所有行走共享 [GroupedList] / [GroupedRow]，组标题走共享 [SectionHeader]（中性灰）
+ * - 主题切换用共享 [SegmentedControl]（替代 FilterChip）
+ * - 通知监听状态用 [GroupedRow] 的 trailing 槽放「色点 + 箭头」（替代 Switch）
+ * - 检查更新带 loading 态
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,6 +85,7 @@ fun SettingsScreen(
     val displayName by viewModel.displayName.collectAsStateWithLifecycle()
     val username by viewModel.username.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val dynamicColorEnabled by viewModel.dynamicColorEnabled.collectAsStateWithLifecycle()
     val serverUrl by viewModel.serverUrl.collectAsStateWithLifecycle()
     val hideFromRecents by viewModel.hideFromRecents.collectAsStateWithLifecycle()
     val notificationPrivacy by viewModel.notificationPrivacy.collectAsStateWithLifecycle()
@@ -90,6 +95,7 @@ fun SettingsScreen(
     val context = LocalContext.current
 
     var showPasswordDialog by rememberSaveable { mutableStateOf(false) }
+    var checkingUpdate by remember { mutableStateOf(false) }
     var pendingUpdate by remember {
         mutableStateOf<com.aibill.android.service.UpdateManager.UpdateInfo?>(null)
     }
@@ -100,6 +106,8 @@ fun SettingsScreen(
             snackbarHostState.showSnackbar(msg)
         }
     }
+
+    val sidePadding = Modifier.padding(horizontal = Tokens.Spacing.screenHorizontal)
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -113,73 +121,61 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
         ) {
-            // 顶部账号卡
-            AccountCard(
-                displayName = displayName,
-                username = username,
-                onClick = { showPasswordDialog = true },
-                modifier = Modifier.padding(
-                    start = Tokens.Spacing.screenHorizontal,
-                    end = Tokens.Spacing.screenHorizontal,
-                    top = Tokens.Spacing.md,
-                ),
-            )
+            // ============ 账号（唯一视觉重点） ============
+            SectionHeader(title = "账号", modifier = sidePadding.padding(top = Tokens.Spacing.md))
+            GroupedList(modifier = sidePadding) {
+                AccountRow(
+                    displayName = displayName,
+                    username = username,
+                    onClick = { showPasswordDialog = true },
+                )
+            }
 
-            // ============ 分组1：智能与自动 ============
-            SectionLabel(
-                title = "智能与自动",
-                modifier = Modifier.padding(horizontal = Tokens.Spacing.screenHorizontal),
-            )
-            SettingsCard(
-                modifier = Modifier.padding(horizontal = Tokens.Spacing.screenHorizontal),
-            ) {
-                // 通知监听状态行（特殊：不是开关，是状态+跳转）
+            // ============ 智能与自动 ============
+            SectionHeader(title = "智能与自动", modifier = sidePadding)
+            GroupedList(modifier = sidePadding) {
+                // 通知监听状态行（状态 + 跳转，不是开关）
                 NotificationStatusRow(
                     granted = uiState.notificationListenerGranted,
                     onNavigate = onNavigateToPermissionGuide,
                 )
-                SettingsDivider()
-                SettingsSwitchRow(
+                GroupedDivider()
+                SwitchRow(
                     icon = Icons.Default.NotificationsActive,
                     title = "通知栏快捷记账",
                     subtitle = "常驻通知栏，点击快速记一笔",
                     checked = quickEntryEnabled,
                     onCheckedChange = { viewModel.onQuickEntryChanged(it, context) },
                 )
-                SettingsDivider()
-                SettingsActionRow(
-                    icon = Icons.Default.Sync,
+                GroupedDivider()
+                GroupedRow(
                     title = "同步记账规则",
                     subtitle = "从服务端拉取最新规则",
+                    icon = Icons.Default.Sync,
                     onClick = { viewModel.syncRules() },
                 )
             }
 
-            // ============ 分组2：隐私与安全 ============
-            SectionLabel(
-                title = "隐私与安全",
-                modifier = Modifier.padding(horizontal = Tokens.Spacing.screenHorizontal),
-            )
-            SettingsCard(
-                modifier = Modifier.padding(horizontal = Tokens.Spacing.screenHorizontal),
-            ) {
-                SettingsSwitchRow(
+            // ============ 隐私与安全 ============
+            SectionHeader(title = "隐私与安全", modifier = sidePadding)
+            GroupedList(modifier = sidePadding) {
+                SwitchRow(
                     icon = Icons.Default.Lock,
                     title = "应用锁",
                     subtitle = "从后台返回时需要验证身份",
                     checked = appLockEnabled,
                     onCheckedChange = { viewModel.onAppLockChanged(it) },
                 )
-                SettingsDivider()
-                SettingsSwitchRow(
+                GroupedDivider()
+                SwitchRow(
                     icon = Icons.Default.VisibilityOff,
                     title = "通知金额遮罩",
                     subtitle = "通知中金额显示为 ¥***",
                     checked = notificationPrivacy,
                     onCheckedChange = { viewModel.onNotificationPrivacyChanged(it) },
                 )
-                SettingsDivider()
-                SettingsSwitchRow(
+                GroupedDivider()
+                SwitchRow(
                     icon = Icons.Default.KeyOff,
                     title = "隐藏最近任务",
                     subtitle = "App 不出现在系统最近任务列表",
@@ -188,88 +184,66 @@ fun SettingsScreen(
                 )
             }
 
-            // ============ 分组3：外观 ============
-            SectionLabel(
-                title = "外观",
-                modifier = Modifier.padding(horizontal = Tokens.Spacing.screenHorizontal),
-            )
-            SettingsCard(
-                modifier = Modifier.padding(horizontal = Tokens.Spacing.screenHorizontal),
-            ) {
-                Column(modifier = Modifier.padding(Tokens.Spacing.lg)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.DarkMode,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(Tokens.IconSize.md),
-                        )
-                        Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "深色模式",
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(
-                                "跟随系统、浅色或深色",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(Tokens.Spacing.md))
-                    Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm)) {
-                        listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色").forEach { (value, label) ->
-                            FilterChip(
-                                selected = themeMode == value,
-                                onClick = { viewModel.onThemeChanged(value) },
-                                label = { Text(label) },
-                            )
-                        }
-                    }
-                }
+            // ============ 外观 ============
+            SectionHeader(title = "外观", modifier = sidePadding)
+            GroupedList(modifier = sidePadding) {
+                ThemeRow(
+                    themeMode = themeMode,
+                    onThemeChanged = { viewModel.onThemeChanged(it) },
+                )
+                GroupedDivider()
+                SwitchRow(
+                    icon = Icons.Default.ColorLens,
+                    title = "跟随壁纸配色",
+                    subtitle = "Android 12+ 取壁纸色替换品牌色；开启后记账语义色仍保持不变",
+                    checked = dynamicColorEnabled,
+                    onCheckedChange = { viewModel.onDynamicColorChanged(it) },
+                )
             }
 
-            // ============ 分组4：数据 ============
-            SectionLabel(
-                title = "数据",
-                modifier = Modifier.padding(horizontal = Tokens.Spacing.screenHorizontal),
-            )
-            SettingsCard(
-                modifier = Modifier.padding(horizontal = Tokens.Spacing.screenHorizontal),
-            ) {
-                SettingsInfoRow(
+            // ============ 数据 ============
+            SectionHeader(title = "数据", modifier = sidePadding)
+            GroupedList(modifier = sidePadding) {
+                InfoRow(
                     icon = Icons.Default.Dns,
                     title = "服务器地址",
                     value = serverUrl.ifBlank { "未配置" },
                 )
-                SettingsDivider()
-                SettingsActionRow(
-                    icon = Icons.Default.Sync,
+                GroupedDivider()
+                GroupedRow(
                     title = "导出日志",
                     subtitle = "生成分享文件给开发者排查",
+                    icon = Icons.Default.Share,
                     onClick = { viewModel.onExportLogs(context) },
                 )
             }
 
-            // ============ 分组5：关于 ============
-            SectionLabel(
-                title = "关于",
-                modifier = Modifier.padding(horizontal = Tokens.Spacing.screenHorizontal),
-            )
-            SettingsCard(
-                modifier = Modifier.padding(horizontal = Tokens.Spacing.screenHorizontal),
-            ) {
-                SettingsActionRow(
-                    icon = Icons.Default.SystemUpdate,
+            // ============ 关于 ============
+            SectionHeader(title = "关于", modifier = sidePadding)
+            GroupedList(modifier = sidePadding) {
+                GroupedRow(
                     title = "检查更新",
-                    subtitle = "查看最新版本",
+                    subtitle = if (checkingUpdate) "正在获取最新版本…" else "查看最新版本",
+                    icon = Icons.Default.SystemUpdate,
                     onClick = {
-                        viewModel.checkUpdate { result ->
-                            if (result is SettingsViewModel.UpdateCheckResult.Available) {
-                                pendingUpdate = result.info
+                        if (!checkingUpdate) {
+                            checkingUpdate = true
+                            viewModel.checkUpdate { result ->
+                                checkingUpdate = false
+                                if (result is SettingsViewModel.UpdateCheckResult.Available) {
+                                    pendingUpdate = result.info
+                                }
                             }
+                        }
+                    },
+                    showChevron = !checkingUpdate,
+                    trailing = {
+                        if (checkingUpdate) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(Tokens.IconSize.md),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                         }
                     },
                 )
@@ -368,38 +342,30 @@ fun SettingsScreen(
 }
 
 // =============================================================================
-// 通用组件
+// 行组件（全部构建在共享 GroupedList 规范之上）
 // =============================================================================
 
 /**
- * 顶部账号卡（点击进入改密）。
- * 普通 Card + 头像首字符 + 昵称 + 用户名。
+ * 账号行：头像首字符 + 昵称 + 用户名，点击进入改密。
+ * 用 [GroupedRow] 的 trailing 槽放头像？不，头像在左侧语义更强——
+ * 这里直接复用 GroupedRow 的图标位放一个圆形首字符头像效果不自然，
+ * 故单独排布，但仍遵守 GroupedRow 的间距与触控规范。
  */
 @Composable
-private fun AccountCard(
+private fun AccountRow(
     displayName: String,
     username: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(Tokens.Radius.lg),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        elevation = CardDefaults.cardElevation(defaultElevation = Tokens.Elevation.low),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Tokens.Spacing.lg, vertical = Tokens.Spacing.lg),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // 头像首字符（主色调背景）
+    GroupedRow(
+        title = displayName,
+        subtitle = if (username.isNotBlank()) "@$username" else "点击修改密码",
+        onClick = onClick,
+        icon = null,
+        trailing = {
             Box(
                 modifier = Modifier
-                    .size(Tokens.Avatar.lg)
+                    .size(Tokens.Avatar.md)
                     .background(
                         color = MaterialTheme.colorScheme.primaryContainer,
                         shape = CircleShape,
@@ -409,230 +375,134 @@ private fun AccountCard(
                 Text(
                     text = displayName.firstOrNull()?.toString() ?: "U",
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
             }
-            Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = displayName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                if (username.isNotBlank()) {
-                    Text(
-                        text = "@$username",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = "修改密码",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(Tokens.IconSize.md),
-            )
-        }
-    }
-}
-
-/**
- * 分组小标题。灰色（区别于 primary 强调色）。
- */
-@Composable
-private fun SectionLabel(title: String, modifier: Modifier = Modifier) {
-    Text(
-        text = title,
-        modifier = modifier.padding(start = Tokens.Spacing.xs),
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        },
     )
 }
 
 /**
- * 设置项容器卡。
+ * 开关行：复用 [GroupedRow] 的图标/标题/副标题，trailing 放 Switch，无 chevron。
  */
 @Composable
-private fun SettingsCard(
-    modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(Tokens.Radius.lg),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = Tokens.Elevation.low),
-    ) {
-        Column(content = content)
-    }
-}
-
-@Composable
-private fun SettingsDivider() {
-    HorizontalDivider(
-        modifier = Modifier.padding(start = 56.dp, end = Tokens.Spacing.lg),
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-        thickness = Tokens.Border.thin,
-    )
-}
-
-/**
- * 开关行：图标 + 标题 + 副标题 + Switch。
- */
-@Composable
-private fun SettingsSwitchRow(
-    icon: ImageVector,
+private fun SwitchRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = Tokens.Spacing.lg, vertical = Tokens.Spacing.md),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(Tokens.IconSize.md),
-        )
-        Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
-
-/**
- * 操作行：图标 + 标题 + 副标题 + 右箭头。
- */
-@Composable
-private fun SettingsActionRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = Tokens.Spacing.lg, vertical = Tokens.Spacing.md),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(Tokens.IconSize.md),
-        )
-        Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Icon(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(Tokens.IconSize.md),
-        )
-    }
+    GroupedRow(
+        title = title,
+        subtitle = subtitle,
+        icon = icon,
+        showChevron = false,
+        trailing = {
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
+        },
+    )
 }
 
 /**
  * 信息行：图标 + 标题 + 值（无箭头，不可点击）。
  */
 @Composable
-private fun SettingsInfoRow(
-    icon: ImageVector,
+private fun InfoRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     value: String,
 ) {
-    Row(
+    GroupedRow(
+        title = title,
+        subtitle = value,
+        icon = icon,
+        showChevron = false,
+    )
+}
+
+/**
+ * 外观 - 主题切换。标题行 + 共享 [SegmentedControl]（跟随系统 / 浅色 / 深色）。
+ */
+@Composable
+private fun ThemeRow(
+    themeMode: String,
+    onThemeChanged: (String) -> Unit,
+) {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = Tokens.Spacing.lg, vertical = Tokens.Spacing.md),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(Tokens.IconSize.md),
-        )
-        Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Text(
-                value,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(Tokens.Avatar.md)
+                    .background(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                        shape = RoundedCornerShape(Tokens.Radius.sm),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.DarkMode,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "深色模式",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    "跟随系统、浅色或深色",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
+        Spacer(modifier = Modifier.height(Tokens.Spacing.md))
+        SegmentedControl(
+            selected = themeMode,
+            onSelected = onThemeChanged,
+            options = listOf(
+                "system" to "跟随系统",
+                "light" to "浅色",
+                "dark" to "深色",
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
 /**
- * 通知监听状态行（特殊：显示状态文字 + 跳转按钮）。
+ * 通知监听状态行（状态 + 跳转）。用 [GroupedRow] 的 trailing 放色点，不用 Switch。
  */
 @Composable
 private fun NotificationStatusRow(
     granted: Boolean,
     onNavigate: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = Tokens.Spacing.lg, vertical = Tokens.Spacing.md),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            Icons.Default.Shield,
-            contentDescription = null,
-            tint = if (granted) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.error,
-            modifier = Modifier.size(Tokens.IconSize.md),
-        )
-        Spacer(modifier = Modifier.size(Tokens.Spacing.lg))
-        Column(modifier = Modifier.weight(1f)) {
-            Text("通知监听", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Text(
-                if (granted) "已开启，自动记账运行中" else "未授权，请前往设置开启",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (granted) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.error,
+    val dotColor = if (granted) MaterialTheme.semantic.success else MaterialTheme.semantic.danger
+    GroupedRow(
+        title = "通知监听",
+        subtitle = if (granted) "已开启，自动记账运行中" else "未授权，请前往设置开启",
+        icon = Icons.Default.Security,
+        iconTint = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.semantic.danger,
+        onClick = onNavigate,
+        trailing = {
+            Box(
+                modifier = Modifier
+                    .size(Tokens.Spacing.sm)
+                    .background(color = dotColor, shape = CircleShape),
             )
-        }
-        if (!granted) {
-            androidx.compose.material3.TextButton(onClick = onNavigate) {
-                Text("前往设置")
-            }
-        } else {
-            Icon(
-                Icons.Default.NotificationsActive,
-                contentDescription = "运行中",
-                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                modifier = Modifier.size(Tokens.IconSize.md),
-            )
-        }
-    }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -9,10 +9,11 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,16 +73,17 @@ fun AiBillNavHost(
         },
         floatingActionButton = {
             if (showBottomBar) {
-                FloatingActionButton(
+                // 用 ExtendedFAB 而不是裸「+」：
+                // 一个孤零零的加号在四个 Tab 里既不说明是什么操作，
+                // 也和旁边的「流水」「统计」不在同一视觉层级上。
+                // 展开态带「记一笔」文案，用户第一次打开就知道该点哪里。
+                ExtendedFloatingActionButton(
                     onClick = { navController.navigateToManualRecord() },
                     containerColor = MaterialTheme.colorScheme.primary,
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "快速记账",
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                    text = { Text("记一笔") },
+                )
             }
         },
     ) { innerPadding ->

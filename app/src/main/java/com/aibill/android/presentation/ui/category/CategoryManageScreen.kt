@@ -1,24 +1,44 @@
 package com.aibill.android.presentation.ui.category
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.*
+import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.domain.model.Category
+import com.aibill.android.presentation.components.AppTopBar
+import com.aibill.android.presentation.components.CategoryAvatar
+import com.aibill.android.presentation.components.EmptyState
+import com.aibill.android.presentation.components.GroupedList
+import com.aibill.android.presentation.components.GroupedRow
+import com.aibill.android.presentation.components.Pill
+import com.aibill.android.presentation.components.PillTone
+import com.aibill.android.presentation.components.SegmentedControl
 import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.Tokens
 
@@ -33,8 +53,7 @@ fun CategoryManageScreen(
     val incomeCategories by viewModel.incomeCategories.collectAsStateWithLifecycle()
     val toastMessage by viewModel.toastMessage.collectAsStateWithLifecycle()
 
-    var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val tabs = listOf("支出", "收入")
+    var selectedType by remember { mutableStateOf("expense") }
     var showAddDialog by remember { mutableStateOf(false) }
     var editCategory by remember { mutableStateOf<Category?>(null) }
     var deleteCategory by remember { mutableStateOf<Category?>(null) }
@@ -48,64 +67,60 @@ fun CategoryManageScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text("分类管理") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showAddDialog = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "添加分类")
-                    }
+            AppTopBar(title = "分类管理", onBack = onBack) {
+                IconButton(onClick = { showAddDialog = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "添加分类")
                 }
-            )
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         modifier = modifier,
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            TabRow(selectedTabIndex = selectedTabIndex) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(
-                        selected = selectedTabIndex == index,
-                        onClick = { selectedTabIndex = index },
-                        text = { Text(title) }
-                    )
-                }
-            }
+            SegmentedControl(
+                selected = selectedType,
+                onSelected = { selectedType = it },
+                options = listOf("expense" to "支出", "income" to "收入"),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = Tokens.Spacing.screenHorizontal,
+                        vertical = Tokens.Spacing.sm,
+                    ),
+            )
 
-            val categories = if (selectedTabIndex == 0) {
-                expenseCategories
-            } else {
-                incomeCategories
-            }
+            val categories = if (selectedType == "expense") expenseCategories else incomeCategories
 
             if (categories.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "暂无分类数据",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                EmptyState(
+                    title = "还没有${if (selectedType == "expense") "支出" else "收入"}分类",
+                    subtitle = "点击右上角 + 新建一个分类，记账时就能选它了",
+                    icon = Icons.Default.Category,
+                    actionText = "新建分类",
+                    onAction = { showAddDialog = true },
+                )
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm)
+                    contentPadding = PaddingValues(
+                        start = Tokens.Spacing.screenHorizontal,
+                        end = Tokens.Spacing.screenHorizontal,
+                        top = Tokens.Spacing.sm,
+                        bottom = Tokens.Spacing.huge,
+                    ),
                 ) {
-                    items(categories, key = { it.id }) { category ->
-                        CategoryItem(
-                            category = category,
-                            onClick = { editCategory = category },
-                            onLongClick = { deleteCategory = category },
-                        )
+                    item(key = "group") {
+                        GroupedList {
+                            categories.forEach { category ->
+                                CategoryRow(
+                                    category = category,
+                                    onClick = { editCategory = category },
+                                    onDeactivate = { deleteCategory = category },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -114,7 +129,6 @@ fun CategoryManageScreen(
 
     // 添加分类弹窗
     if (showAddDialog) {
-        val currentType = if (selectedTabIndex == 0) "expense" else "income"
         CategoryEditDialog(
             title = "添加分类",
             initialName = "",
@@ -122,7 +136,7 @@ fun CategoryManageScreen(
             initialSortOrder = 0,
             onDismiss = { showAddDialog = false },
             onConfirm = { name, icon, sortOrder ->
-                viewModel.createCategory(name, currentType, icon, sortOrder)
+                viewModel.createCategory(name, selectedType, icon, sortOrder)
                 showAddDialog = false
             }
         )
@@ -167,6 +181,63 @@ fun CategoryManageScreen(
 }
 
 @Composable
+private fun CategoryRow(
+    category: Category,
+    onClick: () -> Unit,
+    onDeactivate: () -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    GroupedRow(
+        title = category.name,
+        subtitle = "排序 ${category.sortOrder}",
+        onClick = onClick,
+        showChevron = false,
+        // 分类是 emoji 表示的，列表里必须能看到，否则用户无法快速区分
+        leadingEmoji = category.icon,
+        trailing = {
+            Pill(
+                text = if (category.type == com.aibill.android.domain.model.TransactionType.EXPENSE) "支出" else "收入",
+                tone = if (category.type == com.aibill.android.domain.model.TransactionType.EXPENSE) {
+                    PillTone.Expense
+                } else {
+                    PillTone.Income
+                },
+            )
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "更多操作",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("编辑") },
+                        onClick = {
+                            menuExpanded = false
+                            onClick()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text("停用", color = MaterialTheme.colorScheme.error)
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onDeactivate()
+                        },
+                    )
+                }
+            }
+        },
+    )
+}
+
+@Composable
 private fun CategoryEditDialog(
     title: String,
     initialName: String,
@@ -184,6 +255,10 @@ private fun CategoryEditDialog(
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.md)) {
+                // 预览头像
+                Box(modifier = Modifier.size(Tokens.Avatar.lg)) {
+                    CategoryAvatar(icon = icon, modifier = Modifier.fillMaxSize())
+                }
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -225,45 +300,4 @@ private fun CategoryEditDialog(
             AppTextButton(text = "取消", onClick = onDismiss)
         }
     )
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun CategoryItem(
-    category: Category,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick,
-            ),
-        shape = RoundedCornerShape(Tokens.Radius.lg),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        )
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.md)
-        ) {
-            Text(text = category.icon, fontSize = 24.sp)
-            Text(
-                text = category.name,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = "点击编辑 · 长按停用",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
 }

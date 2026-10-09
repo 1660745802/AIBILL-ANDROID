@@ -2,19 +2,22 @@ package com.aibill.android.presentation.ui.transactions
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.automirrored.outlined.Label
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.Category
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.automirrored.outlined.Notes
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -25,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
@@ -36,26 +40,39 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aibill.android.presentation.components.AmountInput
+import com.aibill.android.presentation.components.AppCard
+import com.aibill.android.presentation.components.AppHeroCard
 import com.aibill.android.presentation.components.AppTopBar
-import com.aibill.android.presentation.theme.ExpenseColor
-import com.aibill.android.presentation.theme.PrimaryButton
+import com.aibill.android.presentation.components.GroupedDivider
+import com.aibill.android.presentation.theme.PrimaryButtonBlock
+import com.aibill.android.presentation.components.SectionHeader
+import com.aibill.android.presentation.components.TypeSegmentedControl
 import com.aibill.android.presentation.theme.Tokens
+import com.aibill.android.presentation.theme.semantic
 import com.aibill.android.presentation.ui.transactions.components.DetailAccountPickerRow
-import com.aibill.android.presentation.ui.transactions.components.DetailCard
 import com.aibill.android.presentation.ui.transactions.components.DetailCategoryPickerRow
+import com.aibill.android.presentation.ui.transactions.components.DetailFieldBlock
+import com.aibill.android.presentation.ui.transactions.components.DetailRow
 import com.aibill.android.presentation.ui.transactions.components.DetailTagSection
 import com.aibill.android.presentation.ui.transactions.components.DetailTextField
-import com.aibill.android.presentation.ui.transactions.components.DetailTypeChipRow
 import kotlinx.coroutines.flow.collectLatest
 
 /**
- * 交易详情页。**已重构**：6 个私有 Composable 全部抽到 components/ 目录。
+ * 交易详情页。**重设计**：
+ * 旧版 9 张 `DetailCard` 竖直堆叠（label 里塞 emoji），滚动冗长、层级不清。
+ * 现在重组为三块：
+ * 1. **金额 Hero 区**（[AppHeroCard]）：大金额编辑 + 类型分段控件 + 分类名；
+ *    这是进详情页第一眼要看/改的东西。
+ * 2. **「基本信息」组**（一张 [AppCard]）：分类 / 账户 / 日期 / 时间，行间
+ *    [GroupedDivider] 分隔；日期整行可点开 DatePicker。
+ * 3. **「备注与标签」组**（第二张 [AppCard]）：描述输入 + 标签编辑。
  *
- * - DetailCard / DetailTextField: 详情页统一容器 + 输入框
- * - DetailTypeChipRow / DetailCategoryPickerRow / DetailAccountPickerRow: 字段选择
- * - DetailTagSection: 标签编辑（VM 仍用逗号分隔字符串）
+ * 「保存修改」按钮用 [Scaffold] 的 bottomBar 吸底，滚动时始终可点。
+ * 所有 emoji label 换成矢量图标。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,10 +98,11 @@ fun TransactionDetailScreen(
 
     Scaffold(
         modifier = modifier,
+        containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             AppTopBar(
-                title = "📝 交易详情",
+                title = "交易详情",
                 onBack = onNavigateBack,
                 actions = {
                     IconButton(
@@ -92,13 +110,29 @@ fun TransactionDetailScreen(
                         enabled = !uiState.isSaving,
                     ) {
                         Icon(
-                            Icons.Default.Delete,
+                            Icons.Outlined.Delete,
                             contentDescription = "删除",
-                            tint = ExpenseColor,
+                            tint = MaterialTheme.semantic.danger,
                         )
                     }
                 },
             )
+        },
+        bottomBar = {
+            if (!uiState.isLoading) {
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    PrimaryButtonBlock(
+                        text = "保存修改",
+                        onClick = viewModel::onSave,
+                        enabled = !uiState.isSaving,
+                        loading = uiState.isSaving,
+                        modifier = Modifier.padding(
+                            horizontal = Tokens.Spacing.screenHorizontal,
+                            vertical = Tokens.Spacing.md,
+                        ),
+                    )
+                }
+            }
         },
     ) { innerPadding ->
         if (uiState.isLoading) {
@@ -117,99 +151,95 @@ fun TransactionDetailScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(
+                        horizontal = Tokens.Spacing.screenHorizontal,
+                        vertical = Tokens.Spacing.md,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
             ) {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = Tokens.Spacing.lg)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.md),
-                ) {
-                    Spacer(modifier = Modifier.height(Tokens.Spacing.xs))
-                    DetailCard(label = "💰 类型") {
-                        DetailTypeChipRow(
-                            selected = uiState.type,
-                            onSelected = viewModel::onTypeChanged,
-                        )
-                    }
-                    DetailCard(label = "💵 金额") {
-                        DetailTextField(
-                            value = uiState.amount,
-                            onValueChange = viewModel::onAmountChanged,
-                            placeholder = "0.00",
-                        )
-                    }
-                    DetailCard(label = "📂 分类") {
+                // ============ 1. 金额 Hero 区 ============
+                AmountHeroSection(
+                    type = uiState.type,
+                    amount = uiState.amount,
+                    categoryName = uiState.categoryName,
+                    onTypeChanged = viewModel::onTypeChanged,
+                    onAmountChanged = viewModel::onAmountChanged,
+                )
+
+                // ============ 2. 基本信息 ============
+                SectionHeader(title = "基本信息")
+                AppCard(contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = Tokens.Spacing.xs)) {
+                    DetailFieldBlock(
+                        icon = Icons.Outlined.Category,
+                        label = "分类",
+                    ) {
                         DetailCategoryPickerRow(
                             availableCategories = uiState.categories,
                             selectedCategoryId = uiState.categoryId,
                             onSelect = viewModel::onCategorySelected,
                         )
                     }
-                    DetailCard(label = "🏦 账户") {
+                    GroupedDivider()
+                    DetailFieldBlock(
+                        icon = Icons.Outlined.AccountBalanceWallet,
+                        label = "账户",
+                    ) {
                         DetailAccountPickerRow(
                             availableAccounts = uiState.accounts,
                             selectedAccountId = uiState.accountId,
                             onSelect = viewModel::onAccountSelected,
                         )
                     }
-                    DetailCard(label = "📝 描述") {
-                        DetailTextField(
-                            value = uiState.description,
-                            onValueChange = viewModel::onDescriptionChanged,
-                            placeholder = "添加描述...",
-                        )
-                    }
-                    DetailCard(label = "📅 日期") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = Tokens.Spacing.xs),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = uiState.date.ifBlank { "未设置" },
-                                style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(onClick = { showDatePicker = true }) {
-                                Icon(
-                                    Icons.Default.CalendarMonth,
-                                    contentDescription = "选日期",
-                                    modifier = Modifier.size(Tokens.IconSize.sm),
-                                )
-                                Spacer(modifier = Modifier.width(Tokens.Spacing.xs))
-                                Text("选择")
-                            }
-                        }
-                    }
-                    DetailCard(label = "🕐 时间") {
+                    GroupedDivider()
+                    DetailRow(
+                        icon = Icons.Outlined.CalendarMonth,
+                        label = "日期",
+                        value = uiState.date.ifBlank { "未设置" },
+                        onClick = { showDatePicker = true },
+                    )
+                    GroupedDivider()
+                    DetailFieldBlock(
+                        icon = Icons.Outlined.Schedule,
+                        label = "时间",
+                    ) {
                         DetailTextField(
                             value = uiState.time,
                             onValueChange = viewModel::onTimeChanged,
                             placeholder = "HH:mm",
                         )
                     }
-                    DetailCard(label = "🏷️ 标签") {
+                }
+
+                // ============ 3. 备注与标签 ============
+                SectionHeader(title = "备注与标签")
+                AppCard {
+                    DetailFieldBlockInline(
+                        icon = Icons.AutoMirrored.Outlined.Notes,
+                        label = "描述",
+                    ) {
+                        DetailTextField(
+                            value = uiState.description,
+                            onValueChange = viewModel::onDescriptionChanged,
+                            placeholder = "添加描述...",
+                            singleLine = false,
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(Tokens.Spacing.md))
+                    DetailFieldBlockInline(
+                        icon = Icons.AutoMirrored.Outlined.Label,
+                        label = "标签",
+                    ) {
                         DetailTagSection(
                             tagsText = uiState.tags,
                             onTagsChanged = viewModel::onTagsChanged,
                             availableTags = uiState.availableTags,
                         )
                     }
-                    Spacer(modifier = Modifier.height(Tokens.Spacing.sm))
                 }
 
-                PrimaryButton(
-                    text = "保存修改",
-                    onClick = viewModel::onSave,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = Tokens.Spacing.lg, vertical = Tokens.Spacing.md),
-                    enabled = !uiState.isSaving,
-                    loading = uiState.isSaving,
-                )
+                Spacer(modifier = Modifier.height(Tokens.Spacing.sm))
             }
         }
     }
@@ -244,5 +274,80 @@ fun TransactionDetailScreen(
         ) {
             DatePicker(state = dateState)
         }
+    }
+}
+
+/**
+ * 金额 Hero 区：类型分段控件 + 大金额输入 + 分类名。
+ * 用 primaryContainer 作底，是全页唯一的重量级容器。
+ */
+@Composable
+private fun AmountHeroSection(
+    type: String,
+    amount: String,
+    categoryName: String,
+    onTypeChanged: (String) -> Unit,
+    onAmountChanged: (String) -> Unit,
+) {
+    AppHeroCard(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            vertical = Tokens.Spacing.lg,
+        ),
+    ) {
+        TypeSegmentedControl(
+            selected = type,
+            onSelected = onTypeChanged,
+        )
+        AmountInput(
+            value = amount,
+            onValueChange = onAmountChanged,
+            type = type,
+        )
+        if (categoryName.isNotBlank()) {
+            Text(
+                text = categoryName,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(top = Tokens.Spacing.xs),
+            )
+        }
+    }
+}
+
+/**
+ * 「备注与标签」组内的字段块：图标 + label 在上，内容在下。
+ * 与 [DetailFieldBlock] 相比不加外层行内边距（已在 AppCard 内），避免双重 padding。
+ */
+@Composable
+private fun DetailFieldBlockInline(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    content: @Composable () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        androidx.compose.foundation.layout.Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.md),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(Tokens.IconSize.md),
+            )
+            Text(
+                text = label,
+                style = com.aibill.android.presentation.theme.AppTextStyles.ListTitle,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        Spacer(modifier = Modifier.height(Tokens.Spacing.sm))
+        content()
     }
 }

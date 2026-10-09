@@ -1,25 +1,39 @@
 package com.aibill.android.presentation.ui.trash
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.RestoreFromTrash
-import androidx.compose.material3.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
+import com.aibill.android.presentation.components.AmountFormatter
+import com.aibill.android.presentation.components.AppTopBar
+import com.aibill.android.presentation.components.EmptyState
+import com.aibill.android.presentation.components.ErrorState
+import com.aibill.android.presentation.components.GroupedList
+import com.aibill.android.presentation.components.GroupedRow
+import com.aibill.android.presentation.components.LoadingState
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.aibill.android.presentation.components.AmountFormatter
+import com.aibill.android.presentation.theme.AmountTypography
 import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.Tokens
+import com.aibill.android.presentation.theme.semantic
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,56 +54,52 @@ fun TrashScreen(
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("回收站") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                }
-            )
-        },
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { AppTopBar(title = "回收站", onBack = onBack) },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         modifier = modifier,
     ) { padding ->
-        when {
-            uiState.isLoading -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            when {
+                uiState.isLoading -> {
+                    LoadingState()
                 }
-            }
-            uiState.items.isEmpty() -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(text = "🗑️", style = MaterialTheme.typography.displayMedium)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "回收站是空的",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                uiState.error != null -> {
+                    ErrorState(
+                        title = "没能加载回收站",
+                        subtitle = uiState.error ?: "请检查网络后重试",
+                        icon = Icons.Default.DeleteOutline,
+                        onAction = { viewModel.loadTrash() },
+                    )
                 }
-            }
-            else -> {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
-                ) {
-                    items(uiState.items, key = { it.id ?: 0 }) { item ->
-                        TrashItem(
-                            transaction = item,
-                            onRestore = { item.id?.let { viewModel.restoreTransaction(it) } },
-                            onPermanentDelete = { deleteConfirmId = item.id },
-                        )
+                uiState.items.isEmpty() -> {
+                    EmptyState(
+                        title = "回收站是空的",
+                        subtitle = "删除的记录会先放到这里，30 天内都可以恢复",
+                        icon = Icons.Default.DeleteOutline,
+                    )
+                }
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            start = Tokens.Spacing.screenHorizontal,
+                            end = Tokens.Spacing.screenHorizontal,
+                            top = Tokens.Spacing.md,
+                            bottom = Tokens.Spacing.huge,
+                        ),
+                    ) {
+                        item(key = "group") {
+                            GroupedList {
+                                uiState.items.forEach { item ->
+                                    TrashRow(
+                                        transaction = item,
+                                        onRestore = { item.id?.let { viewModel.restoreTransaction(it) } },
+                                        onPermanentDelete = { deleteConfirmId = item.id },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -120,67 +130,31 @@ fun TrashScreen(
 }
 
 @Composable
-private fun TrashItem(
+private fun TrashRow(
     // PR #61：TrashViewModel 改用 Domain Transaction
     transaction: com.aibill.android.domain.model.Transaction,
     onRestore: () -> Unit,
     onPermanentDelete: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(Tokens.Radius.lg),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // 分类图标
-            Text(
-                text = transaction.categoryIcon ?: "📝",
-                style = MaterialTheme.typography.headlineSmall,
-            )
+    val isExpense = transaction.type == com.aibill.android.domain.model.TransactionType.EXPENSE
+    val prefix = if (isExpense) "-" else "+"
+    val amountColor = if (isExpense) MaterialTheme.semantic.expense else MaterialTheme.semantic.income
 
-            Spacer(modifier = Modifier.width(12.dp))
-
-            // 描述 + 日期
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = transaction.description
-                        ?: transaction.categoryName
-                        ?: "未分类",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = transaction.date,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            // 金额
-            val prefix = if (transaction.type == com.aibill.android.domain.model.TransactionType.EXPENSE) "-" else "+"
+    GroupedRow(
+        title = transaction.description
+            ?: transaction.categoryName
+            ?: "未分类",
+        subtitle = transaction.date,
+        showChevron = false,
+        // 回收站里也要能一眼看出「这是哪类消费」，用分类的 emoji 头像
+        leadingEmoji = transaction.categoryIcon ?: DEFAULT_TX_ICON,
+        trailing = {
             Text(
                 text = "$prefix${AmountFormatter.toYuanDisplay(transaction.amount)}",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = if (transaction.type == com.aibill.android.domain.model.TransactionType.EXPENSE) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.primary
-                },
+                style = AmountTypography.Stat,
+                color = amountColor,
             )
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // 恢复按钮
-            IconButton(onClick = onRestore, modifier = Modifier.size(Tokens.Avatar.md)) {
+            IconButton(onClick = onRestore, modifier = Modifier.size(Tokens.TouchTarget.normal)) {
                 Icon(
                     Icons.Default.RestoreFromTrash,
                     contentDescription = "恢复",
@@ -188,16 +162,17 @@ private fun TrashItem(
                     modifier = Modifier.size(Tokens.IconSize.md),
                 )
             }
-
-            // 永久删除按钮
-            IconButton(onClick = onPermanentDelete, modifier = Modifier.size(Tokens.Avatar.md)) {
+            IconButton(onClick = onPermanentDelete, modifier = Modifier.size(Tokens.TouchTarget.normal)) {
                 Icon(
                     Icons.Default.DeleteForever,
                     contentDescription = "永久删除",
-                    tint = MaterialTheme.colorScheme.error,
+                    tint = MaterialTheme.semantic.danger,
                     modifier = Modifier.size(Tokens.IconSize.md),
                 )
             }
-        }
-    }
+        },
+    )
 }
+
+/** 分类缺失时的占位图标，与 TransactionRow / CategoryAvatar 保持一致。 */
+private const val DEFAULT_TX_ICON = "📝"

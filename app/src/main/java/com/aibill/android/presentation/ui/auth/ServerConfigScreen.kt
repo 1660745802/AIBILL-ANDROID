@@ -6,18 +6,23 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
+import com.aibill.android.presentation.theme.semantic
+import com.aibill.android.presentation.ui.auth.components.AuthScaffold
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.Tokens
@@ -32,41 +37,10 @@ fun ServerConfigScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var pendingClearConfirm by rememberSaveable { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+    AuthScaffold(
+        title = "连接你的记账服务器",
+        subtitle = "填入你部署的 AIBILL 服务端地址，数据会保存在自己的服务器上",
     ) {
-        // Emoji 插图
-        Text(
-            text = "🔗",
-            fontSize = 64.sp,
-        )
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // 友好标题
-        Text(
-            text = "连接你的记账服务器",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = "输入你部署的 AIBILL 服务端地址\n让数据安全地保存在你自己的服务器上",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            lineHeight = 22.sp,
-        )
-
-        Spacer(modifier = Modifier.height(36.dp))
-
         // 圆角卡片风格输入框
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -75,7 +49,7 @@ fun ServerConfigScreen(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             ),
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(Tokens.Spacing.lg)) {
                 OutlinedTextField(
                     value = uiState.serverUrl,
                     onValueChange = viewModel::onUrlChanged,
@@ -83,7 +57,7 @@ fun ServerConfigScreen(
                     placeholder = { Text("例如: http://192.168.1.100:3000") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(Tokens.Radius.md),
+                    shape = RoundedCornerShape(Tokens.Radius.sm),
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Uri,
                         imeAction = ImeAction.Done
@@ -98,17 +72,31 @@ fun ServerConfigScreen(
                                 uiState.error!!,
                                 color = MaterialTheme.colorScheme.error
                             )
-                            uiState.isConnected -> Text(
-                                "✅ 连接成功，可以继续了！",
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            uiState.isConnected -> Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement =
+                                    androidx.compose.foundation.layout.Arrangement.spacedBy(
+                                        Tokens.Spacing.xs,
+                                    ),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.semantic.success,
+                                    modifier = Modifier.size(Tokens.IconSize.xs),
+                                )
+                                Text(
+                                    "连接成功，可以继续",
+                                    color = MaterialTheme.semantic.success,
+                                )
+                            }
                         }
                     }
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(Tokens.Spacing.xl))
 
         // 按钮组
         Row(
@@ -141,14 +129,27 @@ fun ServerConfigScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(Tokens.TouchTarget.normal))
+        Spacer(modifier = Modifier.height(Tokens.Spacing.lg))
 
-        // 底部提示
-        Text(
-            text = "💡 还没有服务器？查看部署文档快速搭建",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.outline,
-        )
+        // 底部提示：emoji 换成矢量图标
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement =
+                androidx.compose.foundation.layout.Arrangement.spacedBy(Tokens.Spacing.sm),
+        ) {
+            Icon(
+                imageVector = Icons.Default.Lightbulb,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.size(Tokens.IconSize.sm),
+            )
+            Text(
+                text = "还没有服务器？参照部署文档在本地或云主机上跑一个，只要几分钟。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
     }
 
     // PR #42：切换服务器前若有待同步交易，弹 AlertDialog 让用户选择

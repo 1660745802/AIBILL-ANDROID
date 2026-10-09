@@ -1,26 +1,63 @@
 package com.aibill.android.presentation.ui.transactions
 
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.Badge
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
+import com.aibill.android.domain.model.Transaction
+import com.aibill.android.presentation.components.AmountFormatter
+import com.aibill.android.presentation.components.AppTopBar
+import com.aibill.android.presentation.components.CategoryAvatar
+import com.aibill.android.presentation.theme.AmountTypography
+import com.aibill.android.presentation.theme.AppTextStyles
+import com.aibill.android.presentation.theme.Tokens
+import com.aibill.android.presentation.theme.semantic
+import com.aibill.android.presentation.components.AmountText
 import com.aibill.android.presentation.ui.transactions.components.TransactionsFilters
 import com.aibill.android.presentation.ui.transactions.components.TransactionsFiltersCallbacks
 import com.aibill.android.presentation.ui.transactions.components.TransactionsPagingList
@@ -28,8 +65,14 @@ import kotlinx.coroutines.launch
 import java.time.YearMonth
 
 /**
- * 流水页。**重设计**：补上 AppTopBar 提供视觉锚点；
- * filter 行 / 列表 / 日期分组均已就绪（保留）。
+ * 流水页。**重设计**：
+ * - 真正补上 [AppTopBar]（标题「流水」）作为视觉锚点。从统计页带筛选跳入时
+ *   （传入 initialCategoryId/type/startDate）显示返回箭头，走系统返回栈。
+ * - 右侧「筛选」action：带生效数量圆点，点击展开筛选 Sheet。
+ * - 列表行长按弹出底部操作菜单（编辑 / 复制金额 / 删除）替代 swipe-to-delete。
+ *
+ * **对外签名保持不变**：initialCategoryId / initialType / initialStartDate /
+ * initialEndDate / onNavigateToDetail / viewModel —— NavHost 无需改动。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,16 +103,28 @@ fun TransactionsScreen(
     val pagingItems = viewModel.transactionsPager.collectAsLazyPagingItems()
     // 绑定到 Composable 生命周期的 scope，用于在 Flow.collect 的 inline lambda 中
     // 启动子协程（collect 的 lambda 不是 CoroutineScope 接收者，launch 必须挂在外部 scope）。
-    // 同时确保 screen 离开 composition 时未完成的 snackbar 子协程被取消，UI 不会泄漏。
     val snackbarScope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+
+    // 从统计页带筛选跳入时显示返回箭头（走系统返回栈，不改对外签名）。
+    // 四个筛选入参任一非空即视为深链，包括 endDate —— 只带日期范围的情况
+    // 将来一定会出现，不能到那时才发现箭头漏了。
+    val deepLinked = initialCategoryId != null || initialType != null ||
+        initialStartDate != null || initialEndDate != null
+    val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    val onBack: (() -> Unit)? = if (deepLinked && backDispatcher != null) {
+        { backDispatcher.onBackPressed() }
+    } else {
+        null
+    }
+
+    // 长按操作目标（null 表示不显示操作 Sheet）。
+    var actionTarget by remember { mutableStateOf<Transaction?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.uiEvent.collect { event ->
             when (event) {
                 is TransactionsViewModel.UiEvent.ShowToast ->
-                    // 必须在子协程中调用 showSnackbar——否则 collect 会被无限期挂起
-                    // （actionLabel 非空时 SnackbarDuration.Indefinite），阻塞后续
-                    // RefreshList 事件，导致删除后页面不刷新。
                     snackbarScope.launch {
                         snackbarHostState.showSnackbar(event.message)
                     }
@@ -85,8 +140,6 @@ fun TransactionsScreen(
                         }
                     }
                 is TransactionsViewModel.UiEvent.RefreshList ->
-                    // PR 修复：billserver 软删除后 Pager 不会自动 refresh
-                    // （PagingSource 只读 GET，没有外部变更通知机制）
                     pagingItems.refresh()
             }
         }
@@ -97,11 +150,32 @@ fun TransactionsScreen(
         onPauseOrDispose { }
     }
 
+    val activeCount = (if (uiState.filterCategoryId != null) 1 else 0) +
+        uiState.filterTags.size +
+        (if (uiState.filterDateLabel != "全部") 1 else 0)
+
     Scaffold(
+        modifier = modifier,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            AppTopBar(
+                title = "流水",
+                onBack = onBack,
+                actions = {
+                    FilterAction(
+                        activeCount = activeCount,
+                        onClick = {
+                            // TopBar 的「筛选」直接把列表滚回顶部，露出筛选区；
+                            // 深层筛选交互在筛选区的 FilterTriggerChip 内（Sheet）。
+                            snackbarScope.launch { listState.animateScrollToItem(0) }
+                        },
+                    )
+                },
+            )
+        },
     ) { innerPadding ->
-        Column(modifier = modifier.fillMaxSize().padding(innerPadding)) {
+        Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             TransactionsFilters(
                 state = uiState,
                 categories = uiState.categories,
@@ -133,10 +207,184 @@ fun TransactionsScreen(
                 TransactionsPagingList(
                     pagingItems = pagingItems,
                     listState = listState,
-                    onDelete = viewModel::onDeleteTransaction,
                     onItemClick = onNavigateToDetail,
+                    onLongPress = { actionTarget = it },
                 )
             }
         }
+    }
+
+    // ============ 长按操作菜单 ============
+    val target = actionTarget
+    if (target != null) {
+        val sheetState = rememberModalBottomSheetState()
+        val sheetScope = rememberCoroutineScope()
+        val dismiss = {
+            sheetScope.launch {
+                sheetState.hide()
+                actionTarget = null
+            }
+            Unit
+        }
+        ModalBottomSheet(
+            onDismissRequest = { actionTarget = null },
+            sheetState = sheetState,
+        ) {
+            TransactionActionSheet(
+                transaction = target,
+                onEdit = {
+                    target.id?.let(onNavigateToDetail)
+                    dismiss()
+                },
+                onCopyAmount = {
+                    clipboard.setText(
+                        AnnotatedString(AmountFormatter.toYuanDisplay(target.amount)),
+                    )
+                    snackbarScope.launch { snackbarHostState.showSnackbar("已复制金额") }
+                    dismiss()
+                },
+                onDelete = {
+                    viewModel.onDeleteTransaction(target)
+                    dismiss()
+                },
+            )
+        }
+    }
+}
+
+/**
+ * TopBar 右侧「筛选」action：图标 + 生效数量角标。
+ */
+@Composable
+private fun FilterAction(
+    activeCount: Int,
+    onClick: () -> Unit,
+) {
+    Box {
+        IconButton(onClick = onClick) {
+            Icon(
+                imageVector = Icons.Outlined.Tune,
+                contentDescription = "筛选",
+            )
+        }
+        if (activeCount > 0) {
+            Badge(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = (-6).dp, y = 6.dp),
+            ) {
+                Text("$activeCount")
+            }
+        }
+    }
+}
+
+/**
+ * 长按弹出的操作菜单。高频动作：编辑 / 复制金额 / 删除（删除为破坏性，用危险色）。
+ */
+@Composable
+private fun TransactionActionSheet(
+    transaction: Transaction,
+    onEdit: () -> Unit,
+    onCopyAmount: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val semantics = MaterialTheme.semantic
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = Tokens.Spacing.lg),
+    ) {
+        // 头部：被操作的交易概览
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = Tokens.Spacing.screenHorizontal,
+                    vertical = Tokens.Spacing.md,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CategoryAvatar(
+                icon = transaction.categoryIcon,
+                modifier = Modifier.size(Tokens.Avatar.lg),
+            )
+            Spacer(modifier = Modifier.width(Tokens.Spacing.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = transaction.categoryName ?: "未分类",
+                    style = AppTextStyles.ListTitle,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (!transaction.description.isNullOrBlank()) {
+                    Text(
+                        text = transaction.description,
+                        style = AppTextStyles.ListSubtitle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(Tokens.Spacing.sm))
+            AmountText(
+                amount = transaction.amount,
+                type = transaction.type,
+                style = AmountTypography.Row,
+                showSign = true,
+            )
+        }
+
+        ActionRow(
+            icon = Icons.Outlined.Edit,
+            label = "编辑",
+            onClick = onEdit,
+        )
+        ActionRow(
+            icon = Icons.Outlined.ContentCopy,
+            label = "复制金额",
+            onClick = onCopyAmount,
+        )
+        ActionRow(
+            icon = Icons.Outlined.Delete,
+            label = "删除",
+            onClick = onDelete,
+            tint = semantics.danger,
+        )
+    }
+}
+
+@Composable
+private fun ActionRow(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .height(Tokens.TouchTarget.xlarge)
+            .padding(horizontal = Tokens.Spacing.screenHorizontal),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(Tokens.Avatar.md)
+                .padding(end = Tokens.Spacing.sm),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(Tokens.IconSize.md),
+            )
+        }
+        Spacer(modifier = Modifier.width(Tokens.Spacing.md))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = tint,
+        )
     }
 }

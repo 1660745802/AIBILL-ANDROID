@@ -85,6 +85,20 @@ class SettingsViewModel @Inject constructor(
     val quickEntryEnabled: StateFlow<Boolean> = userPreferences.quickEntryEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    /**
+     * Material You 动态取色（Android 12+ 跟随壁纸）。
+     *
+     * 默认关闭：记账 App 的 primary（品牌青绿）与「支出红 / 收入绿」是一整套语义契约，
+     * 跟随壁纸取色会破坏这组配色关系。用户可在 设置 → 外观 手动打开。
+     */
+    val dynamicColorEnabled: StateFlow<Boolean> = userPreferences.dynamicColorEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /** 开关动态取色。只影响主题渲染，不改任何数据。 */
+    fun onDynamicColorChanged(enabled: Boolean) {
+        viewModelScope.launch { userPreferences.setDynamicColorEnabled(enabled) }
+    }
+
     // ============ 事件通道（toast / snackbar） ============
 
     private val _events = Channel<String>(Channel.BUFFERED)

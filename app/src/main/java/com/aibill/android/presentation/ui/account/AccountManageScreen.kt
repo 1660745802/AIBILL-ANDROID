@@ -1,24 +1,43 @@
 package com.aibill.android.presentation.ui.account
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.*
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.domain.model.Account
+import com.aibill.android.presentation.components.AppTopBar
+import com.aibill.android.presentation.components.EmptyState
+import com.aibill.android.presentation.components.GroupedList
+import com.aibill.android.presentation.components.GroupedRow
+import com.aibill.android.presentation.theme.AmountTypography
 import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.Tokens
 import java.text.NumberFormat
@@ -47,47 +66,46 @@ fun AccountManageScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text("账户管理") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showAddDialog = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "添加账户")
-                    }
+            AppTopBar(title = "账户管理", onBack = onBack) {
+                IconButton(onClick = { showAddDialog = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "添加账户")
                 }
-            )
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         modifier = modifier,
     ) { padding ->
         if (accounts.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "暂无账户数据",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            EmptyState(
+                title = "还没有账户",
+                subtitle = "添加现金、银行卡或支付宝账户，记账时就能选择资金来源",
+                icon = Icons.Default.AccountBalanceWallet,
+                actionText = "添加账户",
+                onAction = { showAddDialog = true },
+                modifier = Modifier.fillMaxSize().padding(padding),
+            )
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm)
+                contentPadding = PaddingValues(
+                    start = Tokens.Spacing.screenHorizontal,
+                    end = Tokens.Spacing.screenHorizontal,
+                    top = Tokens.Spacing.md,
+                    bottom = Tokens.Spacing.huge,
+                ),
             ) {
-                items(accounts, key = { it.id }) { account ->
-                    AccountItem(
-                        account = account,
-                        onClick = { editAccount = account },
-                        onLongClick = { deleteAccount = account },
-                    )
+                item(key = "group") {
+                    GroupedList {
+                        accounts.forEach { account ->
+                            AccountRow(
+                                account = account,
+                                onClick = { editAccount = account },
+                                onDelete = { deleteAccount = account },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -149,6 +167,57 @@ fun AccountManageScreen(
     }
 }
 
+@Composable
+private fun AccountRow(
+    account: Account,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    GroupedRow(
+        title = account.name,
+        subtitle = accountTypeLabel(account.type),
+        onClick = onClick,
+        showChevron = false,
+        leadingEmoji = account.icon,
+        trailing = {
+            Text(
+                text = formatBalance(account.currentBalance),
+                style = AmountTypography.Stat,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "更多操作",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("编辑") },
+                        onClick = {
+                            menuExpanded = false
+                            onClick()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                        onClick = {
+                            menuExpanded = false
+                            onDelete()
+                        },
+                    )
+                }
+            }
+        },
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AccountEditDialog(
@@ -188,7 +257,7 @@ private fun AccountEditDialog(
                             onValueChange = {}, readOnly = true, label = { Text("类型") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                             shape = RoundedCornerShape(Tokens.Radius.md),
-                            modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
                         )
                         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                             accountTypes.forEach { (value, label) ->
@@ -235,52 +304,13 @@ private fun AccountEditDialog(
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun AccountItem(
-    account: Account,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick,
-            ),
-        shape = RoundedCornerShape(Tokens.Radius.lg),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        )
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(text = account.icon, fontSize = 24.sp)
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = account.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = account.type,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Text(
-                text = formatBalance(account.currentBalance),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-    }
+private fun accountTypeLabel(type: String): String = when (type) {
+    "cash" -> "现金"
+    "bank" -> "银行卡"
+    "credit" -> "信用卡"
+    "alipay" -> "支付宝"
+    "wechat" -> "微信"
+    else -> type
 }
 
 private fun formatBalance(cents: Int): String {

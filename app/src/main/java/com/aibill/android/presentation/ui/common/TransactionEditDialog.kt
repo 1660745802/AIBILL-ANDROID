@@ -1,6 +1,12 @@
 package com.aibill.android.presentation.ui.common
 
+import com.aibill.android.presentation.components.AppChip
+import com.aibill.android.presentation.components.TypeSegmentedControl
+import com.aibill.android.presentation.theme.AmountTypography
+import com.aibill.android.presentation.theme.AppTextButton
+import com.aibill.android.presentation.theme.PrimaryButton
 import com.aibill.android.presentation.theme.Tokens
+import com.aibill.android.presentation.theme.semantic
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,6 +62,11 @@ fun TransactionEditDialog(
     var showTagSuggestions by remember { mutableStateOf(false) }
 
     val typeKey = if (type == "income") "income" else "expense"
+    val amountAccent = when (type) {
+        "income" -> MaterialTheme.semantic.income
+        "transfer" -> MaterialTheme.semantic.transfer
+        else -> MaterialTheme.semantic.expense
+    }
     val availableCategories = categoriesByType[typeKey].orEmpty()
 
     val tagSuggestions = remember(tagInput, availableTags, tags) {
@@ -71,26 +82,14 @@ fun TransactionEditDialog(
                 verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.md),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                // 类型三选
-                Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm)) {
-                    FilterChip(
-                        selected = type == "expense",
-                        onClick = { type = "expense" },
-                        label = { Text("支出") }
-                    )
-                    FilterChip(
-                        selected = type == "income",
-                        onClick = { type = "income" },
-                        label = { Text("收入") }
-                    )
-                    FilterChip(
-                        selected = type == "transfer",
-                        onClick = { type = "transfer" },
-                        label = { Text("转账") }
-                    )
-                }
+                // 类型三选：走共享控件，和记账页/筛选区是同一套控件
+                TypeSegmentedControl(
+                    selected = type,
+                    onSelected = { type = it },
+                    horizontalPadding = 0.dp,
+                )
 
-                // 金额
+                // 金额：等宽数字 + 按类型着色，和 App 内其它金额输入保持一致
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { newVal ->
@@ -98,9 +97,20 @@ fun TransactionEditDialog(
                             amountText = newVal
                         }
                     },
-                    label = { Text("金额 (元)") },
+                    label = { Text("金额") },
+                    placeholder = { Text("0.00", style = AmountTypography.Large) },
+                    leadingIcon = {
+                        Text(
+                            text = "¥",
+                            style = AmountTypography.Large.copy(
+                                color = amountAccent.copy(alpha = 0.7f),
+                            ),
+                        )
+                    },
+                    textStyle = AmountTypography.Large.copy(color = amountAccent),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(Tokens.Radius.sm),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
 
@@ -188,18 +198,21 @@ fun TransactionEditDialog(
                     Text("分类", style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (availableCategories.isEmpty()) {
-                        Text("暂无可选分类", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "这个类型下还没有分类，去「我的 → 分类管理」添加一个",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.semantic.transfer,
+                        )
                     } else {
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
-                            verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.xs),
+                            verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
                         ) {
                             availableCategories.forEach { cat ->
-                                FilterChip(
+                                AppChip(
                                     selected = selectedCategoryId == cat.id,
                                     onClick = { selectedCategoryId = cat.id },
-                                    label = { Text("${cat.icon} ${cat.name}") },
+                                    label = "${cat.icon} ${cat.name}",
                                 )
                             }
                         }
@@ -224,8 +237,11 @@ fun TransactionEditDialog(
                 }
             }
         },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(Tokens.Radius.xl),
         confirmButton = {
-            TextButton(
+            PrimaryButton(
+                text = "确认入账",
                 onClick = {
                     val cents = Math.round((amountText.toDoubleOrNull() ?: 0.0) * 100).toInt()
                     val finalCategoryId = if (type == "transfer") null else selectedCategoryId
@@ -236,12 +252,13 @@ fun TransactionEditDialog(
                         tags,
                     )
                 },
-                enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0
-            ) { Text("确认记账") }
+                enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0,
+                tall = false,
+            )
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        }
+            AppTextButton(text = "取消", onClick = onDismiss)
+        },
     )
 }
 
