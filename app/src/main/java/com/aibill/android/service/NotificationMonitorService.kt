@@ -63,6 +63,56 @@ internal object NlsTextClassifier {
 
     fun isSummaryNotification(text: String): Boolean =
         SUMMARY_PATTERNS.any { it.containsMatchIn(text) }
+
+    /**
+     * 是否为**促销句式**——「看起来像账务、实际是广告」的结构性特征。
+     *
+     * 2026-10-09 21:04 真实漏记（com.netease.yanxuan）：
+     * ```
+     * 🧧双11省钱卡已开抢！ 双11省钱卡花3得29，一笔回本🔥加赠99积分0元兑云音乐月卡👉
+     * ```
+     * 58 个 `exclude_content_contains` 一个都没命中：文本有 🧧 但没「红包」二字、
+     * 「0元兑」不是词表里的「0元领」、「省钱卡」不在表内。而 `payment_signal_regex`
+     * 里的裸「元」被「0元兑」命中 → 放行调 AI → AI 把促销句式**「花3得29」的 3**
+     * 当成金额返回 ¥3.00。
+     *
+     * ## ⚠️ 为什么这里**只留句式、不留营销词**
+     *
+     * 最初这里还写了 `开抢|回本|省钱卡|省钱券|神券|膨胀券`，自己审的时候发现
+     * **`省钱卡`是招行/中信的真实支付方式名**——用户用省钱卡刷卡时，通知里就会
+     * 出现「您尾号1234的招行省钱卡支付成功」，会被无差别丢掉。
+     * 这与服务端 verify.ts 踩过的坑完全同类（那里是 `首页` 命中弱噪声，误杀了
+     * `支付成功 ￥30.26 … 好想来零食乐园 完成`）。
+     *
+     * 服务端已经把营销词做进 `WEAK_NOISE`，且**正向信号优先**（有金额+交易动词
+     * 就不查弱噪声）。所以客户端这边只保留**不会与真实交易用词冲突的结构性句式**：
+     * `花N得M` 里的「得」是促销语法，真实交易描述里不出现。
+     *
+     * 宁可漏放（多调一次 AI，被校验 5 拦成待审）也不误杀——这是本模块一贯的取舍。
+     */
+    private val PROMO_PATTERNS = listOf(
+        // 花3得29 / 花100得200：促销语法，真实交易描述不会这么写。
+        // 中间容忍单位与量词：花3**元得**29元 / 花3得**券**29 同样要拦。
+        //
+        // ⚠️ 不加这个容忍，kiro 找到一个双层同时失效的绕过：
+        // 「花3元得29元」既不匹配严格句式，而 AI 把 3 当金额时**「3元」自带货币单位**
+        // → 校验 5 也认它有佐证 → 自动入账。促销拦截与金额佐证两层同时被打穿，
+        // 正好是本次改动要杀的那类 bug。
+        Regex("""花\s*\d+(?:\.\d+)?\s*\S{0,2}?\s*得\s*\S{0,2}?\s*\d+"""),
+        // 0元兑 / 1元送 / 20元抵扣：带边界的零元兑换，避免命中「3.90元」
+        Regex("""(?<![\d.])0\s*元\s*[兑换送赠换抵领购]"""),
+        // 加赠99积分：赠品而非付款
+        Regex("""加赠\s*\d+"""),
+    )
+
+    /**
+     * 促销句式判定。与 [isSummaryNotification] 一样放在这里（而不是 `rules.json`），
+     * 原因见类 KDoc：不改云控、不影响在线用户放行率。
+     *
+     * 本函数**只挡结构性促销句式**，营销词交给服务端——见 [PROMO_PATTERNS] 的说明。
+     */
+    fun isPromoNotification(text: String): Boolean =
+        PROMO_PATTERNS.any { it.containsMatchIn(text) }
 }
 
 class NotificationMonitorService : NotificationListenerService() {
@@ -331,6 +381,14 @@ class NotificationMonitorService : NotificationListenerService() {
         // 靠词表拦不住（实测 1403 条 AI 日志里被误记 2 次）。
         if (NlsTextClassifier.isSummaryNotification(fullText)) {
             appLogger.debug("NLS", "汇总/日报通知（非单笔交易）: pkg=$packageName text=${fullText.take(50)}")
+            return
+        }
+
+        // 排除「促销句式」推送：花3得29 / 0元兑 / 加赠99积分 这类结构，
+        // 看着有数字有「元」但不是真实付款（会从促销句式里幻觉出金额）。
+        // 必须排在调 AI 之前——排后面就只是把噪音从待审池挪到记账失败。
+        if (NlsTextClassifier.isPromoNotification(fullText)) {
+            appLogger.debug("NLS", "促销推送拦截: pkg=$packageName text=${fullText.take(50)}")
             return
         }
 

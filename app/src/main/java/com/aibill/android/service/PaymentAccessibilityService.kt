@@ -339,6 +339,17 @@ class PaymentAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * 页面是否含金额样式文本。仅用于「未命中成功词」那行汇总日志的诊断字段，
+     * **不参与任何放行/拦截判定**。
+     *
+     * 启动器页的子应用名常带数字（美团丨外卖团购特价美食酒店电影 / 三国：冰河时代），
+     * 所以 hasAmount=true 并不代表这页与交易有关——这正是原实��把它当「疑似支付页」
+     * 落库原文的起因。
+     */
+    private fun hasAmountLikeText(allTexts: List<String>): Boolean =
+        allTexts.any { amountRegex.containsMatchIn(it) }
+
+    /**
      * 判断当前 Activity 是否"可能是支付结果页"——只在这些页面上才响应 CONTENT_CHANGED。
      *
      * 策略（借鉴反编译项目的 Activity 白名单思路，但用模糊匹配而非硬编码）：
@@ -402,20 +413,32 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 条件1：有支付成功关键词
             val matchedKeyword = findMatchedKeyword(rootNode, activeKeywords)
             if (matchedKeyword == null) {
-                val hasAmount = allTexts.any { amountRegex.containsMatchIn(it) }
-                if (hasAmount) {
-                    appLogger.debug(
-                        "A11Y_MISS",
-                        "有金额无成功词: [$shortClassName] ${allTexts.take(15).joinToString("|")} tree=${buildNodeTree(rootNode, maxDepth = 5)}",
-                    )
-                } else {
-                    // 普通页面（如微信主界面/聊天列表）既无成功词也无金额：只记一行
-                    // 汇总，不把聊天标题等原文落库（既刷屏又泄露隐私）。
-                    appLogger.debug(
-                        "A11Y_SKIP",
-                        "非支付页: pkg=$packageName class=$shortClassName texts=${allTexts.size}"
-                    )
-                }
+                // 未命中成功词 = 不是支付结果页，一律**只记一行汇总**。
+                //
+                // 2026-10-09 真机日志证据：原实现在这里分两支，有金额的支支
+                // 会把 15 条页面原文 + 节点树全写进 app_logs：
+                //   A11Y_MISS 有金额无成功词: [LauncherUI] 浮窗|退出浮窗|最近|搜索小程序 搜索栏|
+                //     ...|氢动国旅,|氢动国旅|小米食堂Lite,...          ← 微信小程序名
+                //   A11Y_MISS 有金额无成功词: [LauncherUI] 浮窗|...|儒宝|晚上6:50|[视频通话]|kiro|
+                //     下午4:44|✅ 已开始新对话|富人区|...              ← 联系人昵称 + 聊天时间
+                //   A11Y_MISS 有金额无成功词: [AppBrandUI00] ...|订单编号：1788869210552871|
+                //     凭证码：1883336738|...|单价：88.00               ← 订单号 + 凭证码
+                // 那一轮 18 条 A11Y_MISS **无一条是真实支付页**，全部是启动器/小程序首页，
+                // 却把聊天气泡、订单号、凭证码写进了**可导出的** app_logs。
+                //
+                // NOTIFICATION.md 2026-10-01 #10 写的是「命中成功词后才落库页面文本，
+                // 普通页只记一行汇总」——实际只改了「无金额」那一支，有金额的支支漏了。
+                // 启动器页为什么会有金额？因为子应用名里就带数字（美团丨外卖团购特价美食
+                // 酒店电影 / 三国：冰河时代），而 amountRegex 只需匹配到一处即 hasAmount=true。
+                //
+                // 未命中成功词时页面内容**对排障没有价值**（真正要看的 A11Y_PAGE 在命中后
+                // 才记），所以统一收敛成一行，既堵住隐私泄露也让日志能看了。
+                val hasAmount = hasAmountLikeText(allTexts)
+                appLogger.debug(
+                    "A11Y_SKIP",
+                    "未命中支付成功词: pkg=$packageName class=$shortClassName " +
+                        "texts=${allTexts.size} hasAmount=$hasAmount",
+                )
                 return
             }
 
@@ -424,7 +447,6 @@ class PaymentAccessibilityService : AccessibilityService() {
                 "A11Y_PAGE",
                 "[$packageName/$shortClassName] texts=${allTexts.size} retry=$isRetry ${allTexts.take(20).joinToString("|")}",
             )
-
             // 条件2：排除非支付结果页
             val activeExcludeKeywords = if (isEmbeddedApp) commonExcludeKeywords else wechatAlipayExcludeKeywords + commonExcludeKeywords
             if (hasAnyKeyword(allTexts, activeExcludeKeywords)) {
