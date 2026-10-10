@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.repository.AuthRepository
+import com.aibill.android.service.NotificationRulesManager
 import com.aibill.android.service.QuickEntryService
 import com.aibill.android.service.UpdateManager
 import com.aibill.android.util.AppLogger
@@ -40,13 +41,15 @@ class SettingsViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val userPreferences: UserPreferences,
     private val appLogger: AppLogger,
-    private val notificationRulesManager: com.aibill.android.service.NotificationRulesManager,
+    private val notificationRulesManager: NotificationRulesManager,
     private val updateManager: UpdateManager,
 ) : ViewModel() {
 
     data class UiState(
         val notificationListenerGranted: Boolean = false,
         val isLoading: Boolean = false,
+        /** 「同步记账规则」进行中，用于副标题 + 行内 spinner + 防重复点击。 */
+        val isSyncingRules: Boolean = false,
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -170,13 +173,28 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 手动同步云控规则。
+     *
+     * 反馈必须区分三态：更新成功 / 本来就是最新 / 拉取失败。
+     * 以前 `fetchRules()` 内部吞异常返回 Unit，这里的 `try/catch` 是死代码，
+     * 断网也会弹「规则同步成功」——用户据此以为规则已是新版。
+     */
     fun syncRules() {
+        if (_uiState.value.isSyncingRules) return
         viewModelScope.launch {
+            _uiState.update { it.copy(isSyncingRules = true) }
             try {
-                notificationRulesManager.fetchRules()
-                _events.send("规则同步成功")
-            } catch (e: Exception) {
-                _events.send("规则同步失败: ${e.message}")
+                when (val result = notificationRulesManager.fetchRules()) {
+                    is NotificationRulesManager.RulesFetchResult.Updated ->
+                        _events.send("规则已更新到 v${result.version}")
+                    NotificationRulesManager.RulesFetchResult.NotModified ->
+                        _events.send("规则已是最新，无需更新")
+                    is NotificationRulesManager.RulesFetchResult.Failed ->
+                        _events.send("规则同步失败：${result.message}")
+                }
+            } finally {
+                _uiState.update { it.copy(isSyncingRules = false) }
             }
         }
     }

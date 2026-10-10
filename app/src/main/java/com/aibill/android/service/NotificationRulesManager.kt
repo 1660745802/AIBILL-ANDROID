@@ -7,6 +7,7 @@ import com.aibill.android.data.remote.dto.response.NotificationRulesData
 import com.aibill.android.util.NotificationSourceMapping
 import com.squareup.moshi.Moshi
 import timber.log.Timber
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,6 +35,24 @@ class NotificationRulesManager @Inject constructor(
         val generation: Int,
     )
 
+    /**
+     * [fetchRules] 的结果。
+     *
+     * 以前 fetchRules() 吞掉所有异常返回 Unit，设置页只能无条件弹「规则同步成功」——
+     * 断网点同步同样报成功，是**假反馈**，比没有反馈更糟（用户以为规则已是新版）。
+     * 现在把「真更新 / 已是最新 / 拉取失败」三态显式返回给调用方。
+     */
+    sealed interface RulesFetchResult {
+        /** 服务端下发了新规则，已写入本地并生效。 */
+        data class Updated(val version: Int) : RulesFetchResult
+
+        /** ETag 命中 304，本地规则本来就是最新的。 */
+        data object NotModified : RulesFetchResult
+
+        /** 拉取失败，**保留现有规则继续工作**（不影响已记账功能）。 */
+        data class Failed(val message: String) : RulesFetchResult
+    }
+
     @Volatile
     private var cachedSnapshot: RulesSnapshot? = null
 
@@ -49,10 +68,16 @@ class NotificationRulesManager @Inject constructor(
 
     /**
      * 从服务器拉取规则。支持 ETag/304，304 不更新。
-     * 静默处理所有异常，不影响正常流程。
+     *
+     * **不抛异常**：失败时返回 [RulesFetchResult.Failed] 并保留现有规则，
+     * 保证「云控挂了不影响已记账功能」这一原有语义不变。
+     *
+     * 返回值对 fire-and-forget 的调用方（[AiBillApp] 启动拉取、
+     * [RulesSyncWorker] 周期拉取）可以忽略，Kotlin 允许丢弃返回值，
+     * 只有需要给用户反馈的设置页才必须区分三态。
      */
-    suspend fun fetchRules() {
-        try {
+    suspend fun fetchRules(): RulesFetchResult {
+        return try {
             val etag = prefs.getString(KEY_ETAG, null)
             Timber.d("NotificationRules: fetching from server (etag=${etag?.take(16) ?: "none"})")
             val response = api.getRules(etag)
@@ -60,11 +85,12 @@ class NotificationRulesManager @Inject constructor(
             when (response.code()) {
                 304 -> {
                     Timber.d("NotificationRules: 304 Not Modified, rules unchanged")
+                    RulesFetchResult.NotModified
                 }
                 200 -> {
                     val body = response.body()
-                    if (body?.code == 0 && body.data?.rules != null) {
-                        val rulesDto = body.data.rules
+                    val rulesDto = body?.data?.rules
+                    if (body?.code == 0 && rulesDto != null) {
                         val json = moshi.adapter(NotificationRulesDto::class.java).toJson(rulesDto)
                         val newEtag = response.headers()["ETag"]
                         prefs.edit()
@@ -75,16 +101,23 @@ class NotificationRulesManager @Inject constructor(
                         Timber.d("NotificationRules: updated to version=${body.data.version} etag=${newEtag?.take(16)} " +
                             "sourceMapping=${rulesDto.sourceMapping?.size ?: 0} " +
                             "nlsSmsPackages=${rulesDto.nls?.smsPackages?.size ?: 0}")
+                        RulesFetchResult.Updated(body.data.version)
                     } else {
                         Timber.w("NotificationRules: 200 but code=${body?.code} or rules=null")
+                        RulesFetchResult.Failed("服务端返回异常，请稍后重试")
                     }
                 }
                 else -> {
                     Timber.w("NotificationRules: unexpected HTTP ${response.code()}")
+                    RulesFetchResult.Failed("服务器错误 ${response.code()}")
                 }
             }
+        } catch (e: IOException) {
+            Timber.w(e, "NotificationRules: fetch failed, keeping current rules")
+            RulesFetchResult.Failed("网络连接失败，请检查服务器地址")
         } catch (e: Exception) {
             Timber.w(e, "NotificationRules: fetch failed, keeping current rules")
+            RulesFetchResult.Failed(e.message ?: "未知错误")
         }
     }
 

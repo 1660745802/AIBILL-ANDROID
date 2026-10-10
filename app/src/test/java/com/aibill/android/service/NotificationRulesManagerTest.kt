@@ -29,10 +29,11 @@ import retrofit2.Response
  * 1. getRules() 内存缓存命中 → 直接返回
  * 2. getRules() 无内存缓存 + SP有数据 → 解析返回
  * 3. getRules() 无内存无SP → 返回 assets 默认值
- * 4. fetchRules() 200 → 更新 SP + 内存缓存
- * 5. fetchRules() 304 → 不更新
- * 6. fetchRules() 网络异常 → 静默失败，不影响 getRules
+ * 4. fetchRules() 200 → 更新 SP + 内存缓存，返回 Updated(version)
+ * 5. fetchRules() 304 → 不更新，返回 NotModified
+ * 6. fetchRules() 网络异常 → 静默失败，返回 Failed（**不谎报成功**）
  * 7. SP 中 JSON 格式错误 → fallback 到默认值
+ * 8. 三态反馈准确性 —— 设置页「同步记账规则」直接依赖返回值区分成功/最新/失败
  */
 class NotificationRulesManagerTest {
 
@@ -109,7 +110,7 @@ class NotificationRulesManagerTest {
         every { prefs.getString(any(), any()) } returns null
         coEvery { api.getRules(any()) } returns response
 
-        manager.fetchRules()
+        val result = manager.fetchRules()
 
         // 验证 SP 被写入
         verify { editor.putString("notification_rules_json", any()) }
@@ -119,6 +120,9 @@ class NotificationRulesManagerTest {
         // 验证内存缓存生效
         val rules = manager.getRules()
         assertEquals("支付成功", rules.a11y.successKeywords.first())
+
+        // 设置页靠这个返回值告诉用户「更新到哪一版」
+        assertEquals(NotificationRulesManager.RulesFetchResult.Updated(2), result)
     }
 
     @Test
@@ -133,9 +137,10 @@ class NotificationRulesManagerTest {
         )
 
         io.mockk.clearMocks(editor, answers = false)
-        manager.fetchRules()
+        val result = manager.fetchRules()
 
         verify(exactly = 0) { editor.putString("notification_rules_json", any()) }
+        assertTrue(result is NotificationRulesManager.RulesFetchResult.Failed)
     }
 
     @Test
@@ -145,11 +150,82 @@ class NotificationRulesManagerTest {
         coEvery { api.getRules(any()) } throws java.io.IOException("Network timeout")
 
         // 不应该抛异常
-        manager.fetchRules()
+        val result = manager.fetchRules()
 
         // getRules() 仍能返回默认值
         val rules = manager.getRules()
         assertNotNull(rules)
+
+        // ★ 回归：以前这里返回 Unit，设置页无条件弹「规则同步成功」——
+        // 断网也报成功。必须能区分出失败。
+        val failed = result as NotificationRulesManager.RulesFetchResult.Failed
+        assertTrue(failed.message.contains("网络"))
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 反馈准确性：设置页「同步记账规则」的三态反馈
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("7. fetchRules() 304 → NotModified（而不是谎报已更新）")
+    fun fetchRules_304_reportsNotModified() = runTest {
+        every { prefs.getString(any(), any()) } returns null
+        // Retrofit 的 error(int, body) 要求 code >= 400，拿不到 304；
+        // 用带 raw response 的重载才能构造出 304（ETag 命中时的真实响应）。
+        val raw = okhttp3.Response.Builder()
+            .request(okhttp3.Request.Builder().url("https://example.invalid/rules").build())
+            .protocol(okhttp3.Protocol.HTTP_1_1)
+            .code(304)
+            .message("Not Modified")
+            .build()
+        coEvery { api.getRules(any()) } returns Response.error(
+            okhttp3.ResponseBody.create(null, "not modified"),
+            raw,
+        )
+
+        val result = manager.fetchRules()
+
+        assertEquals(NotificationRulesManager.RulesFetchResult.NotModified, result)
+    }
+
+    @Test
+    @DisplayName("8. fetchRules() 200 但 body 异常 → Failed")
+    fun fetchRules_200_badBody_reportsFailed() = runTest {
+        every { prefs.getString(any(), any()) } returns null
+        // code != 0：服务端业务失败
+        coEvery { api.getRules(any()) } returns Response.success(
+            NotificationRulesResponse(code = 5001, data = null)
+        )
+
+        val result = manager.fetchRules()
+
+        assertTrue(result is NotificationRulesManager.RulesFetchResult.Failed)
+    }
+
+    @Test
+    @DisplayName("9. fetchRules() 500 → Failed 且带状态码")
+    fun fetchRules_500_reportsFailedWithCode() = runTest {
+        every { prefs.getString(any(), any()) } returns null
+        coEvery { api.getRules(any()) } returns Response.error(
+            503,
+            okhttp3.ResponseBody.create(null, "Service Unavailable")
+        )
+
+        val result = manager.fetchRules() as NotificationRulesManager.RulesFetchResult.Failed
+
+        assertTrue(result.message.contains("503"))
+    }
+
+    @Test
+    @DisplayName("10. fetchRules() 失败时仍不抛异常——云控挂了不能影响已记账功能")
+    fun fetchRules_failure_neverThrows() = runTest {
+        every { prefs.getString(any(), any()) } returns null
+        coEvery { api.getRules(any()) } throws IllegalStateException("boom")
+
+        val result = manager.fetchRules()
+
+        assertTrue(result is NotificationRulesManager.RulesFetchResult.Failed)
+        assertNotNull(manager.getRules())
     }
 
     @Test
@@ -192,7 +268,7 @@ class NotificationRulesManagerTest {
     }
 
     @Test
-    @DisplayName("8. SP中JSON格式错误 → fallback默认值")
+    @DisplayName("11. SP中JSON格式错误 → fallback默认值")
     fun getRules_corruptedSp_fallbackToDefault() {
         every { prefs.getString("notification_rules_json", null) } returns "{{invalid json}}"
         every { prefs.getString("notification_rules_etag", null) } returns null
