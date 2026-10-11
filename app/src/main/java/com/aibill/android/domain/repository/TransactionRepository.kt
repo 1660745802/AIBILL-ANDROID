@@ -1,6 +1,7 @@
 package com.aibill.android.domain.repository
 
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.model.SyncQueueStatus
 import com.aibill.android.domain.model.Transaction
 import kotlinx.coroutines.flow.Flow
 
@@ -29,7 +30,16 @@ interface TransactionRepository {
     suspend fun restoreTransaction(id: Int): Result<Unit>
     suspend fun permanentDeleteTransaction(id: Int): Result<Unit>
 
-    fun observePendingCount(): Flow<Int>
+    /**
+     * 离线队列的原子快照（pending / failed 两个分区，见 [SyncQueueStatus]）。
+     *
+     * 唯一的读取口径，取代了原 `observePendingCount(): Flow<Int>`——
+     * 后者只数 `pending`，把 failed 行的存在与否完全交给调用方猜，
+     * 于是横幅在「全部行都同步失败」时直接消失，等价于告诉用户
+     * 「没有未同步的数据」。两个数字必须来自同一条聚合查询，
+     * 才不会在两次独立读取之间出现不一致的中间状态。
+     */
+    fun observeSyncStatus(): Flow<SyncQueueStatus>
 
     suspend fun syncPending(): Result<Unit>
 

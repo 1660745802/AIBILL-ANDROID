@@ -3,6 +3,7 @@ package com.aibill.android.presentation.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.model.SyncQueueStatus
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
@@ -51,7 +52,12 @@ class HomeViewModel @Inject constructor(
         val monthlyIncome: Int = 0,
         val todayTransactions: List<Transaction> = emptyList(),
         val pendingNotificationCount: Int = 0,
-        val pendingSyncCount: Int = 0,
+        /**
+         * 离线队列快照。**只存这一个字段**，不拆成 pendingSyncCount + failedSyncCount
+         * 两个平行 Int——两个数各自漂移正是 [SyncQueueStatus] 要消灭的形态。
+         * 档位/文案/配色的决策留在 HomeScreen，本层只转发快照。
+         */
+        val syncStatus: SyncQueueStatus = SyncQueueStatus(0, 0),
         val isSyncing: Boolean = false,
     )
 
@@ -72,7 +78,7 @@ class HomeViewModel @Inject constructor(
     init {
         refresh()
         observePendingNotifications()
-        observePendingSyncCount()
+        observeSyncStatus()
     }
 
     private fun observePendingNotifications() {
@@ -83,10 +89,10 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun observePendingSyncCount() {
+    private fun observeSyncStatus() {
         viewModelScope.launch {
-            transactionRepository.observePendingCount().collect { count ->
-                _uiState.update { it.copy(pendingSyncCount = count) }
+            transactionRepository.observeSyncStatus().collect { status ->
+                _uiState.update { it.copy(syncStatus = status) }
             }
         }
     }

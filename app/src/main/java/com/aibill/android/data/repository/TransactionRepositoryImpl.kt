@@ -9,6 +9,7 @@ import com.aibill.android.data.remote.dto.request.TransactionItemRequest
 import com.aibill.android.data.remote.dto.response.TransactionDto
 import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.model.SyncQueueStatus
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
@@ -123,8 +124,8 @@ class TransactionRepositoryImpl @Inject constructor(
         }
     }
 
-    override fun observePendingCount(): Flow<Int> =
-        pendingTransactionDao.observePendingCount()
+    override fun observeSyncStatus(): Flow<SyncQueueStatus> =
+        pendingTransactionDao.observeSyncStatus()
 
     override suspend fun syncPending(): Result<Unit> {
         // PR 修复：原实现是空 stub，直接返回 Success 但啥也不做，导致

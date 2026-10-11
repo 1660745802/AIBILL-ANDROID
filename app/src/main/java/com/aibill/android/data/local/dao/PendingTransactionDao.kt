@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.aibill.android.data.local.entity.PendingTransactionEntity
+import com.aibill.android.domain.model.SyncQueueStatus
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -30,8 +31,61 @@ interface PendingTransactionDao {
     @Query("SELECT COUNT(*) FROM pending_transactions WHERE sync_status IN ('pending', 'failed')")
     suspend fun getAnyUnsyncedCount(): Int
 
+    /**
+     * 排队等上传的条数（`sync_status = 'pending'`）。
+     *
+     * ⚠️ **与 `SyncQueueStatus.pending` 同口径**：后者是本查询的聚合形态
+     * （见 [observeSyncStatus]），二者都只数 `pending`、都不计 `failed`。
+     * 改这里的 WHERE 必须同时改 [observeSyncStatus]，反之亦然——
+     * 两个数字一旦分岔，横幅的标题与显隐就会互相矛盾。
+     *
+     * 这是**刻意**只数 pending：本方法回答「排队等上传的条数」，
+     * 而 `failed` 需要用户介入，混进去会让数字与「实际可自动续传的条数」对不上。
+     * 需要 pending + failed 时用 [getAnyUnsyncedCount]。
+     */
     @Query("SELECT COUNT(*) FROM pending_transactions WHERE sync_status = 'pending'")
     fun observePendingCount(): Flow<Int>
+
+    /**
+     * 离线队列的**原子快照**：一条查询同时产出 `pending` 与 `failed` 两个分区计数，
+     * 一次读取、同一份快照，供 `TransactionRepository.observeSyncStatus()` 直转。
+     *
+     * ## 为什么用 `COUNT(CASE WHEN ...)` 而不是 `SUM(CASE WHEN ... THEN 1 END)`
+     *
+     * `SUM()` 在空表（或全部不匹配）时按 SQL 标准返回 **NULL**。而 Room 对非空 `Int`
+     * 生成的是**裸 `_cursor.getInt(i)`**（`PendingTransactionDao_Impl.observeSyncStatus()`，
+     * 无 `isNull` 分支），能不炸只是因为 Android `Cursor` 对 NULL 返回 **0**
+     * 这一**未文档化的实现行为**——也就是说 SUM 的正确性压在这条**实现细节**上，
+     * 而不是写在 SQL 语义里。
+     * （实测：把两列换成 SUM 不加 `COALESCE`，四个用例照样全绿——因为上面这条
+     * 实现细节兜住了。所以这条禁令靠注释，不靠测试。）
+     *
+     * `COUNT(expr)` 在 SQL 层就永远返回非 NULL 整数、零行也返回 0，
+     * 不依赖任何底层约定，空表稳定 `0 / 0`，也就不需要 `COALESCE`。
+     *
+     * ## ⚠️ 禁止日后给本查询加 `GROUP BY`
+     *
+     * 无 `GROUP BY` 的聚合**必定返回恰好一行**，`moveToFirst()` 恒为 true。
+     * 而 Room 生成的读取逻辑是
+     * `if (_cursor.moveToFirst()) { … } else { _result = null; }`
+     * —— **0 行时它返回 null**，但 Kotlin 侧类型是非空 `SyncQueueStatus`，
+     * null 只会在很晚的非空边界炸出来，而不是在查询处就报错。
+     * 加上 `GROUP BY sync_status` 后，空表（或某个状态无行）就是 0 行；
+     * 同时 `pending` / `failed` 会变成「缺 key 就不出现」，
+     * 还得在 Kotlin 侧补默认值，又多出一个「漏 key 即 0」的静默错法。要加维度就另开一个查询。
+     *
+     * 列别名与 `SyncQueueStatus` 的构造参数同名（`pending` / `failed`），
+     * Room 构造器映射靠名字对齐，写错了会在编译期报找不到 setter/field，
+     * 不会静默变成 0。
+     */
+    @Query(
+        """
+        SELECT COUNT(CASE WHEN sync_status = 'pending' THEN 1 END) AS pending,
+               COUNT(CASE WHEN sync_status = 'failed' THEN 1 END) AS failed
+        FROM pending_transactions
+        """
+    )
+    fun observeSyncStatus(): Flow<SyncQueueStatus>
 
     /**
      * 只用于**成功**路径（无 serverId 时降级标 synced）。

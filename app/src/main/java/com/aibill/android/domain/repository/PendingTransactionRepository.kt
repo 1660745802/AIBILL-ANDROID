@@ -19,13 +19,16 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
  *
  * ## ⚠️ 仓库里确实另有一种 pending-only 口径，那是**刻意**的，不是 bug
  *
- * `TransactionRepository.observePendingCount()`（→ `HomeViewModel` 的待同步横幅 /
- * `pendingSyncCount`）走的是 `PendingTransactionDao.observePendingCount()`，
- * SQL 为 `WHERE sync_status = 'pending'`，**故意不计 failed**：横幅要显示的是
- * 「排队等上传的条数」，而 `failed` 需要用户介入，混进去会让横幅数字与
- * 「实际可自动续传的条数」对不上。
+ * `TransactionRepository.observeSyncStatus().pending`（→ `HomeViewModel` 的
+ * `syncStatus.pending` → 待同步横幅）走的是 `PendingTransactionDao.observeSyncStatus()`，
+ * 其 pending 列的 SQL 为 `WHERE sync_status = 'pending'`，**故意不计 failed**：
+ * 横幅标题里那个数字要显示的是「排队等上传的条数」，而 `failed` 需要用户介入，
+ * 混进去会让横幅数字与「实际可自动续传的条数」对不上。
  *
- * 所以**不要**因为本接口写了「含 failed」就去把横幅口径也改成 pending+failed，
+ * 快照里另外那个 `failed` 字段回答的是**另一个问题**（有多少需要人管），
+ * 它与 `pending` 始终作为两个独立数字呈现，从不相加成一个数。
+ *
+ * 所以**不要**因为本接口写了「含 failed」就去把横幅的 pending 数字改成 pending+failed，
  * 也不要反过来把本接口改成 pending-only。两者回答不同问题，各自正确。
  */
 interface PendingTransactionRepository {

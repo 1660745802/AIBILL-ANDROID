@@ -195,9 +195,14 @@ class PendingTransactionDaoMarkFailedTest {
      * 返回 retry() 还是 success()。若这个计数漏掉 failed，
      * 队列会被误判为「全部成功」而停止调度。
      *
-     * 同时固定一个容易误改的语义：getPendingCount **不**计 failed
-     * （HomeViewModel 的待同步横幅因此看不到失败行——这是 Phase 1 的可观测性缺口，
-     * 本 Phase 不修，只在此钉住现状以防被无意改动）。
+     * 同时固定一个容易误改的语义：getPendingCount **不**计 failed。
+     * 这是**刻意**的：本方法回答「排队等上传的条数」，failed 需要用户介入，
+     * 混进去会让数字与「实际可自动续传的条数」对不上。
+     *
+     * ⚠️ 这里曾是「Home 横幅看不到失败行」的可观测性缺口，现已由
+     * `SyncQueueStatus`（`PendingTransactionDaoQueueStatusTest` 锁）在**另一条查询**里补齐
+     * ——横幅改读 `observeSyncStatus()`，`getPendingCount` 仍是 pending-only。
+     * 所以断言一行不动：它钉住的是口径，不是缺陷。
      */
     @Test
     fun `failed rows still count as unsynced`() = runTest {

@@ -335,6 +335,20 @@ sealed class AuthEvent {
 不会被再次同步。因此「401」这种**可恢复**失败必须在用户重新登录时显式重置，
 否则离线记账会静默卡死在本地（详见 §6.4）。
 
+> **⚠️ 已知缺口：`failed` 行当前没有任何逐行 UI 处置入口。**
+> 不可逐行查看（流水页 `TransactionsViewModel.getTransactions()` 的数据源是**服务端**，
+> presentation 层没有展示本地 `pending_transactions` 明细的 UI）、不可逐行删除
+> （`deleteByClientId` 只被 SyncWorker 补偿与通知撤销调用）、不可重试
+> （`getAllPending()` 不捞它）。仅有的两条路经都是一次性清空全部数据：
+> 切换服务器的 `ServerConfigViewModel.onSave(clearLocalCache = true)` 与
+> 换号登录的 `AuthRepositoryImpl.clearLocalCache()`；此外只有 401 类失败
+> 能靠同账号重新登录复位（`resetFailedMatching`）。
+>
+> 因此 Home 待同步横幅对 `failed` 只做**状态陈述、不给动作指引**
+> （`SyncQueueStatus` → `bannerVariantOf`，Failed 档无按钮）——
+> 指引一个用户做不到的动作就是新的谎报。处置能力待后续
+> 「failed 明细页（逐行重试/删除）」切片解锁，届时该档才应拿到按钮并升级为 danger 警告色。
+
 ### 6.4 登录 / 换号时的本地数据处置（数据安全关键路径）
 
 `login()` 在 `saveSession()` **之前**读取旧 `userId`（`TokenManager.getLastKnownUserId()`），
