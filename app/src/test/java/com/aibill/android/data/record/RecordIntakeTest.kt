@@ -6,20 +6,20 @@ import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.queue.RecordWrite
 import com.aibill.android.data.queue.RecordWriter
-import com.aibill.android.data.queue.SyncQueueImpl
-import com.aibill.android.domain.model.Transaction
-import com.aibill.android.domain.model.TransactionSource
-import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.data.remote.api.TransactionApi
+import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
+import com.aibill.android.data.remote.dto.response.ApiResponse
+import com.aibill.android.data.remote.dto.response.CreateTransactionResponse
+import com.aibill.android.data.remote.dto.response.TransactionDto
 import com.aibill.android.domain.record.CapturedNotification
 import com.aibill.android.domain.record.RecordIntent
 import com.aibill.android.domain.record.RecordIntake
+import com.aibill.android.domain.record.RecordFailure
 import com.aibill.android.domain.record.ReceiptPolicy
-import com.aibill.android.domain.record.SyncScheduling
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakInfo
 import com.aibill.android.domain.usecase.StreakTracker
 import com.aibill.android.service.NotificationRulesManager
-import com.aibill.android.data.queue.SyncScheduler
 import com.aibill.android.service.WidgetDataUpdater
 import com.aibill.android.util.NotificationHelper
 import io.mockk.coEvery
@@ -43,7 +43,7 @@ import java.time.ZoneId
 import java.util.Locale
 
 /**
- * 入账 module（[RecordIntake]）的行为测试。
+ * 入账 module（[RecordIntake]）的行为测试：**服务端先确认，本地才落库**。
  *
  * ## 为什么 interface 就是测试面
  *
@@ -55,11 +55,11 @@ import java.util.Locale
  *
  * ## 本类**不用** [com.aibill.android.data.queue.DirectRecordWriter]
  *
- * `DirectRecordWriter` 的三步写入（建审计行 → 写队列行 → 回填 `status` + `linked_client_id`）
+ * `DirectRecordWriter` 的三步写入（建审计行 → 写缓存行 → 回填 `status` + `linked_client_id`）
  * 由 `DirectRecordWriterTest` **直接驱动**并逐行断言（含两表关联键）。
  * 本类注入的是匿名 `object : RecordWriter`：它只关心入账 module 自己的顺序与字段，
- * 用 fake 记录调用序列（`write` / `confirm-record` / `schedule` / `widget` / `receipt`）
- * 才能断言到「AUTO 把 streak 插在排调度与刷 widget 之间」这种次序不变量。
+ * 用 fake 记录调用序列（`submit` / `write` / `confirm-record` / `widget` / `receipt`）
+ * 才能断言到「AUTO 把 streak 插在落库与刷 widget 之间」这种次序不变量。
  *
  * ⚠️ 因此「第三步真的回填了审计记录」在本类**看不到**——若有人删掉
  * `RecordWriter.applyRecordWrite` 的第三步，本类**仍然全绿**。
@@ -83,8 +83,9 @@ class RecordIntakeTest {
     private val learningEngine: CategoryLearningEngine = mockk(relaxed = true)
     private val streakTracker: StreakTracker = mockk(relaxed = true)
     private val rulesManager: NotificationRulesManager = mockk(relaxed = true)
+    private val transactionApi: TransactionApi = mockk()
 
-    /** 跨表写入与排调度的调用顺序；每个 hook 都往里记一笔 */
+    /** 送服务端 → 跨表写入 → 刷 widget → 回执 的调用顺序；每个 hook 都往里记一笔 */
     private val calls = mutableListOf<String>()
     private val insertedRows = mutableListOf<PendingTransactionEntity>()
     private val insertedRecords = mutableListOf<NotificationRecordEntity>()
@@ -100,11 +101,14 @@ class RecordIntakeTest {
         insertedRows.clear()
         insertedRecords.clear()
 
-        mockkObject(SyncScheduler)
         mockkObject(WidgetDataUpdater)
         mockkObject(NotificationHelper)
 
-        every { SyncScheduler.scheduleSyncIfNeeded(any()) } answers { calls += "schedule"; Unit }
+        // 默认：服务端按回执把每一条都确认成 created（成功判据的另一半由失败用例自己打桩）
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            calls += "submit"
+            confirmed(firstArg())
+        }
         every { WidgetDataUpdater.notifyTransactionAdded(any(), any(), any(), any()) } answers { calls += "widget"; Unit }
         every {
             NotificationHelper.showAutoRecordedNotification(
@@ -136,7 +140,7 @@ class RecordIntakeTest {
         return RecordIntakeImpl(
             context = context,
             recordWriter = writer,
-            syncQueue = SyncQueueImpl(mockk(relaxed = true), context),
+            transactionApi = transactionApi,
             recordClock = clock,
             userPreferences = userPreferences,
             categoryLearningEngine = learningEngine,
@@ -147,10 +151,49 @@ class RecordIntakeTest {
 
     @AfterEach
     fun tearDown() {
-        unmockkObject(SyncScheduler)
         unmockkObject(WidgetDataUpdater)
         unmockkObject(NotificationHelper)
     }
+
+    /** 服务端回执：`code==0` + `created[]` 按 `client_id` 回认。 */
+    private fun confirmed(request: CreateTransactionRequest): ApiResponse<CreateTransactionResponse> =
+        ApiResponse(
+            code = 0,
+            data = CreateTransactionResponse(
+                created = request.items.map { item ->
+                    TransactionDto(
+                        id = SERVER_ID,
+                        clientId = item.clientId,
+                        type = item.type,
+                        amount = item.amount,
+                        categoryId = item.categoryId,
+                        categoryName = null,
+                        categoryIcon = null,
+                        accountId = item.accountId,
+                        accountName = null,
+                        targetAccountId = item.targetAccountId,
+                        targetAccountName = null,
+                        description = item.description,
+                        date = item.date,
+                        time = item.time,
+                        tags = null,
+                        source = item.source,
+                        createdAt = null,
+                        updatedAt = null,
+                    )
+                },
+                duplicates = emptyList(),
+            ),
+            message = "ok",
+        )
+
+    /** 服务端没确认：`code==0` 但 `created[]` 里没有这条 `client_id`。 */
+    private fun unconfirmed(): ApiResponse<CreateTransactionResponse> =
+        ApiResponse(
+            code = 0,
+            data = CreateTransactionResponse(created = emptyList(), duplicates = emptyList()),
+            message = "ok",
+        )
 
     private fun capturedNotification() = CapturedNotification(
         packageName = "com.tencent.mm",
@@ -165,12 +208,12 @@ class RecordIntakeTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 顺序不变量：先写库、后排调度
+    // 顺序不变量：先服务端确认 → 再写本地 → 再发回执
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("AI 自动入账：写库 → 排调度 → 刷 widget → 回执，学习在回执之后")
-    fun `notification auto keeps write-then-schedule order`() = runTest {
+    @DisplayName("AI 自动入账：送服务端 → 写库 → 刷 widget → 回执，学习在回执之后")
+    fun `notification auto keeps submit-then-write order`() = runTest {
         coEvery { streakTracker.onTransactionRecorded() } returns StreakInfo()
 
         intake.intake(
@@ -185,14 +228,14 @@ class RecordIntakeTest {
             )
         )
 
-        assertEquals(listOf("write", "confirm-record", "schedule", "widget", "receipt"), calls)
-        // streak 只在这一条路径刷，且在排调度之后、刷 widget 之前
+        assertEquals(listOf("submit", "write", "confirm-record", "widget", "receipt"), calls)
+        // streak 只在这一条路径刷，且在落库之后、刷 widget 之前
         coVerify(exactly = 1) { streakTracker.onTransactionRecorded() }
     }
 
     @Test
-    @DisplayName("弹窗确认 / 通知中心单条确认：同样是先写库后排调度")
-    fun `confirm intents keep write-then-schedule order`() = runTest {
+    @DisplayName("弹窗确认 / 通知中心单条确认：同样是先服务端确认再写本地")
+    fun `confirm intents keep submit-then-write order`() = runTest {
         intake.intake(
             RecordIntent.NotificationConfirm(
                 recordId = 42L,
@@ -203,7 +246,7 @@ class RecordIntakeTest {
                 learn = false,
             )
         )
-        assertEquals(listOf("write", "confirm-record", "schedule", "widget", "receipt"), calls)
+        assertEquals(listOf("submit", "write", "confirm-record", "widget", "receipt"), calls)
 
         calls.clear()
         intake.intake(
@@ -215,7 +258,7 @@ class RecordIntakeTest {
                 description = "午饭",
             )
         )
-        assertEquals(listOf("write", "confirm-record", "schedule", "widget"), calls)
+        assertEquals(listOf("submit", "write", "confirm-record", "widget"), calls)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -241,7 +284,7 @@ class RecordIntakeTest {
         assertEquals(outcome.clientId, row.clientId)
         // 新建审计行的 id 要随结果回传（它就是回执的通知 id / 撤销的定位键）
         assertEquals(7L, outcome.recordId)
-        assertTrue(outcome.syncScheduled)
+        assertTrue(outcome.recorded, "服务端确认了才算记上")
         assertTrue(row.clientId.isNotBlank(), "clientId 是幂等与撤销的唯一凭据")
         assertEquals(3200, row.amount)
         assertEquals("expense", row.type)
@@ -251,7 +294,8 @@ class RecordIntakeTest {
         assertEquals("午餐", row.description)
         assertEquals("app_notification", row.source)
         assertEquals("微信支付", row.sourceDetail)
-        assertEquals("pending", row.syncStatus)
+        assertEquals("synced", row.syncStatus)
+        assertEquals(SERVER_ID, row.serverTransactionId)
         assertEquals("2026-07-10", row.date)
         assertEquals("12:30", row.time)
         assertEquals(fixedInstant.toString(), row.clientCreatedAt)
@@ -308,10 +352,6 @@ class RecordIntakeTest {
         assertEquals(
             ReceiptPolicy.NONE,
             RecordIntent.ExternalQuickRecord(1, "expense", null).receipt,
-        )
-        assertEquals(
-            ReceiptPolicy.NONE,
-            RecordIntent.ManualOffline(Transaction(clientId = "c", type = TransactionType.EXPENSE, amount = 1, date = "2026-07-05")).receipt,
         )
     }
 
@@ -401,36 +441,35 @@ class RecordIntakeTest {
         assertEquals("交通", row.categoryName)
         assertEquals("🚗", row.categoryIcon)
         assertEquals("出差,报销", row.tags)
-        assertEquals("pending", row.syncStatus)
+        assertEquals("synced", row.syncStatus)
+        assertEquals(SERVER_ID, row.serverTransactionId)
     }
 
     @Test
-    @DisplayName("批量确认：每笔不排调度，结果里如实报告「没排」，由批量调用方收尾排一次")
-    fun `batch confirm defers a single sync`() = runTest {
-        repeat(3) { i ->
-            val outcome = intake.intake(
+    @DisplayName("批量确认：逐笔各自送服务端，成功几笔就如实报几笔")
+    fun `batch confirm reports per record`() = runTest {
+        val outcomes = (0 until 3).map { i ->
+            intake.intake(
                 RecordIntent.NotificationCenterConfirm(
                     recordId = i.toLong(),
                     packageName = "com.tencent.mm",
                     amount = 100 * (i + 1),
                     type = "expense",
                     description = "第 $i 笔",
-                    scheduling = SyncScheduling.DEFERRED,
                 )
             )
-            // A3：入账入口自己回答「本笔排了没排」，调用方不再需要记住调一个收尾方法
-            assertFalse(outcome.syncScheduled, "DEFERRED 的本笔必须如实报告未排调度")
         }
 
-        // 逐笔只写库 + 刷 widget；把 1 次入队变成 N 次就是行为变更
-        assertFalse(calls.contains("schedule"), "DEFERRED 时每笔都不排调度")
+        assertTrue(outcomes.all { it.recorded }, "全部成功时不得报失败")
         assertEquals(3, insertedRows.size)
         assertEquals(3, calls.count { it == "widget" })
+        // 每笔都各自送了一次服务端（幂等靠 client_id，不靠「攒一批」）
+        assertEquals(3, calls.count { it == "submit" })
     }
 
     @Test
-    @DisplayName("单条确认与其它意图：结果里如实报告「已排调度」")
-    fun `immediate intents report that sync was scheduled`() = runTest {
+    @DisplayName("单条确认：服务端确认后 recorded=true，且不回传新建审计行 id")
+    fun `single confirm reports recorded`() = runTest {
         val single = intake.intake(
             RecordIntent.NotificationCenterConfirm(
                 recordId = 1L,
@@ -440,21 +479,74 @@ class RecordIntakeTest {
                 description = "单条",
             )
         )
-        val offline = intake.intake(
-            RecordIntent.ManualOffline(
-                Transaction(
-                    clientId = "C-1",
-                    type = TransactionType.EXPENSE,
-                    amount = 100,
-                    date = "2026-07-05",
-                )
+
+        assertTrue(single.recorded)
+        assertNull(single.failure)
+        // 通知中心确认不改既有审计行 → 没有新建的审计 id 可回传
+        assertNull(single.recordId)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 失败当场告知：服务端没确认就什么都不发生
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("服务端未回执 created：不写缓存、不写审计行、不发回执，失败原样带回")
+    fun `no server confirmation means nothing is written`() = runTest {
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            calls += "submit"
+            unconfirmed()
+        }
+
+        val outcome = intake.intake(
+            RecordIntent.NotificationAuto(
+                captured = capturedNotification(),
+                amount = 3200,
+                type = "expense",
+                categoryId = 7,
+                description = "午餐",
             )
         )
 
-        assertTrue(single.syncScheduled)
-        assertTrue(offline.syncScheduled)
-        // 通知中心确认不改既有审计行 → 没有新建的审计 id 可回传
-        assertNull(single.recordId)
+        assertFalse(outcome.recorded)
+        val failure = outcome.failure
+        assertTrue(failure is RecordFailure.Rejected, "code==0 却没回执 = 服务端没确认")
+        assertNull(outcome.recordId, "没确认就没有审计行 id 可回传")
+        assertTrue(insertedRows.isEmpty(), "本地一个字节都不能写")
+        assertTrue(insertedRecords.isEmpty(), "审计行也不能建")
+        assertFalse(calls.contains("write"), "写入器不得被调用")
+        assertFalse(calls.contains("receipt"), "没记上就不许发「已记录」回执")
+        assertFalse(calls.contains("widget"), "没记上就不刷统计")
+        // 通知中心确认（弹窗/通知中心共用的失败面）同样什么都不写
+        calls.clear()
+        val confirmOutcome = intake.intake(
+            RecordIntent.NotificationCenterConfirm(
+                recordId = 9L,
+                packageName = "com.tencent.mm",
+                amount = 100,
+                type = "expense",
+                description = "午饭",
+            )
+        )
+        assertFalse(confirmOutcome.recorded)
+        assertTrue(insertedRows.isEmpty())
+        assertFalse(calls.contains("write"))
+        assertFalse(calls.contains("widget"))
+    }
+
+    @Test
+    @DisplayName("请求根本没送达：失败原因标成 Offline，同样什么都不写")
+    fun `network failure is reported as offline and writes nothing`() = runTest {
+        coEvery { transactionApi.createTransactions(any()) } throws java.io.IOException("no route")
+
+        val outcome = intake.intake(
+            RecordIntent.ExternalQuickRecord(amount = 100, type = "expense", description = "午饭"),
+        )
+
+        assertEquals(RecordFailure.Offline, outcome.failure)
+        assertFalse(outcome.recorded)
+        assertTrue(insertedRows.isEmpty())
+        assertEquals("没网，记不上", RecordFailure.Offline.userMessage)
     }
 
     @Test
@@ -482,9 +574,9 @@ class RecordIntakeTest {
 
         assertNull(outcome.recordId, "拿不到 id 就如实返回 null")
         assertFalse(calls.contains("receipt"), "没有 id 就不发回执：宁可没有回执，也不能盖掉真实通知")
-        // 其余步骤照旧：账仍然落库、照排调度、照刷 widget、照学习
+        // 其余步骤照旧：服务端确认后仍然落库、照刷 widget、照学习
         assertEquals(1, insertedRows.size)
-        assertEquals(listOf("write", "schedule", "widget"), calls)
+        assertEquals(listOf("submit", "write", "widget"), calls)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -505,7 +597,7 @@ class RecordIntakeTest {
             RecordIntent.ExternalQuickRecord(amount = 2590, type = "expense", description = "咖啡")
         )
 
-        assertEquals(listOf("write", "schedule"), calls)
+        assertEquals(listOf("submit", "write"), calls)
         // 不刷 widget（其余通知路径都刷）——原实现就没有刷，保留
         assertFalse(calls.contains("widget"))
         // 不翻审计表
@@ -524,7 +616,7 @@ class RecordIntakeTest {
         // 来源标记的**具体值**：tasker_quick_record 是 AutoRecord 与本入口的区分依据，
         // 丢了它两类记录在服务端就分不出来。
         assertEquals("tasker_quick_record", row.sourceDetail)
-        assertEquals("pending", row.syncStatus)
+        assertEquals("synced", row.syncStatus)
         assertEquals("2026-07-10", row.date)
         assertEquals("12:30", row.time)
         // 历史口径：本入口的 client_created_at 是**无时区**的本地日期时间串
@@ -532,89 +624,25 @@ class RecordIntakeTest {
     }
 
     @Test
-    @DisplayName("静默入账：排调度抛异常也不抛、不回滚，账仍恰好写一行")
-    fun `external quick record never rolls back when scheduling throws`() = runTest {
-        // 与「落离线」那条同源：证明「写库之后才排调度」，且排调度失败不影响已写入的这一行。
-        every { SyncScheduler.scheduleSyncIfNeeded(any()) } answers {
-            calls += "schedule"
-            throw RuntimeException("WM down")
+    @DisplayName("静默入账：服务端拒绝时一行都不写，失败也不抛出去")
+    fun `external quick record writes nothing when the server rejects`() = runTest {
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            calls += "submit"
+            ApiResponse(code = 422, data = unconfirmed().data, message = "金额必须大于 0")
         }
 
         // 不抛即通过：静默入账跑在 ApplicationScope 上，异常逃出去 = 崩进程
         // （本工程没有全局 CoroutineExceptionHandler）。
-        intake.intake(
-            RecordIntent.ExternalQuickRecord(amount = 100, type = "expense", description = "午饭")
+        val outcome = intake.intake(
+            RecordIntent.ExternalQuickRecord(amount = 100, type = "expense", description = "午饭"),
         )
 
-        assertEquals(1, insertedRows.size)
-        assertEquals(listOf("write", "schedule"), calls)
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // 意图 5：手工记账落离线（TransactionRepositoryImpl.createTransactionOffline）
-    // ═══════════════════════════════════════════════════════════════
-
-    @Test
-    @DisplayName("落离线：沿用调用方的 clientId 与用户所选日期，冗余写分类/账户字段")
-    fun `manual offline keeps caller client id and user picked date`() = runTest {
-        val transaction = Transaction(
-            clientId = "C-offline-1",
-            type = TransactionType.EXPENSE,
-            amount = 3200,
-            categoryId = 2,
-            categoryName = "餐饮",
-            categoryIcon = "🍚",
-            accountId = 9,
-            accountName = "招行",
-            description = "午饭",
-            date = "2026-07-05",
-            time = "12:30",
-            tags = listOf("工作日", "报销"),
-            source = TransactionSource.MANUAL,
-        )
-
-        intake.intake(RecordIntent.ManualOffline(transaction))
-
-        val row = onlyRow()
-        assertEquals("C-offline-1", row.clientId)
-        assertEquals(transaction.categoryId, row.categoryId)
-        assertEquals("餐饮", row.categoryName)
-        assertEquals("🍚", row.categoryIcon)
-        assertEquals(9, row.accountId)
-        assertEquals("招行", row.accountName)
-        assertEquals("工作日,报销", row.tags)
-        assertEquals("manual", row.source)
-        // 手工记账用**用户当时选的时间**，不是入账时刻
-        assertEquals("2026-07-05", row.date)
-        assertEquals("12:30", row.time)
-        assertEquals("pending", row.syncStatus)
-        // 不刷 widget（其余通知路径都刷）——原实现就没有刷，保留
-        assertEquals(listOf("write", "schedule"), calls)
-    }
-
-    @Test
-    @DisplayName("落离线：排调度抛异常也不抛、不回滚，账仍恰好写一行")
-    fun `manual offline never rolls back when scheduling throws`() = runTest {
-        // 记录顺序后再抛：证明「写库之后才排调度」，且排调度失败不影响已写入的这一行
-        every { SyncScheduler.scheduleSyncIfNeeded(any()) } answers {
-            calls += "schedule"
-            throw RuntimeException("WM down")
-        }
-
-        // 不抛即通过（异常若逃出 viewModelScope 会崩进程，且会让 isSaving 复位被跳过）
-        intake.intake(
-            RecordIntent.ManualOffline(
-                Transaction(
-                    clientId = "C-1",
-                    type = TransactionType.EXPENSE,
-                    amount = 100,
-                    date = "2026-07-05",
-                )
-            )
-        )
-
-        assertEquals(1, insertedRows.size)
-        assertEquals(listOf("write", "schedule"), calls)
+        assertFalse(outcome.recorded)
+        val failure = outcome.failure
+        assertTrue(failure is RecordFailure.Rejected)
+        assertEquals(422, (failure as RecordFailure.Rejected).code)
+        assertTrue(insertedRows.isEmpty(), "服务端没确认就一行都不能落")
+        assertFalse(calls.contains("write"))
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -666,6 +694,11 @@ class RecordIntakeTest {
         // 阿拉伯语 locale 下 SimpleDateFormat 会写出 ٢٠٢٦-٠٧-١٠，必须一个非 ASCII 字符都不剩
         assertTrue(row.date.all { it.code < 128 }, "落库日期必须全是 ASCII：${row.date}")
         assertTrue((row.time ?: "").all { it.code < 128 }, "落库时间必须全是 ASCII：${row.time}")
+    }
+
+    private companion object {
+        /** 服务端在 `created[]` 里回认的交易 id（撤销时删的就是它） */
+        const val SERVER_ID = 99
     }
 }
 

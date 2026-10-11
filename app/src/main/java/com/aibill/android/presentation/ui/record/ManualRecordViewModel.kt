@@ -319,6 +319,20 @@ class ManualRecordViewModel @Inject constructor(
         _uiState.update { it.copy(isExpanded = !it.isExpanded) }
     }
 
+    /**
+     * 保存。
+     *
+     * ## 成功判据在服务端手里
+     *
+     * `createTransactions` 只有在服务端回执 `created` + `client_id` 匹配时才返回
+     * [Result.Success]，所以走到这里就意味着「真的记上了」。
+     *
+     * ## 失败当场告知，且**保留表单输入**
+     *
+     * 任何失败都只报错、不落库、不清表单：用户原地改一改就能重试。
+     * 无网时给的是「没网，记不上」而不是兜底成一条待补传的本地记录——
+     * 本工程没有离线队列，写了就是谎报。
+     */
     fun onSave() {
         val state = _uiState.value
         if (state.amountFen <= 0) {
@@ -357,14 +371,17 @@ class ManualRecordViewModel @Inject constructor(
                     resetForm()
                 }
                 is Result.Error -> {
-                    // PR #29：仅网络错误（ERROR_NETWORK）才落离线，业务错误（422/5001 等）弹 Snackbar 让用户修正
-                    if (result.code == Result.ERROR_NETWORK) {
-                        transactionRepository.createTransactionOffline(transaction)
-                        _uiEvent.send(UiEvent.SaveSuccess("已离线保存，联网后会自动补传"))
-                        resetForm()
-                    } else {
-                        _uiEvent.send(UiEvent.ShowToast("保存失败: ${result.message}"))
-                    }
+                    // 没记上就是没记上：不落库、不清表单，用户当场重试。
+                    // 无网与业务失败分开措辞，避免把「422 让你改字段」说成「没网」。
+                    _uiEvent.send(
+                        UiEvent.ShowToast(
+                            if (result.code == Result.ERROR_NETWORK) {
+                                "没网，记不上"
+                            } else {
+                                "保存失败: ${result.message}"
+                            },
+                        ),
+                    )
                 }
                 is Result.Loading -> Unit
             }

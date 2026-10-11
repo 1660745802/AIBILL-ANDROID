@@ -6,13 +6,15 @@ import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.queue.DirectRecordWriter
-import com.aibill.android.data.queue.SyncQueueImpl
 import com.aibill.android.data.record.RecordClock
 import com.aibill.android.data.record.RecordIntakeImpl
 import com.aibill.android.data.record.RecordMoment
 import com.aibill.android.data.queue.RecordWriter
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.data.remote.api.AiApi
+import com.aibill.android.data.remote.api.TransactionApi
+import com.aibill.android.data.remote.confirmingTransactionApi
+import com.aibill.android.data.remote.unconfirmedApiResponse
 import com.aibill.android.data.remote.dto.response.AiParseResponseDto
 import com.aibill.android.data.remote.dto.response.AiParsedItemDto
 import com.aibill.android.data.remote.dto.response.ApiResponse
@@ -66,6 +68,7 @@ class NotificationProcessorTest {
     private val appLogger: AppLogger = mockk(relaxed = true)
     private val rulesManager: NotificationRulesManager = mockk(relaxed = true)
     private val streakTracker: com.aibill.android.domain.usecase.StreakTracker = mockk(relaxed = true)
+    private lateinit var transactionApi: TransactionApi
 
     private lateinit var processor: NotificationProcessor
 
@@ -74,8 +77,6 @@ class NotificationProcessorTest {
         Dispatchers.setMain(testDispatcher)
 
         // Mock static calls that happen during commitBest
-        io.mockk.mockkObject(com.aibill.android.data.queue.SyncScheduler)
-        every { com.aibill.android.data.queue.SyncScheduler.scheduleSyncIfNeeded(any()) } returns Unit
         io.mockk.mockkObject(com.aibill.android.service.WidgetDataUpdater)
         every { com.aibill.android.service.WidgetDataUpdater.notifyTransactionAdded(any(), any(), any(), any()) } returns Unit
         io.mockk.mockkObject(com.aibill.android.util.NotificationHelper)
@@ -86,6 +87,8 @@ class NotificationProcessorTest {
         every { userPreferences.notificationPrivacy } returns flowOf(true)
         // Default: no learned category
         coEvery { categoryLearningEngine.matchCategory(any()) } returns null
+        // 入账要先过服务端这一关：默认桩是「服务端确认」，失败用例自己覆盖它
+        transactionApi = confirmingTransactionApi()
         // Default: rules returns processor defaults
         every { rulesManager.getRules() } returns NotificationRules(
             nls = NlsRules("", WechatRules("", emptyList(), emptyList(), emptyList(), emptyList()), AlipayRules("", emptyList()), emptyList(), emptyList()),
@@ -123,7 +126,7 @@ class NotificationProcessorTest {
         return RecordIntakeImpl(
             context = context,
             recordWriter = writer,
-            syncQueue = SyncQueueImpl(pendingTransactionDao, context),
+            transactionApi = transactionApi,
             recordClock = clock,
             userPreferences = userPreferences,
             categoryLearningEngine = categoryLearningEngine,
@@ -135,7 +138,6 @@ class NotificationProcessorTest {
     @AfterEach
     fun tearDown() {
         Dispatchers.resetMain()
-        io.mockk.unmockkObject(com.aibill.android.data.queue.SyncScheduler)
         io.mockk.unmockkObject(com.aibill.android.service.WidgetDataUpdater)
         io.mockk.unmockkStatic(com.aibill.android.util.NotificationHelper::class)
         io.mockk.unmockkObject(com.aibill.android.util.NotificationHelper)
@@ -261,6 +263,42 @@ class NotificationProcessorTest {
         testDispatcher.scheduler.runCurrent()
         coVerify(exactly = 1) { pendingTransactionDao.insert(any()) }
         coVerify(atLeast = 1) { notificationRecordDao.insert(any()) }
+    }
+
+    @Test
+    @DisplayName("3b. 服务端未确认 → 一行缓存都不写，降级进待审池（status=parsed）")
+    fun serverUnconfirmed_degradesToPendingReview() = runTest(testDispatcher) {
+        val aiItem = makeAiItem(
+            amount = 3200,
+            categoryId = 7,
+            categoryName = "餐饮",
+            description = "午餐",
+        )
+        coEvery { aiApi.parse(any()) } returns makeApiResponse(aiItem)
+        setupValidatorValid()
+        coEvery { notificationRecordDao.insert(any()) } returns 3L
+        coEvery { notificationRecordDao.findRecentConfirmedFromOtherChannel(any(), any(), any()) } returns null
+        // 信息完整，但服务端这条没回执成 created（没网 / 业务错误 / 鉴权）
+        coEvery { transactionApi.createTransactions(any()) } returns unconfirmedApiResponse()
+
+        processor.process(makeItem(fullText = "支付成功 ¥32.00"))
+        testDispatcher.scheduler.runCurrent()
+
+        advanceTimeBy(11_000)
+        testDispatcher.scheduler.runCurrent()
+
+        // 缓存行一行都不许有：本地写了就等于「已接受却未送达」
+        coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
+        // 但信息不能丢：降级成待审行，通知中心仍看得见、可手动确认
+        coVerify(atLeast = 1) {
+            notificationRecordDao.insert(match { it.status == "parsed" && it.parsedAmount == 3200 })
+        }
+        // 也绝不发「已记录」回执
+        io.mockk.verify(exactly = 0) {
+            com.aibill.android.util.NotificationHelper.showAutoRecordedNotification(
+                any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        }
     }
 
     @Test

@@ -9,77 +9,48 @@ import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
-import com.aibill.android.domain.queue.SyncQueue
-import com.aibill.android.domain.record.RecordIntent
-import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.repository.TransactionPage
 import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 服务端那侧的账。**不再持有离线队列**：快照、排调度、清空、401 恢复全归
- * [SyncQueue]，本类因此也不再需要 `Context` 与 `PendingTransactionDao`。
+ * 服务端那侧的账。
+ *
+ * 记一笔只在这里发生：送 `POST /transactions` → 按 `client_id` 核对 `created[]` 回执。
+ * 核不平就是 [Result.Error]，本地不留任何痕迹（架构 §2.3 的成功判据）。
  */
 @Singleton
 class TransactionRepositoryImpl @Inject constructor(
     private val transactionApi: TransactionApi,
-    private val recordIntake: RecordIntake,
 ) : TransactionRepository {
 
     override suspend fun createTransactions(items: List<Transaction>): Result<List<Transaction>> {
         val request = CreateTransactionRequest(
             items = items.map { it.toItemRequest() }
         )
-        return safeApiCall { transactionApi.createTransactions(request) }.map { response ->
-            response.created.map { it.toDomain() }
+        return when (val response = safeApiCall { transactionApi.createTransactions(request) }) {
+            is Result.Error -> response
+            is Result.Loading -> response
+            is Result.Success -> {
+                val created = response.data.created
+                // 成功判据 = 服务端返回 created 且按 client_id 匹配到 id。
+                // code==0 但回执里少一条（漏字段 / 转换异常 / 只在 duplicates 里）都算没记上——
+                // 放过去就会出现「本地以为记了、服务端没有」的中间态。
+                val unconfirmed = items.filter { item ->
+                    // TransactionDto.id 是非空 Int：匹配到即等于拿回了 id
+                    created.none { it.clientId == item.clientId }
+                }
+                if (unconfirmed.isEmpty()) {
+                    Result.Success(created.map { it.toDomain() })
+                } else {
+                    Timber.w("createTransactions 未获服务端确认: ${unconfirmed.map { it.clientId }}")
+                    Result.Error(Result.ERROR_UNKNOWN, "服务端未确认这笔记录")
+                }
+            }
         }
-    }
-
-    /**
-     * 落离线一笔，并在**写库之后**立刻排一次同步。
-     *
-     * ## 它已不再是「纯写库」
-     *
-     * 历史上这里只 `insert`，排同步全靠兜底：`NetworkMonitor` 的「不可用→可用」
-     * 跳变、App 启动那一次、以及用户手动点同步。WiFi 常连时的瞬时失败记账会一直躺着，
-     * 直到下一次跳变——而 `README.md` 与 Home 待同步横幅都在承诺「联网后会自动补传」。
-     * 既然写库的那一刻就知道「这笔需要上传」，就该在这一刻排。
-     *
-     * 本函数现在只做一件事：把 `Transaction` 翻译成
-     * [RecordIntent.ManualOffline] 交给入账 module。实体装配、跨表写入、排调度与
-     * 排同步失败的处置（只记日志、不回滚、不抛出，理由见 `RecordIntakeImpl` 的类 KDoc）
-     * 都已下沉到那里；下面四条契约**行为保持不变**，只是换了实现位置。
-     *
-     * ## 语义边界：已入队 ≠ 已上传
-     *
-     * 排调度由入账 module 交给 [SyncQueue]（`NetworkType.CONNECTED` 约束 +
-     * unique work 串行），**不代表已上传**。真实结果由队列快照与横幅呈现；
-     * 调用方不得据此改写成「已同步/已上传」。
-     *
-     * ## 失败策略：只记日志，绝不回滚、绝不抛出
-     *
-     * 入队失败（WorkManager 抛异常）时这笔账**已经落库**，回滚等于丢用户数据；
-     * 抛给调用方则会让异常逃出 `viewModelScope`——本工程**没有**全局
-     * `CoroutineExceptionHandler`，未捕获异常走线程默认处理器 = **直接崩溃进程**；
-     * 即便假设它被吞，`ManualRecordViewModel` 末尾的 `isSaving` 复位也会被异常跳过，
-     * 按钮永久卡在「保存中」。剩余兜底仍有：
-     * 网络跳变、启动排同步、Home 横幅的手动同步按钮。
-     *
-     * ## 副作用：批量离线记账会排出多个 worker
-     *
-     * [SyncQueue.requestSync] 用 `APPEND_OR_REPLACE`，连录 N 笔
-     * 离线账就入队 N 个 worker；第 1 个跑完 `getAllPending()` 清空队列后，
-     * 第 2…N 个各自再取一次空队列并 `Result.success()` 早退。**不造成重复上传**
-     * （队列已空，且服务端按 `clientId` 的 `duplicates[]` 幂等），只是多几次
-     * 取空队列与抢锁的开销。批量导入场景若嫌浪费，可在此按需节流。
-     *
-     * 当前唯一调用者：`ManualRecordViewModel`（仅网络错误分支）。
-     */
-    override suspend fun createTransactionOffline(transaction: Transaction) {
-        // 顺序不变量「先写库、后排调度」由入账 module 保证。
-        recordIntake.intake(RecordIntent.ManualOffline(transaction))
     }
 
     override suspend fun getTransactions(query: TransactionQuery): Result<TransactionPage> {

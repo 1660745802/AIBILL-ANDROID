@@ -32,12 +32,12 @@ import javax.inject.Inject
 class ExternalActionReceiver : BroadcastReceiver() {
 
     /**
-     * 入账（记一笔）唯一入口。clientId 生成、实体装配、跨表事务与排同步都在里面，
-     * 本类只表达「静默入账这一笔」的意图（架构候选 1 收口）。
+     * 入账（记一笔）唯一入口。clientId 生成、实体装配、送服务端确认、跨表写入
+     * 都在里面，本类只表达「静默入账这一笔」的意图（架构候选 1 收口）。
      *
-     * 排同步不再绕 `TransactionRepository.syncPending()`（该方法已在架构候选 3 删除）：
-     * 排调度归离线队列 module 的 `SyncQueue.requestSync()`，失败处置
-     * （只记日志、不回滚、不抛出）由入账 module 统一承担。
+     * 失败处置也归入账 module：它返回 [com.aibill.android.domain.record.RecordOutcome.failure]，
+     * 本类只记日志——静默入账没有可承载失败的 UI，但**绝不**在没记上时打出
+     * 「静默记录成功」这行日志。
      */
     @Inject lateinit var recordIntake: RecordIntake
 
@@ -71,7 +71,7 @@ class ExternalActionReceiver : BroadcastReceiver() {
 
     /**
      * 静默入账本体（`autoConfirm` 且签名权限已通过时调用）：
-     * 表达入账意图 → 由入账 module 写库并排一次同步。
+     * 表达入账意图 → 由入账 module 送服务端确认并写本地缓存。
      *
      * **private 是收口后的状态**（架构候选 5）：本函数曾是 `internal`，理由写着「为让单测
      * 直接调它，绕开 `onReceive` 的 `inject()`」——逻辑住在壳里、可见性只为测试放宽，
@@ -95,7 +95,17 @@ class ExternalActionReceiver : BroadcastReceiver() {
                 description = description,
             )
         )
-        Timber.d("ExternalActionReceiver: 静默记录成功 amount=$amount clientId=${outcome.clientId}")
+        val failure = outcome.failure
+        if (failure != null) {
+            // 没记上必须留痕：这里是唯一能告诉调用方发生了什么的通道
+            Timber.w(
+                "ExternalActionReceiver: 静默入账失败 amount=$amount clientId=%s reason=%s",
+                outcome.clientId,
+                failure.userMessage,
+            )
+        } else {
+            Timber.d("ExternalActionReceiver: 静默记录成功 amount=$amount clientId=${outcome.clientId}")
+        }
     }
 
     private fun handleQuickRecord(context: Context, intent: Intent) {

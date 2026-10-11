@@ -6,13 +6,15 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.queue.RecordWrite
 import com.aibill.android.data.queue.RecordWriter
+import com.aibill.android.data.remote.api.TransactionApi
+import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
+import com.aibill.android.data.remote.dto.request.TransactionItemRequest
+import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.TransactionType
-import com.aibill.android.domain.queue.SyncQueue
-import com.aibill.android.domain.queue.SyncRequest
+import com.aibill.android.domain.record.RecordFailure
 import com.aibill.android.domain.record.RecordIntent
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.record.RecordOutcome
-import com.aibill.android.domain.record.SyncScheduling
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakTracker
 import com.aibill.android.service.NotificationRulesManager
@@ -20,47 +22,41 @@ import com.aibill.android.service.WidgetDataUpdater
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationSourceMapping
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
+import retrofit2.HttpException
 import timber.log.Timber
+import java.io.IOException
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 入账 module 的实现（原样搬迁 6 条手写写入路径）。
+ * 入账 module 的实现（原样搬迁 5 条手写写入路径）。
  *
- * 独占：clientId 生成、时钟、entity 装配、跨表写入、分类预测/学习、排同步调度、
+ * 独占：clientId 生成、时钟、entity 装配、**送服务端确认**、跨表写入、分类预测/学习、
  * widget 累加、回执/轻通知、隐私档读取。调用方只表达意图（见 `RecordIntent`）。
  *
- * ## 顺序不变量：先写库、后排调度
+ * ## 顺序不变量：先服务端确认 → 再写本地 → 再发回执
  *
- * 反过来可能让 SyncWorker 早于本行提交就跑到空队列（白跑一轮，还要等下一次网络跳变才补传）。
- * 全部 6 条路径都遵守这一条。
+ * [confirmAndCache] 是唯一的落库出口：它先 `POST /transactions` 按 `client_id`
+ * 拿服务端 id，拿到才把行（`sync_status='synced'` + `server_transaction_id`）与审计行
+ * 写进 Room；拿不到就**什么都不写**，把 [RecordFailure] 原样带回去。
+ * 因此「写进本地缓存」这件事本身就是「服务端已确认」的证据，
+ * `pending_transactions` 里不会有第三种状态（见 `docs/ARCHITECTURE.md` §6.1）。
  *
- * ## ⚠️ 排同步失败只记日志、绝不回滚、绝不抛出
+ * ## 失败绝不静默，也绝不自己兜底
  *
- * 排调度由离线队列 module（[SyncQueue.requestSync]）执行，入队失败时它返回
- * [SyncRequest.Rejected] 而不是抛异常，本类只把它记成日志。那笔账**已经落库**，
- * 回滚等于丢用户数据；抛给调用方则会让异常逃出调用方的协程作用域——本工程**没有**
- * 全局 `CoroutineExceptionHandler`，未捕获异常走线程默认处理器 = **直接崩溃进程**；
- * 即便假设它被吞，`ManualRecordViewModel` 末尾的 `isSaving` 复位也会被异常跳过，
- * 按钮永久卡在「保存中」。剩余兜底仍有：网络跳变、启动排同步、Home 横幅的手动同步按钮。
- *
- * 这条策略原先只写在 `TransactionRepositoryImpl.createTransactionOffline` 上，
- * 收口后由本类统一承担（弹窗/通知中心那几条原本连 try/catch 都没有，是行为变更，
- * 已在提交信息里写明）。
- *
- * ## 已入队 ≠ 已上传
- *
- * [SyncQueue.requestSync] 只是把 SyncWorker 入队，真实上传结果由队列快照与横幅呈现。
- * 本类把结果写进 [RecordOutcome.syncScheduled]（排没排），
- * 不得据此在调用方改写成「已同步 / 已上传」类文案。
+ * 服务端没确认时，本类**不**写库、**不**发回执、**不**刷 widget/streak、**不**学分类，
+ * 只把失败原因回传。把它变成用户看得见的反馈是调用方的事
+ * （手工 → Snackbar、通知自动 → 降级待审池、确认 → Toast）。
+ * 这样「已记录」类回执在结构上就不可能先于服务端确认发出去。
  */
 @Singleton
 class RecordIntakeImpl @Inject constructor(
     @ApplicationContext private val context: Context,
     private val recordWriter: RecordWriter,
-    private val syncQueue: SyncQueue,
+    private val transactionApi: TransactionApi,
     private val recordClock: RecordClock,
     private val userPreferences: UserPreferences,
     private val categoryLearningEngine: CategoryLearningEngine,
@@ -73,7 +69,6 @@ class RecordIntakeImpl @Inject constructor(
         is RecordIntent.NotificationConfirm -> intakeNotificationConfirm(intent)
         is RecordIntent.NotificationCenterConfirm -> intakeNotificationCenterConfirm(intent)
         is RecordIntent.ExternalQuickRecord -> intakeExternalQuickRecord(intent)
-        is RecordIntent.ManualOffline -> intakeManualOffline(intent)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -101,24 +96,23 @@ class RecordIntakeImpl @Inject constructor(
             clientCreatedAt = moment.instant.toString(),
         )
 
-        // 新建审计行 + 写队列行 + 回填 linked_client_id，三步在同一事务里
-        val recordId = recordWriter.write(
-            RecordWrite(
-                pending = pending,
-                newRecord = NotificationRecordEntity(
-                    packageName = intent.captured.packageName,
-                    title = intent.captured.title.ifBlank { null },
-                    content = intent.captured.content,
-                    parsedAmount = intent.amount,
-                    parsedType = intent.type,
-                    parsedDescription = intent.description,
-                    status = STATUS_CONFIRMED,
-                    receivedAt = intent.captured.receivedAt,
-                ),
-            )
+        // 送服务端 + 写缓存行 + 新建审计行 + 回填 linked_client_id，全在 confirmAndCache 里
+        val cached = confirmAndCache(
+            pending = pending,
+            newRecord = NotificationRecordEntity(
+                packageName = intent.captured.packageName,
+                title = intent.captured.title.ifBlank { null },
+                content = intent.captured.content,
+                parsedAmount = intent.amount,
+                parsedType = intent.type,
+                parsedDescription = intent.description,
+                status = STATUS_CONFIRMED,
+                receivedAt = intent.captured.receivedAt,
+            ),
         )
+        if (cached.failure != null) return RecordOutcome(clientId = clientId, failure = cached.failure)
+        val recordId = cached.recordId
 
-        val scheduled = scheduleSync(clientId)
         streakTracker.onTransactionRecorded()
         WidgetDataUpdater.notifyTransactionAdded(
             context = context,
@@ -149,7 +143,7 @@ class RecordIntakeImpl @Inject constructor(
         if (!learnKey.isNullOrBlank() && intent.categoryId != null) {
             categoryLearningEngine.learnFromCorrection(learnKey, intent.categoryId)
         }
-        return RecordOutcome(clientId = clientId, recordId = recordId, syncScheduled = scheduled)
+        return RecordOutcome(clientId = clientId, recordId = recordId)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -173,7 +167,7 @@ class RecordIntakeImpl @Inject constructor(
             clientId = clientId,
             type = intent.type,
             amount = intent.amount,
-            // 只写分类 id，不写 name/icon：与「手工落离线」写冗余 name/icon 的差异一样，保留。
+            // 只写分类 id，不写 name/icon：与手工记账写冗余 name/icon 的差异一样，保留。
             categoryId = predictedCategoryId,
             description = intent.description,
             date = moment.date,
@@ -183,9 +177,8 @@ class RecordIntakeImpl @Inject constructor(
             clientCreatedAt = moment.instant.toString(),
         )
 
-        recordWriter.write(RecordWrite(pending = pending, confirmRecordId = intent.recordId))
-
-        val scheduled = scheduleSync(clientId)
+        val cached = confirmAndCache(pending = pending, confirmRecordId = intent.recordId)
+        if (cached.failure != null) return RecordOutcome(clientId = clientId, failure = cached.failure)
 
         WidgetDataUpdater.notifyTransactionAdded(
             context = context,
@@ -210,7 +203,7 @@ class RecordIntakeImpl @Inject constructor(
             source = sourceDetail,
             privacyMode = false,
         )
-        return RecordOutcome(clientId = clientId, syncScheduled = scheduled)
+        return RecordOutcome(clientId = clientId)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -240,11 +233,8 @@ class RecordIntakeImpl @Inject constructor(
             clientCreatedAt = moment.instant.toString(),
         )
 
-        recordWriter.write(RecordWrite(pending = pending, confirmRecordId = intent.recordId))
-
-        // 批量确认走 DEFERRED：本笔不排调度，调用方据 [RecordOutcome.syncScheduled] = false
-        // 在循环结束后统一排一次（每笔一次会把 1 次入队变成 N 次，那是行为变更）
-        val scheduled = intent.scheduling == SyncScheduling.IMMEDIATE && scheduleSync(clientId)
+        val cached = confirmAndCache(pending = pending, confirmRecordId = intent.recordId)
+        if (cached.failure != null) return RecordOutcome(clientId = clientId, failure = cached.failure)
 
         WidgetDataUpdater.notifyTransactionAdded(
             context = context,
@@ -253,7 +243,7 @@ class RecordIntakeImpl @Inject constructor(
             date = pending.date,
         )
         // 不预测分类、不学习：学习在 confirmWithEdit 里显式做（用户主动改了分类才学）
-        return RecordOutcome(clientId = clientId, syncScheduled = scheduled)
+        return RecordOutcome(clientId = clientId)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -278,64 +268,119 @@ class RecordIntakeImpl @Inject constructor(
             clientCreatedAt = moment.localDateTime.toString(),
         )
 
-        recordWriter.write(RecordWrite(pending = pending))
-        // 排一次同步：否则这条 pending 只能等「网络跳变 / 下次启动 / 用户手动点同步」——
-        // WiFi 常连的静默入账会一直躺着。
-        val scheduled = scheduleSync(clientId)
+        val cached = confirmAndCache(pending = pending)
+        if (cached.failure != null) return RecordOutcome(clientId = clientId, failure = cached.failure)
         // 不刷 widget：原实现就没有刷，保留。
-        return RecordOutcome(clientId = clientId, syncScheduled = scheduled)
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // 手工记账落离线（原 TransactionRepositoryImpl.createTransactionOffline）
-    // ═══════════════════════════════════════════════════════════════
-
-    private suspend fun intakeManualOffline(intent: RecordIntent.ManualOffline): RecordOutcome {
-        val t = intent.transaction
-        val clientId = t.clientId
-        val pending = PendingTransactionEntity(
-            clientId = clientId,
-            type = t.type.value,
-            amount = t.amount,
-            categoryId = t.categoryId,
-            // PR #43：冗余存 name/icon，未同步期间列表展示不需 join 分类表
-            categoryName = t.categoryName,
-            categoryIcon = t.categoryIcon,
-            accountId = t.accountId,
-            accountName = t.accountName,
-            targetAccountId = t.targetAccountId,
-            description = t.description,
-            // 手工记账用**用户当时选的时间**，不是入账时刻
-            date = t.date,
-            time = t.time,
-            tags = t.tags?.joinToString(","),
-            source = t.source.value,
-            clientCreatedAt = recordClock.now().instant.toString(),
-        )
-        recordWriter.write(RecordWrite(pending = pending))
-        val scheduled = scheduleSync(clientId)
-        // 不刷 widget：原实现就没有刷，保留。
-        return RecordOutcome(clientId = clientId, syncScheduled = scheduled)
+        return RecordOutcome(clientId = clientId)
     }
 
     // ═══════════════════════════════════════════════════════════════
     // 公共
     // ═══════════════════════════════════════════════════════════════
 
+    /**
+     * 送服务端确认 → 确认了才写本地缓存与审计行。
+     *
+     * ## 成功判据
+     *
+     * `code == 0` **且** `created[]` 里按 `client_id` 找得到这条、且它带 `id`。
+     * 少任何一条都算没确认：`duplicates[]` 不算（服务端没说「这是新建的」），
+     * 没匹配上 `client_id` 也不算（服务端漏字段 / 转换异常时的僵尸行）。
+     *
+     * ## 为什么「写缓存」和「写审计行」必须同生共死
+     *
+     * 两者都在这里、都在服务端确认之后：失败时审计行保持 `parsed`（用户还在通知中心
+     * 看得见、能手动确认），缓存行根本不存在。拆开写就会出现「账没记上、通知却说已确认」。
+     *
+     * @param pending 待确认的那一笔（`sync_status` 还是默认值，确认后才被改写）
+     * @return 新建的审计记录 id（[newRecord] 非 null 时）与失败原因，二者互斥
+     */
+    private suspend fun confirmAndCache(
+        pending: PendingTransactionEntity,
+        newRecord: NotificationRecordEntity? = null,
+        confirmRecordId: Long? = null,
+    ): CacheResult {
+        val serverId = when (val confirmation = submit(pending)) {
+            is Submit.Confirmed -> confirmation.serverId
+            is Submit.Failed -> return CacheResult(recordId = null, failure = confirmation.failure)
+        }
+
+        val recordId = recordWriter.write(
+            RecordWrite(
+                pending = pending.copy(
+                    syncStatus = SYNC_STATUS_SYNCED,
+                    serverTransactionId = serverId,
+                ),
+                newRecord = newRecord,
+                confirmRecordId = confirmRecordId,
+            ),
+        )
+        return CacheResult(recordId = recordId, failure = null)
+    }
+
+    /** `POST /transactions` 单条，按 `client_id` 回认服务端 id。 */
+    private suspend fun submit(entity: PendingTransactionEntity): Submit = try {
+        val response = transactionApi.createTransactions(
+            CreateTransactionRequest(items = listOf(entity.toItemRequest())),
+        )
+        val matched = response.data?.created?.firstOrNull { it.clientId == entity.clientId }?.id
+        when {
+            response.code != 0 ->
+                Submit.Failed(RecordFailure.Rejected(response.code, response.message))
+            matched == null ->
+                // code==0 却在 created[] 里找不到自己：服务端漏字段 / 转换异常。
+                // 标成失败而不是「当成记上了」——否则本地会多一行服务端没有的账。
+                Submit.Failed(
+                    RecordFailure.Rejected(
+                        code = response.code,
+                        reason = "服务端未确认这笔记录",
+                    ),
+                )
+            else -> Submit.Confirmed(matched)
+        }
+    } catch (e: HttpException) {
+        Submit.Failed(RecordFailure.Rejected(e.code(), "服务器错误: ${e.code()}"))
+    } catch (e: IOException) {
+        Submit.Failed(RecordFailure.Offline)
+    } catch (e: CancellationException) {
+        // 挂起调用被取消（协程作用域结束）必须正常传播，不能当成「记账失败」吞掉，
+        // 否则破坏结构化并发。
+        throw e
+    } catch (e: Exception) {
+        // 兜住其余一切：接收器跑在 ApplicationScope 上，本工程没有全局
+        // CoroutineExceptionHandler，异常逃出去 = 直接崩进程。
+        Submit.Failed(RecordFailure.Rejected(Result.ERROR_UNKNOWN, "未知错误: ${e.message}"))
+    }
+
+    private fun PendingTransactionEntity.toItemRequest() = TransactionItemRequest(
+        clientId = clientId,
+        clientType = "app_android",
+        source = source,
+        sourceDetail = sourceDetail,
+        type = type,
+        amount = amount,
+        categoryId = categoryId,
+        accountId = accountId,
+        targetAccountId = targetAccountId,
+        description = description,
+        date = date,
+        time = time,
+        tags = tags?.split(",")?.filter { it.isNotBlank() },
+        clientCreatedAt = clientCreatedAt,
+        aiRawInput = aiRawInput,
+    )
+
+    /** 服务端确认的结果。 */
+    private sealed interface Submit {
+        data class Confirmed(val serverId: Int) : Submit
+        data class Failed(val failure: RecordFailure) : Submit
+    }
+
+    /** [confirmAndCache] 的结果：写了（带新建审计行 id）或没写（带失败原因）。 */
+    private data class CacheResult(val recordId: Long?, val failure: RecordFailure?)
+
     /** clientId = UUID v4（幂等与撤销的唯一凭据，架构决策 #6） */
     private fun newClientId(): String = UUID.randomUUID().toString()
-
-    /** 写库之后才排调度；失败只记日志（理由见类 KDoc）。
-     *
-     * @return 本笔是否真的排上了（`false` = 未排：意图是 DEFERRED，或 WorkManager 没接受入队）
-     */
-    private fun scheduleSync(clientId: String): Boolean = when (val request = syncQueue.requestSync()) {
-        is SyncRequest.Enqueued -> true
-        is SyncRequest.Rejected -> {
-            Timber.w(request.cause, "入账成功但排同步失败 clientId=%s", clientId)
-            false
-        }
-    }
 
     private fun String.toTransactionType(): TransactionType =
         TransactionType.fromValue(this) ?: TransactionType.EXPENSE
@@ -348,6 +393,9 @@ class RecordIntakeImpl @Inject constructor(
         const val SOURCE_DETAIL_TASKER = "tasker_quick_record"
 
         const val STATUS_CONFIRMED = "confirmed"
+
+        /** 已确认缓存行的唯一取值：非 `synced` 的行都是历史遗留，不参与任何判定 */
+        const val SYNC_STATUS_SYNCED = "synced"
 
         /** 确认回执的通知 id 偏移：避开原确认弹窗的通知 id */
         const val CONFIRM_RECEIPT_ID_OFFSET = 100_000L

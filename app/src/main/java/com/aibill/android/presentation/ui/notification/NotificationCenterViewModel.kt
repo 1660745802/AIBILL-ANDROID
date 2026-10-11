@@ -6,11 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
-import com.aibill.android.domain.queue.SyncQueue
 import com.aibill.android.domain.record.RecordIntent
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.record.RecordOutcome
-import com.aibill.android.domain.record.SyncScheduling
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.NotificationRecordRepository
 import com.aibill.android.domain.repository.TransactionRepository
@@ -36,7 +34,6 @@ import javax.inject.Inject
 class NotificationCenterViewModel @Inject constructor(
     private val notificationRepository: NotificationRecordRepository,
     private val recordIntake: RecordIntake,
-    private val syncQueue: SyncQueue,
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
     private val categoryLearningEngine: CategoryLearningEngine,
@@ -123,14 +120,19 @@ class NotificationCenterViewModel @Inject constructor(
                 _uiEvent.send(UiEvent.ShowToast("该笔已确认，请勿重复操作"))
                 return@launch
             }
-            insertTransaction(
+            val outcome = insertTransaction(
                 recordId = id,
                 type = record.parsedType ?: "expense",
                 amountCents = record.parsedAmount ?: 0,
                 description = record.parsedDescription,
                 packageName = record.packageName,
             )
-            _uiEvent.send(UiEvent.ShowToast("已确认"))
+            // 没记上就不许说「已确认」：记录原样留在待审池，用户可以再试一次
+            _uiEvent.send(
+                UiEvent.ShowToast(
+                    outcome.failure?.userMessage ?: "已确认",
+                ),
+            )
         }
     }
 
@@ -152,7 +154,7 @@ class NotificationCenterViewModel @Inject constructor(
                 _uiEvent.send(UiEvent.ShowToast("该笔已确认，请勿重复操作"))
                 return@launch
             }
-            insertTransaction(
+            val outcome = insertTransaction(
                 recordId = id,
                 type = type,
                 amountCents = amountCents,
@@ -161,6 +163,13 @@ class NotificationCenterViewModel @Inject constructor(
                 categoryId = categoryId,
                 tags = tags,
             )
+            val failure = outcome.failure
+            if (failure != null) {
+                // 服务端没确认：不学习（学的是「用户改对了分类」，账都没记上谈不上改对），
+                // 记录仍停在待审池，Toast 如实报错。
+                _uiEvent.send(UiEvent.ShowToast(failure.userMessage))
+                return@launch
+            }
             val learnDesc = description.ifBlank { record.parsedDescription }
             if (categoryId != null && !learnDesc.isNullOrBlank()) {
                 categoryLearningEngine.learnFromCorrection(learnDesc.trim(), categoryId)
@@ -170,11 +179,9 @@ class NotificationCenterViewModel @Inject constructor(
     }
 
     /**
-     * 把一条通知翻译成入账意图。写库、排同步、刷 widget 都在入账 module 里。
+     * 把一条通知翻译成入账意图。送服务端确认、落缓存、刷 widget 都在入账 module 里。
      *
-     * @param scheduling 批量确认传 [SyncScheduling.DEFERRED]：本笔不排调度，
-     *   返回的 [RecordOutcome.syncScheduled] 会是 false，调用方在循环结束后排一次。
-     * @return 入账结果（批量确认靠它知道要不要收尾排调度）
+     * @return 入账结果；批量确认靠它数出「几条真的记上了」
      */
     private suspend fun insertTransaction(
         recordId: Long,
@@ -184,7 +191,6 @@ class NotificationCenterViewModel @Inject constructor(
         packageName: String,
         categoryId: Int? = null,
         tags: List<String> = emptyList(),
-        scheduling: SyncScheduling = SyncScheduling.IMMEDIATE,
     ): RecordOutcome {
         val typeKey = if (type == "income") "income" else "expense"
         val category = categoryId?.let { id ->
@@ -202,7 +208,6 @@ class NotificationCenterViewModel @Inject constructor(
                 categoryName = category?.name,
                 categoryIcon = category?.icon,
                 tags = tags,
-                scheduling = scheduling,
             )
         )
     }
@@ -220,11 +225,8 @@ class NotificationCenterViewModel @Inject constructor(
             try {
                 val items = pendingNotifications.value
                 var confirmed = 0
+                var failed = 0
                 var skipped = 0
-                // 本批是否有入账没排调度（DEFERRED）：有就要在循环结束后补排一次。
-                // 排多少笔由入账 module 决定，这里只根据它返回的结果收尾——
-                // 收口前是一个独立的 `recordIntake.scheduleBatchSync()`，漏调 = 这一批永远不自动上传。
-                var needsTailSync = false
                 items.forEach { item ->
                     val record = notificationRepository.findById(item.id) ?: return@forEach
 
@@ -235,26 +237,20 @@ class NotificationCenterViewModel @Inject constructor(
                         return@forEach
                     }
 
-                    // 逐条入账；排调度统一推迟到循环结束（历史行为，见 insertTransaction）
+                    // 逐条入账；失败的那几条原样留在待审池，只计数、不假装成功
                     val outcome = insertTransaction(
                         recordId = item.id,
                         type = record.parsedType ?: "expense",
                         amountCents = amount,
                         description = record.parsedDescription,
                         packageName = record.packageName,
-                        scheduling = SyncScheduling.DEFERRED,
                     )
-                    if (!outcome.syncScheduled) needsTailSync = true
-                    confirmed++
-                }
-
-                // 循环结束后统一排一次（时机与数量不变：仍然只排 1 次）。
-                // ⚠️ 只有真的入过账才排：全部跳过（金额无效 / 记录已不存在）时不排一次空同步。
-                if (needsTailSync) {
-                    syncQueue.requestSync()
+                    if (outcome.recorded) confirmed++ else failed++
                 }
 
                 val msg = when {
+                    failed > 0 && confirmed == 0 -> "$failed 条记账失败，可稍后重试"
+                    failed > 0 -> "已确认 $confirmed 条，$failed 条记账失败"
                     confirmed == 0 && skipped > 0 -> "无可自动确认的记录，$skipped 条需手动填写金额"
                     skipped > 0 -> "已确认 $confirmed 条，$skipped 条需手动填写金额"
                     else -> "已确认 $confirmed 条通知"

@@ -33,7 +33,8 @@ import javax.inject.Singleton
  * 三渠道统一入口（NLS / A11Y / SMS），流程：
  *   1. AI 解析（单条通知，短文本，不再合并）
  *   2. 解析成功后，按 (amount, type) + 60s 时间窗在 DB 层去重
- *   3. 去重通过 → 入库 + 触发同步 + 轻通知
+ *   3. 去重通过 → 送服务端确认 → 落本地缓存/审计行 + 轻通知
+ *     服务端没确认（没网 / 业务错误 / 鉴权）→ 降级进待审池，信息不丢
  *   4. 去重命中 → 静默丢弃
  *
  * 设计要点：
@@ -448,6 +449,11 @@ class NotificationProcessor @Inject constructor(
 
     /**
      * 10s 到期，执行去重 + 入库/待审。统一路径。
+     *
+     * ⚠️ 这一步现在**含一次网络往返**（[directInsert] 要先拿到服务端确认）：
+     * [insertMutex] 的持有时长从「一条 SQL」变成「一条 SQL + 一次 POST（超时 15s）」。
+     * 代价是同一时刻的其它通知要排队等；换来的是「本地有行 ⇒ 服务端必有账」
+     * 这条不变量不必靠后台补传来维持。
      */
     private suspend fun commitBest(candidate: ScoredCandidate) {
         appLogger.debug("NLS", "commitBest: amount=${candidate.amount} score=${candidate.score} isComplete=${candidate.isComplete}")
@@ -467,8 +473,7 @@ class NotificationProcessor @Inject constructor(
             }
 
             // 入库或待审
-            if (candidate.isComplete) {
-                directInsert(
+            if (candidate.isComplete && directInsert(
                     item = candidate.item,
                     amount = candidate.amount,
                     type = candidate.type,
@@ -477,11 +482,19 @@ class NotificationProcessor @Inject constructor(
                     categoryIcon = candidate.categoryIcon,
                     description = candidate.description,
                 )
+            ) {
                 appLogger.info("NLS", "✓入库: ¥${"%.2f".format(candidate.amount/100.0)} ${candidate.description} type=${candidate.type} score=${candidate.score} channel=${candidate.item.channel}")
                 // 分类学习已下沉到入账 module（RecordIntent.NotificationAuto 的学习步骤）：
-                // 学习必须在「写库成功之后」才发生，而写库成败只有 module 内部知道。
+                // 学习必须在「服务端确认之后」才发生，而成败只有 module 内部知道。
             } else {
-                appLogger.info("NLS", "→待审: amount=${candidate.amount} type=${candidate.type} cat=${candidate.categoryName} score=${candidate.score}")
+                // 信息不完整 → 待审；**信息完整但服务端没确认**（没网 / 业务错误 / 鉴权）
+                // 也走同一条路：一个字节都没落库，通知原文还在，用户在通知中心看得见、
+                // 能手动确认，信息不丢（ADR 的失败降级路径）。
+                if (candidate.isComplete) {
+                    appLogger.warn("NLS", "→服务端未确认，降级待审: amount=${candidate.amount} score=${candidate.score}")
+                } else {
+                    appLogger.info("NLS", "→待审: amount=${candidate.amount} type=${candidate.type} cat=${candidate.categoryName} score=${candidate.score}")
+                }
                 insertPendingReview(candidate.item, candidate.amount, candidate.type, candidate.categoryName, candidate.description)
             }
             markProcessed(candidate.amount, candidate.item.channel, candidate.item.packageName)
@@ -551,9 +564,11 @@ class NotificationProcessor @Inject constructor(
     /**
      * 信息完整，直接入库 + 发轻通知
      *
-     * 本函数只剩「把 AI 候选项翻译成入账意图」：clientId 生成、entity 装配、跨表事务、
-     * 排同步、刷 streak / widget、隐私档与回执、分类学习全部由 [RecordIntake] 承担
-     * （架构候选 1 收口）。想看入账行为请看 `data/record/RecordIntakeImpl`。
+     * 本函数只剩「把 AI 候选项翻译成入账意图」：clientId 生成、entity 装配、
+     * 送服务端确认、跨表写入、刷 streak / widget、隐私档与回执、分类学习全部由
+     * [RecordIntake] 承担（架构候选 1 收口）。想看入账行为请看 `data/record/RecordIntakeImpl`。
+     *
+     * @return `true` = 服务端确认、本地已落；`false` = 没记上，调用方必须降级进待审池
      */
     private suspend fun directInsert(
         item: Item,
@@ -563,8 +578,8 @@ class NotificationProcessor @Inject constructor(
         categoryName: String? = null,
         categoryIcon: String? = null,
         description: String?,
-    ) {
-        recordIntake.intake(
+    ): Boolean {
+        val outcome = recordIntake.intake(
             RecordIntent.NotificationAuto(
                 captured = CapturedNotification(
                     packageName = item.packageName,
@@ -580,6 +595,7 @@ class NotificationProcessor @Inject constructor(
                 description = description,
             )
         )
+        return outcome.recorded
     }
 
     /**

@@ -2,26 +2,25 @@ package com.aibill.android.domain.repository
 
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
-import com.aibill.android.domain.record.RecordIntake
 
 /**
  * **服务端那侧**的账。
  *
- * ## 离线队列不在这里
- *
- * 队列的读取与排调度归 [com.aibill.android.domain.queue.SyncQueue]（离线队列 module）。
- * 收口前这里有 `observeSyncStatus()` 与 `syncPending()`：前者只是 DAO 的一行转发，
- * 后者只是「排调度 + 包一层 `Result`」，两者都把「已入队 ≠ 已上传」这句告诫
- * 复制在各自的 KDoc 里，越传越没人看。
- *
- * 手工记账落离线（[createTransactionOffline]）仍走本接口：它表达的是
- * 「这笔账要成为本地事实」的用户意图，装配细节交给 [RecordIntake]。
+ * 「记一笔」的唯一成功判据是服务端 `POST /transactions` 返回 `created` 且按
+ * `client_id` 匹配到 id —— [createTransactions] 因此在 `code==0` 之外还要核对回执，
+ * 少一条就当没记上。本地缓存不在这里写：入账 module 只在服务端确认之后才落库
+ * （`data/record/RecordIntakeImpl`），手工记账这条路则只打服务端。
  */
 interface TransactionRepository {
 
+    /**
+     * 送服务端建一笔 / 一批。
+     *
+     * @return **只有**服务端把全部入参都回执成 `created`（按 `client_id` 找得到、带 id）
+     *   才是 [Result.Success]；否则 [Result.Error]，且此时本地**一个字节都没写**——
+     *   调用方据此报错给用户、保留表单输入，不存在「先记上、回头再传」的中间态。
+     */
     suspend fun createTransactions(items: List<Transaction>): Result<List<Transaction>>
-
-    suspend fun createTransactionOffline(transaction: Transaction)
 
     /**
      * PR #47：返回包装类 TransactionPage（含 items + total），
