@@ -73,9 +73,11 @@ app/src/main/java/com/aibill/android/
 
 | 文档 | 用途 |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统是什么：分层、模块、通知入账、API 契约、会话与本地数据、数据模型、术语、已知缺口 |
+| [docs/PRODUCT.md](docs/PRODUCT.md) | 产品定义：用户、要的三件事与度量、功能地图、面向用户的承诺、明确不做 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统怎么实现：分层、模块与不变量、通知入账、API 契约、数据模型、术语、已知缺口 |
 | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | 怎么干活：开发流程、测试、代码与 UI 规范、发布、AI 协作 |
 
+新功能进来时：面向用户的写 PRODUCT，实现细节写 ARCHITECTURE —— **都不新增文档**。
 改了什么看 git：`git log -- docs/`。
 
 ## 📤 发布
