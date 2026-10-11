@@ -104,7 +104,7 @@ class DirectRecordWriterTest {
      * 用户再点一次就是重复账。
      */
     @Test
-    fun `confirm intake backfills the existing audit row with the queue clientId`() = runTest {
+    fun `confirm intake backfills the existing audit row with the cache row clientId`() = runTest {
         val row = pending(clientId = "C-CONFIRM")
 
         val insertedId = writer.write(RecordWrite(pending = row, confirmRecordId = 42L))
@@ -119,14 +119,14 @@ class DirectRecordWriterTest {
     }
 
     /**
-     * 静默入账 / 手工落离线形态（两张表都不带审计行）：**不得**回填任何审计行。
+     * 静默入账 / 外部 Intent 形态（两张表都不带审计行）：**不得**回填任何审计行。
      *
      * 这条防止反向变异：有人「顺手」让第三步在 confirmId 为 null 时也跑一次，
      * 拿 0 或上一条 id 去盖无关的通知。
      */
     @Test
-    fun `offline intake never touches the audit table`() = runTest {
-        writer.write(RecordWrite(pending = pending(clientId = "C-OFFLINE")))
+    fun `silent intake never touches the audit table`() = runTest {
+        writer.write(RecordWrite(pending = pending(clientId = "C-SILENT")))
 
         coVerify(exactly = 1) { pendingDao.insert(any()) }
         coVerify(exactly = 0) { notificationDao.insert(any()) }

@@ -202,7 +202,7 @@ class RecordIntakeTest {
     )
 
     private fun onlyRow(): PendingTransactionEntity {
-        assertEquals(1, insertedRows.size, "应当只写一行队列")
+        assertEquals(1, insertedRows.size, "应当只写一行本地缓存")
         return insertedRows.single()
     }
 
@@ -380,7 +380,7 @@ class RecordIntakeTest {
 
         val row = onlyRow()
         assertEquals(5, row.categoryId)
-        // 只写分类 id，不写 name/icon（与「手工落离线」写冗余 name/icon 的差异保留）
+        // 只写分类 id，不写 name/icon（与手工记账写冗余 name/icon 的差异保留）
         assertNull(row.categoryName)
         assertNull(row.categoryIcon)
         // 弹窗确认读**硬编码**来源名映射（不带云控），与 AI 自动路径的差异保留
@@ -566,8 +566,8 @@ class RecordIntakeTest {
     }
 
     @Test
-    @DisplayName("请求根本没送达：失败原因标成 Offline，同样什么都不写")
-    fun `network failure is reported as offline and writes nothing`() = runTest {
+    @DisplayName("请求根本没送达：失败原因标成网络不可达（RecordFailure.Offline），同样什么都不写")
+    fun `network failure is reported as connectivity failure and writes nothing`() = runTest {
         coEvery { transactionApi.createTransactions(any()) } throws java.io.IOException("no route")
 
         val outcome = intake.intake(

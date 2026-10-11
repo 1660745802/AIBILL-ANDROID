@@ -121,11 +121,13 @@ class NotificationParserTest {
 
     @Test
     fun `unknown package falls back to bank sms parser`() {
-        // 银行短信解析器应能处理通用格式
+        // 兜底走银行短信解析器：认 "消费/支出/扣款 ... X.XX元"
         val r = parser.parse("com.other.app", "消费￥32.00元")
-        // 当前实现：银行解析器认 "消费/支出/扣款 ... X.XX元"，¥ 符号未必识别
-        // 此处测试仅验证不抛异常，匹配与否取决于具体格式
-        // 空 result 也是合法返回（无金额或模式不匹配）
+        assertNotNull(r)
+        assertEquals(3200, r!!.amount)
+        assertEquals("expense", r.type)
+        // 微信句式（¥ 但无「元」单位）银行解析器不认 → 证明走的确实是兜底解析器而非微信解析器
+        assertNull(parser.parse("com.other.app", "向沙县小吃付款￥25.00"))
     }
 
     @Test

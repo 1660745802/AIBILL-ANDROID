@@ -94,11 +94,12 @@ class DayGroupIndexTest {
     }
 
     @Test
-    @DisplayName("itemKey 对 null id（离线未同步）也唯一，不产生 LazyColumn 重复 key")
+    @DisplayName("itemKey 对 null id 也唯一，不产生 LazyColumn 重复 key")
     fun itemKeysAreUniqueEvenWhenIdIsNull() {
-        val offline = tx(1, "2026-10-05").copy(id = null)
-        val anotherOffline = tx(2, "2026-10-05").copy(id = null)
-        val keys = listOf(offline, anotherOffline).map { itemKey(it) }
-        assertTrue(keys.toSet().size == keys.size, "离线记录的 key 重复会导致 LazyColumn 崩溃")
+        // id 可能为 null（本地尚未回填服务端 id 的行）；此时必须靠 clientId 区分
+        val nullIdRow = tx(1, "2026-10-05").copy(id = null)
+        val anotherNullIdRow = tx(2, "2026-10-05").copy(id = null)
+        val keys = listOf(nullIdRow, anotherNullIdRow).map { itemKey(it) }
+        assertTrue(keys.toSet().size == keys.size, "null id 记录的 key 重复会导致 LazyColumn 崩溃")
     }
 }

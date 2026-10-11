@@ -28,6 +28,12 @@ import java.io.File
  * 本测试直接读 `scripts/rules.json`（单一数据源），用两轮真机日志里的真实
  * 交易文案 + 已知广告文案做**双向**断言，任何一侧回归都会红。
  *
+ * ## 本文件同时吸收了促销句式的单元护栏
+ *
+ * 原 `NlsPromoPatternTest` 测的是同一条不变量的另一面：**促销句式拦截及其反向误杀防护**。
+ * 收口后并入本文件——促销句式与真机文案回归共用同一份 `scripts/rules.json` 语境，
+ * 不再各自维护一份 fixture。
+ *
  * ## 护栏护的是实现，不是拷贝
  *
  * 收口前这里的 `passes()` 是「复刻 `NotificationMonitorService.isLikelyFinancial` 的
@@ -223,6 +229,128 @@ class NotificationFilterRegressionTest {
             BlockReason.PROMO_SENTENCE,
             blockReasonOf("双11省钱卡花3得29，一笔回本加赠99积分0元兑云音乐月卡"),
         )
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 促销句式（原 NlsPromoPatternTest 并入）：结构拦截 + 反向误杀防护
+    //
+    // 锁的是**句式**（有限枚举的结构），不是词表——词表已为同类问题打过三次补丁
+    // （云控 v7→v8→v9→v10），每次换个词就绕回去。
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("真实事故原文：双11省钱卡促销 → 判为促销")
+    fun realWorldPromo_detected() {
+        val text = "🧧双11省钱卡已开抢！ 双11省钱卡花3得29，一笔回本🔥加赠99积分0元兑云音乐月卡👉"
+        assertTrue(NotificationTextClassifier.isPromoNotification(text))
+    }
+
+    @Test
+    @DisplayName("「花N得M」促销结构被拦")
+    fun spendGetPattern() {
+        assertTrue(NotificationTextClassifier.isPromoNotification("周年庆花100得200"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("充值花10得15"))
+    }
+
+    @Test
+    @DisplayName("数字与「得」之间带单位/量词的变体也被拦（双层绕过）")
+    fun spendGetWithInterjunct() {
+        // kiro code review 发现的绕过：「花3元得29元」既不匹配严格句式，
+        // 而 AI 把 3 当金额时「3元」自带货币单位 → 校验 5 也认它有佐证 →
+        // 两层同时失效，自动入账。
+        assertTrue(NotificationTextClassifier.isPromoNotification("花3元得29元"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("花3得券29"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("双11 花10元 得 88元"))
+    }
+
+    @Test
+    @DisplayName("「0元兑/领/购」零元兑换被拦")
+    fun zeroYuanExchangePattern() {
+        assertTrue(NotificationTextClassifier.isPromoNotification("0元兑云音乐月卡"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("0元领纸巾"))
+        // 注：「一分钱领」「免费领」已由 default_rule.exclude_content_contains 覆盖，
+        // 不在本层重复（词表能覆盖的就不进代码层）
+    }
+
+    @Test
+    @DisplayName("「加赠N」赠品被拦")
+    fun bonusPattern() {
+        assertTrue(NotificationTextClassifier.isPromoNotification("消费满88加赠20积分"))
+    }
+
+    // ── 不误伤：真实交易不能被判成促销 ──
+    //
+    // 「省钱卡」是招行/中信的真实支付方式名，用户刷卡时通知里就会出现
+    // 「您尾号1234的招行省钱卡支付成功」，无差别拦截会直接丢真实交易。
+
+    @Test
+    @DisplayName("招行省钱卡真实支付 → 不拦（「省钱卡」是支付方式名，非营销词）")
+    fun bankSavingsCardPayment_notBlocked() {
+        val text = "您尾号1234的招行省钱卡支付成功，消费50.00元"
+        assertFalse(
+            NotificationTextClassifier.isPromoNotification(text),
+            "「省钱卡」是招行/中信的真实支付方式，拦它会丢真实交易",
+        )
+    }
+
+    @Test
+    @DisplayName("含「开抢/回本/神券」但有真实交易结构的通知 → 不拦")
+    fun marketingWordsWithRealTxn_notBlocked() {
+        // 营销词与交易信号共存时，客户端不预判，交给服务端「正向信号优先」判定
+        assertFalse(NotificationTextClassifier.isPromoNotification("您尾号5678信用卡消费88.00元，活动开抢期间享神券"))
+        assertFalse(NotificationTextClassifier.isPromoNotification("支付成功 20.00元，本月已回本"))
+    }
+
+    @Test
+    @DisplayName("带边界的 0 元：不应误伤正常金额「3.90元」")
+    fun zeroYuan_hasNumericBoundary() {
+        // 无边界写 \d+元[兑送…] 会把「3.90元」的「0元」当零元兑换
+        assertFalse(NotificationTextClassifier.isPromoNotification("您尾号1234消费3.90元"))
+        assertFalse(NotificationTextClassifier.isPromoNotification("实付10.00元"))
+    }
+
+    @Test
+    @DisplayName("银行真实扣款不被拦")
+    fun bankTransaction_notBlocked() {
+        assertFalse(NotificationTextClassifier.isPromoNotification("您尾号1234的招行信用卡消费50.00元"))
+    }
+
+    // 原 `alipayTransaction_notBlocked`（"交易提醒 你有一笔20.00元的支出，点击领取9个支付宝积分"）
+    // 已删除：该文本已在 `真实交易不被误杀` 里过生产判据链并断言放行——判据链放行 implies
+    // 促销句式未命中（促销是链上的早退分支），覆盖等价。
+
+    @Test
+    @DisplayName("「花30元买了杯咖啡」不是促销句式")
+    fun spentAtStore_notBlocked() {
+        assertFalse(NotificationTextClassifier.isPromoNotification("花30元在星巴克买了杯咖啡"))
+    }
+
+    @Test
+    @DisplayName("「美团外卖 支付成功 ¥32.00」不被拦")
+    fun normalExpense_notBlocked() {
+        assertFalse(NotificationTextClassifier.isPromoNotification("美团外卖 支付成功 ¥32.00"))
+    }
+
+    @Test
+    @DisplayName("台球类真实交易（金额紧邻【】但无货币单位）不被拦")
+    fun merchantAmount_notBlocked() {
+        val text = "订单已消费 您的订单【小铁台球】39.9两小时中八（周末、节假日通用）已成功消费。"
+        assertFalse(NotificationTextClassifier.isPromoNotification(text))
+    }
+
+    @Test
+    @DisplayName("日报汇总与促销句式互不干扰")
+    fun summaryVsPromo_independent() {
+        val daily = "【记账日报】昨天共有2笔支出 昨日支出220.00元，共2笔"
+        assertTrue(NotificationTextClassifier.isSummaryNotification(daily))
+        assertFalse(NotificationTextClassifier.isPromoNotification(daily))
+    }
+
+    @Test
+    @DisplayName("空文本不崩")
+    fun blankText_safe() {
+        assertFalse(NotificationTextClassifier.isPromoNotification(""))
+        assertFalse(NotificationTextClassifier.isSummaryNotification(""))
     }
 
     private suspend fun blockReasonOf(text: String): BlockReason {

@@ -96,6 +96,8 @@ class CaptureArchiveTest {
         coEvery { dao.insert(any()) } throws RuntimeException("db down")
         archive.captureUnparsed(captureOf(), reason = "IOException")
         archive.captureAuthPending(captureOf())
+        // 两次写入都尝试过、且异常都被吞掉（不向上抛 → 捕获层自己不会成为崩溃点）
+        coVerify(exactly = 2) { dao.insert(any()) }
     }
 
     // ── 重放 → 终态 ──

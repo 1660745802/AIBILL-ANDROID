@@ -371,7 +371,7 @@ class NotificationProcessorTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("replayAuthPending：原文重走解析，成功后正常入账，队列标终态")
+    @DisplayName("replayAuthPending：原文重走解析，成功后正常入账，auth_pending 标终态")
     fun `重放待补偿`() = runTest(testDispatcher) {
         coEvery { notificationRecordDao.findAuthPending(any()) } returns listOf(
             NotificationRecordEntity(

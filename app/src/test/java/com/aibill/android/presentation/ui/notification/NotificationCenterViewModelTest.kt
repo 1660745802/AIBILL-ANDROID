@@ -122,7 +122,7 @@ class NotificationCenterViewModelTest {
     }
 
     @Test
-    fun `offline confirm failure surfaces the offline wording`() = runTest {
+    fun `network failure surfaces the connectivity wording`() = runTest {
         coEvery { reviewQueue.findById(1L) } returns parsedRecord()
         coEvery { recordIntake.intake(any()) } returns RecordOutcome(
             clientId = "C-1",
