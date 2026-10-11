@@ -20,6 +20,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -69,6 +70,24 @@ import org.robolectric.shadows.ShadowToast
  * 3. **keyword 兜底已删除**：synced 路径 `getTransactions` 调用数恒为 0。
  *    这条断言是 mutation 式防线——把实现改回搜索分支，synced 的三条用例会立刻红。
  *
+ * ## 失败文案分两类，且测试里的字符串是**有意双写**
+ *
+ * 硬约束（与 Home 横幅同一约束）：**不得指引用户无法执行的动作，
+ * 也不得主张不确定的上传状态**。因此失败文案拆成两支：
+ *
+ * - `MSG_FAILED_MANUAL`（服务端**确有**这笔）：指向流水页——流水页数据源是服务端，
+ *   那里看得到也删得掉。断言必须 `contains("流水页")`，防「一刀切改保守」也是信息丢失。
+ * - `MSG_FAILED_UNCHANGED`（服务端**状态未知**）：什么都没删，不得指路、不得主张上传状态。
+ *   断言用 `assertNoActionOrUploadClaim()` 挡禁词。
+ *
+ * 本类的 `MSG_*` 常量是生产常量的**字面量副本**（而非引用）：故意双写。
+ * 只有这样，生产侧文案被无意识改动时全等断言才会红；若引用生产常量，
+ * 改文案两边自动同步、测试永远绿。代价是改文案要同步改这里——接受。
+ *
+ * ⚠️ 全等断言的局限：若有人把生产与测试字面量**同时**改成违反约束的
+ * （例：「尚未上传到服务器」），全等断言仍会绿——**只有 `assertNoActionOrUploadClaim`
+ * 的禁词断言能拦**。这也是约束断言必须存在的原因。
+ *
  * 直接调 `handleUndo`（internal）而不是走 `onReceive`：绕开 `goAsync()` +
  * 进程级 ApplicationScope 的时序噪声。注入字段是 `lateinit`，测试直接赋值。
  */
@@ -88,8 +107,13 @@ class AutoRecordActionReceiverUndoTest {
 
     private companion object {
         const val MSG_UNDONE = "已撤销"
+        /** 与生产的 `MSG_FAILED_MANUAL` **有意双写**（理由见类 KDoc） */
         const val MSG_FAILED_MANUAL = "撤销失败，请稍后在流水页手动删除"
-        const val MSG_NOT_FOUND = "撤销失败，记录未找到"
+
+        /** 与生产的 `MSG_FAILED_UNCHANGED` **有意双写** */
+        const val MSG_FAILED_UNCHANGED = "撤销失败，未删除任何数据"
+
+        const val MSG_NOT_FOUND = "撤销失败，未找到本地记录"
     }
 
     @Before
@@ -134,6 +158,18 @@ class AutoRecordActionReceiverUndoTest {
     )
 
     private fun latestToast(): String? = ShadowToast.getTextOfLatestToast()
+
+    /**
+     * 硬约束：服务端**状态未知**时的失败文案，
+     * 既不得指引用户无法执行的动作（流水页 / 手动删除），
+     * 也不得主张不确定的上传状态（上传 / 服务器）。
+     */
+    private fun assertNoActionOrUploadClaim(toast: String?) {
+        val text = toast.orEmpty()
+        listOf("流水页", "手动删除", "上传", "服务器").forEach { forbidden ->
+            assertFalse("状态未知的失败文案不得含「$forbidden」：$text", text.contains(forbidden))
+        }
+    }
 
     // pending 表示尚未确认同步成功；本用例锁住无并发 Worker 时的既有本地撤销语义。
     // 「请求已在途但尚未回写 synced」的 TOCTOU 由独立补偿切片处理。
@@ -180,7 +216,9 @@ class AutoRecordActionReceiverUndoTest {
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_FAILED_MANUAL, latestToast())
+        // 服务端是否已有并不确定 ⇒ 不得指向流水页，也不得主张任何上传状态
+        assertEquals(MSG_FAILED_UNCHANGED, latestToast())
+        assertNoActionOrUploadClaim(latestToast())
         assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
     }
 
@@ -194,7 +232,8 @@ class AutoRecordActionReceiverUndoTest {
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_FAILED_MANUAL, latestToast())
+        assertEquals(MSG_FAILED_UNCHANGED, latestToast())
+        assertNoActionOrUploadClaim(latestToast())
         assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
     }
 
@@ -210,7 +249,8 @@ class AutoRecordActionReceiverUndoTest {
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_FAILED_MANUAL, latestToast())
+        assertEquals(MSG_FAILED_UNCHANGED, latestToast())
+        assertNoActionOrUploadClaim(latestToast())
         assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
     }
 
@@ -227,7 +267,8 @@ class AutoRecordActionReceiverUndoTest {
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_FAILED_MANUAL, latestToast())
+        assertEquals(MSG_FAILED_UNCHANGED, latestToast())
+        assertNoActionOrUploadClaim(latestToast())
         assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
     }
 
@@ -268,6 +309,8 @@ class AutoRecordActionReceiverUndoTest {
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
         assertEquals(MSG_FAILED_MANUAL, latestToast())
+        // 服务端**确有**这笔 ⇒ 必须把处置入口指出来（防「一刀切改保守」也是信息丢失）
+        assertTrue(latestToast().orEmpty().contains("流水页"))
         assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
     }
 
@@ -283,6 +326,7 @@ class AutoRecordActionReceiverUndoTest {
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
         assertEquals(MSG_FAILED_MANUAL, latestToast())
+        assertTrue(latestToast().orEmpty().contains("流水页"))
     }
 
     // ==================== synced 但无 serverId：无处可删，诚实报失败 ====================
@@ -299,6 +343,8 @@ class AutoRecordActionReceiverUndoTest {
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
         assertEquals(MSG_FAILED_MANUAL, latestToast())
+        // 服务端确有（synced 是 code==0 + clientId 匹配的产物）⇒ 指向流水页是可执行动作
+        assertTrue(latestToast().orEmpty().contains("流水页"))
         assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
     }
 

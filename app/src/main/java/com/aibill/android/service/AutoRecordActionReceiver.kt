@@ -50,10 +50,18 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
         /** 真的删掉了（本地或服务端）才允许播报这条 */
         private const val MSG_UNDONE = "已撤销"
 
-        /** 撤销没生效：必须让用户知道还能去哪里手动删 */
+        /** 服务端**确有**这笔（synced 但缺凭据 / 服务端删除失败）：流水页数据源是服务端，那里看得到、也删得掉。 */
         private const val MSG_FAILED_MANUAL =
             "撤销失败，请稍后在流水页手动删除"
-        private const val MSG_NOT_FOUND = "撤销失败，记录未找到"
+
+        /**
+         * 服务端**状态未知**（failed 非 401 / 未知 syncStatus）：什么都没删，
+         * 既不能主张它在服务器上，本地也没有删除入口。
+         */
+        private const val MSG_FAILED_UNCHANGED = "撤销失败，未删除任何数据"
+
+        /** 只查了本地行；不主张服务端有没有这笔 */
+        private const val MSG_NOT_FOUND = "撤销失败，未找到本地记录"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -88,13 +96,13 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
      *
      * | 本地行 | 服务端是否可能已有 | 处理 | 用户看到 |
      * |---|---|---|---|
-     * | 不存在 | 未知 | 谁都不删（无凭据，不猜） | 记录未找到 |
+     * | 不存在 | 未知 | 谁都不删（无凭据，不猜） | 未找到本地记录（不指路） |
      * | `pending` | 通常没有；在途 SyncWorker 是已知竞态 | 删本地（保持既有语义） | 已撤销 |
      * | `failed` + 401 (`ERROR_TOKEN_EXPIRED`) | 否（服务端明确拒绝） | 删本地 | 已撤销 |
-     * | `failed` + 其它 reason | **可能已经建了** | 谁都不删 | 失败 |
-     * | `synced` + 有 serverId | 是 | 删服务端；成功才删本地 | 已撤销 / 失败 |
-     * | `synced` + 无 serverId | 是 | 谁都不删 | 失败 |
-     * | 未知 status | 未知 | 谁都不删 | 失败 |
+     * | `failed` + 其它 reason | **可能已经建了** | 谁都不删 | 失败（不指路） |
+     * | `synced` + 有 serverId | 是 | 删服务端；成功才删本地 | 已撤销 / 失败（指向流水页） |
+     * | `synced` + 无 serverId | 是 | 谁都不删 | 失败（指向流水页） |
+     * | 未知 status | 未知 | 谁都不删 | 失败（不指路） |
      *
      * ## 为什么 `failed` 不能一律当「服务端没有」
      *
@@ -106,8 +114,10 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
      *   已经成功、只是响应在网络上丢了**（提交后进程被杀/超时）。
      *   `ERROR_BUSINESS`（5xx）同理。
      *
-     * 后三种删本地 = 服务端留一笔幽灵账；不删本地 = 用户在流水页仍能看到并手动处理。
-     * 后者的代价远小于前者，故一律走「不删 + 提示手动删」。
+     * 后三种删本地 = 服务端若已有这笔，就变成「本地删了、服务端还在」的幽灵账。
+     * 不删本地的代价是本地那行会一直留着（Home 横幅会计它，且没有逐行删除入口），
+     * 但**不能**因此改口说「去流水页删」——这三类里服务端是否真有这笔并不确定。
+     * 后者的代价远小于前者，故一律走「不删 + 如实告知未删除任何数据」。
      *
      * ## 为什么不能用 `!= synced` 判据
      *
@@ -150,7 +160,7 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
                         "Undo: failed 但 reason 非 401，服务端可能已创建 " +
                             "clientId=$clientId reason=${localRecord.lastError}",
                     )
-                    showToast(context, MSG_FAILED_MANUAL)
+                    showToast(context, MSG_FAILED_UNCHANGED)
                 }
             }
 
@@ -162,7 +172,7 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
                     "AutoRecordActionReceiver",
                     "Undo: 未知 syncStatus，不删除 clientId=$clientId status=${localRecord.syncStatus}",
                 )
-                showToast(context, MSG_FAILED_MANUAL)
+                showToast(context, MSG_FAILED_UNCHANGED)
             }
         }
     }
@@ -188,8 +198,9 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
     ) {
         val serverId = localRecord.serverTransactionId
         if (serverId == null) {
-            // 已上传却没记住 serverId：没有任何可靠凭据能定位服务端那条。
-            // 这里绝不能删本地（否则本地/服务端双留，用户在流水页再也看不到它）。
+            // 已上传却没记住 serverId：没有任何可靠凭据定位服务端那条，撤销无法完成。
+            // 此时删本地既不达成撤销（服务端那笔仍在，流水页照常显示、可正常删除），
+            // 又抹掉「已同步却缺 serverId」唯一的本地痕迹，事后无从对账 —— 故两侧都不动。
             appLogger.warn("AutoRecordActionReceiver", "Undo: synced 但缺 serverId clientId=$clientId")
             showToast(context, MSG_FAILED_MANUAL)
             return
