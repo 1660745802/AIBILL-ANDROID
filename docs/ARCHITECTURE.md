@@ -63,12 +63,13 @@ ViewModel 标准模式：
 ```
 app/src/main/java/com/aibill/android/
 ├── AiBillApp.kt                 # Application：Timber + 定时任务调度
-├── di/                          # Hilt 模块（5 个：Network/Database/Repository/Work/CoroutineScope）
+├── di/                          # Hilt 模块（7 个：Network/Database/Repository/Work/RecordIntake/Queue/CoroutineScope）
 ├── domain/
-│   ├── model/                   # Transaction / User / Result / CategoryAndAccount
+│   ├── model/                   # Transaction / User / Result / CategoryAndAccount / SyncQueueStatus
 │   ├── record/                  # RecordIntake：入账 interface + 意图（见 §2.3）
+│   ├── queue/                   # SyncQueue：离线队列 interface + SyncRequest（见 §2.5）
 │   ├── notification/            # NotificationPrefilter：预筛 interface + 判据词汇（见 §2.4）
-│   ├── repository/              # 10 个接口（Auth/Transaction/Category/Account/Ai/BudgetAndStats/...）
+│   ├── repository/              # 9 个接口（Auth/Transaction/Category/Account/Ai/...；离线队列已不在此，见 §2.5）
 │   └── usecase/                 # CategoryLearningEngine / StreakTracker
 ├── data/
 │   ├── local/
@@ -76,7 +77,8 @@ app/src/main/java/com/aibill/android/
 │   │   ├── entity/              # 9 个 Entity
 │   │   ├── dao/                 # 9 个 DAO
 │   │   └── datastore/           # UserPreferences + SyncLock
-│   ├── record/                  # 入账实现 + RecordClock + RecordWriter（两个 adapter）
+│   ├── record/                  # 入账实现 + RecordClock
+│   ├── queue/                   # 离线队列：SyncQueueImpl + RecordWriter（两个 adapter）+ SyncScheduler（见 §2.5）
 │   ├── notification/            # 预筛实现 + NotificationRuleSource（两个 adapter）
 │   └── remote/
 │       ├── api/                 # 10 个 Retrofit API（含 AppUpdateApi + GithubReleaseApi）
@@ -117,9 +119,9 @@ FAB 快速记账在 4 个主 Tab 都可见。
 |---|---|---|
 | interface + 意图 | `domain/record/RecordIntake.kt` | 外部只表达**意图**，不拼字段清单 |
 | 实现 | `data/record/RecordIntakeImpl.kt`（`@Singleton`） | clientId 生成、时钟、entity 装配、分类预测/学习、排同步调度、widget 累加、回执/轻通知、隐私档读取 |
-| 跨表写入 | `data/record/RecordWriter.kt` | `RoomRecordWriter`（生产，Room 真事务）/ `DirectRecordWriter`（单测，直写） |
+| 跨表写入 | `data/queue/RecordWriter.kt`（**属离线队列 module**，见 §2.5） | `RoomRecordWriter`（生产，Room 真事务）/ `DirectRecordWriter`（单测，直写） |
 | 时钟 | `data/record/RecordClock.kt` | `RecordMoment` 一次取 `date`/`time`/`client_created_at`，三者同源 |
-| 装配 | `di/RecordIntakeModule.kt` | 生产绑定指向 `RoomRecordWriter` |
+| 装配 | `di/QueueModule.kt` / `di/RecordIntakeModule.kt` | 前者把写入器绑到 `RoomRecordWriter`，后者只提供时钟与 `RecordIntake` |
 
 **意图 = 一条历史写入路径的全部差异**（拆 subtype 而非布尔开关，
 就是为了让「统一这些差异」变成一个显眼的动作）：
@@ -145,6 +147,12 @@ FAB 快速记账在 4 个主 Tab 都可见。
 （没有接受 suspend lambda 的自定义 answer），这正是历史实现把事务注释掉并留下 `// NOTE: P1` 的原因。
 用两个 adapter 换回可测性，比继续注释「等 mockk 升级」靠谱。
 
+⚠️ 这两个 adapter 自候选 3 起住在**离线队列 module**（`data/queue/`，见 §2.5），
+因为它们是队列的入队口。三步写入的**顺序与两表关联键**（`updateStatus` 收到的
+clientId 必须就是写进 `pending_transactions` 的那一个）由 `DirectRecordWriterTest` 钉死；
+候选 1 刚落地时这条全仓无断言（`RecordIntakeTest` 注入的是匿名 `object : RecordWriter`），
+删掉第三步测试照样全绿。
+
 #### 日期口径（本次修的缺陷）
 
 落库 `date` 必须是 ISO `YYYY-MM-DD`（服务端契约，见 §3.4），一律用 `java.time`。
@@ -164,7 +172,7 @@ FAB 快速记账在 4 个主 Tab 都可见。
 | 弹窗确认隐私档写死 `false`，AI 自动入账读偏好 | 保持 |
 | AI 自动入账的 `source_detail` 走**云控**来源名映射，其余走**硬编码** | 保持 |
 | 弹窗确认只写 `category_id`；落离线冗余写 `category_name`/`category_icon` | 保持 |
-| 批量确认**循环结束后才排一次同步** | 保持（`RecordIntake.scheduleBatchSync()`；每笔一次会把 1 次 WorkManager 入队变成 N 次） |
+| 批量确认**循环结束后才排一次同步** | 保持（意图参数 `SyncScheduling.DEFERRED` + `RecordOutcome.syncScheduled`；每笔一次会把 1 次 WorkManager 入队变成 N 次） |
 | 静默入账与手工落离线**不刷 widget** | 保持 |
 | 静默入账的 `client_created_at` 是**无时区**本地串，其余路径是 `Instant`（UTC） | 保持 |
 | 排调度失败只记日志、不回滚、不抛出 | 原先只有落离线这样做，现由入账 module 统一承担 |
@@ -204,6 +212,46 @@ AI 熔断 / DB 1s 去重）只对 NLS 生效**。这四道闸是为 NLS 的噪�
 同源同文本的第二条就是丢真交易（两杯咖啡、分钟相同、短信逐字一样）。旧口径还原：SMS 收口前
 没有任何内容级去重，A11Y 的 8s 防抖 + 金额|商家|页面 冷却是平台事实，不叠层。
 取舍：误杀 > 多调一次 AI。详见 `docs/NOTIFICATION.md` 的「〇·4」。
+
+### 2.5 离线队列（SyncQueue）
+
+「这笔账什么时候真的到了服务端」的四个动作——**入队 / 快照 / 排调度 / 失败恢复**——曾散在四处，
+每一处都只能读到队列的一小块，各自携带一份「已入队 ≠ 已上传」的告诫：
+
+| 收口前 | 形状 | 为什么 shallow |
+|---|---|---|
+| `domain/repository/PendingTransactionRepository` + impl | 4 个方法一对一转发；`insert` 与 `findByClientId` **零调用** | 删掉它复杂度只是搬回 DAO |
+| `TransactionRepository.syncPending()` | 一行：排调度 + 包一层 `Result.Success` | 「Success 只代表已入队」要在 KDoc 重复 4 处 |
+| `service/SyncScheduler` | static object + `Context` 参数，**6 个**调用点 | 每个调用点各自 try/catch、各自理解「排上了没」 |
+| `AuthRepositoryImpl` 直连 DAO | 401 恢复 + 清空队列直接打 `PendingTransactionDao` | 队列口径散在三个 module |
+
+现在收在一个 interface 后面：
+
+| 归属 | 文件 | 职责 |
+|---|---|---|
+| interface + 排调度结果类型 | `domain/queue/SyncQueue.kt` | `observeStatus` / `unsyncedCount` / `clear` / `requestSync` / `recoverTokenExpiredFailures`；`SyncRequest` = `Enqueued` / `Rejected` |
+| 实现 | `data/queue/SyncQueueImpl.kt`（`@Singleton`） | 唯一 `PendingTransactionDao` 的业务调用方，唯一 `SyncScheduler` 的生产调用方 |
+| 入队（跨表写入） | `data/queue/RecordWriter.kt` | `RoomRecordWriter`（生产）/ `DirectRecordWriter`（单测） |
+| WorkManager 管道 | `data/queue/SyncScheduler.kt` | OneTime + `APPEND_OR_REPLACE`；只被 `SyncQueueImpl` 调 |
+| 上传本体 | `service/SyncWorker.kt`（**未动**） | 逐条 POST、401 中断、撤销补偿、锁配对 |
+| 装配 | `di/QueueModule.kt` | `SyncQueue` 绑定；写入器绑到 `RoomRecordWriter` |
+
+**「已入队 ≠ 已上传」从 KDoc 变成类型**：排调度返回 `SyncRequest.Enqueued`，
+它只代表 WorkManager 接受了入队请求；想写「已同步 / 已上传」的人得先解释清楚
+为什么能把 `Enqueued` 当同步结果——那一刻谎报就现形了。首页手动同步的 toast
+也据此从「同步完成」改成「已加入同步队列」（`HomeViewModelTest` 钉住）。
+排调度失败不抛异常，而是 `Rejected(cause)`：入账侧只记日志（账已落库，回滚等于丢数据），
+首页侧据此报错。
+
+**口径一处**（`SyncQueueStatus` 的 KDoc 详述）：快照的 `pending` / `failed` 两个分区
+从不相加；只有 `unsyncedCount()`（= pending + failed）用于「清空前会带走多少数据」的警告。
+收口前 `PendingTransactionDao.getPendingCount()`（pending-only，生产零调用）已删除，
+pending-only 的唯一读法现在是快照的 pending 列。
+
+**入队为什么不在 interface 上**：入队要写 `pending_transactions` 并联动 `notification_records`，
+签名里必然出现 Room entity——那正是收口前 `PendingTransactionRepository.insert(entity)`
+的老毛病（domain 接口收发 entity 就只能是一层转发）。因此它是本 module 的 data 层
+`RecordWriter`，只由入账 module 使用，对外接口不带 entity。
 
 ---
 
@@ -426,7 +474,10 @@ sealed class AuthEvent {
 > 其余触发点（网络跳变、启动、401 后同账号重登）是**兜底**，用于覆盖进程被杀期间的积压。
 > 完整取舍见 `createTransactionOffline` 与 `RecordIntakeImpl` 的 KDoc，入账侧的排调度收口见 [§2.3](#23-入账recordintake)。
 
-### 6.2 SyncWorker 要点
+### 6.2 离线队列（SyncQueue）与 SyncWorker 要点
+
+队列的**读 / 排 / 恢复**归 [§2.5](#25-离线队列syncqueue) 的 `SyncQueue`；
+`SyncWorker` 是它内部的上传实现，只管把 `pending` 行逐条 POST 出去：
 
 - `@HiltWorker` + `@AssistedInject`
 - 逐条同步而非批量，避免部分失败导致已成功的被重试
@@ -475,11 +526,21 @@ sealed class AuthEvent {
 
 | Worker | 类型 | 调度 | 触发时机 |
 |---|---|---|---|
-| SyncWorker | **OneTime** | NetworkType.CONNECTED + APPEND_OR_REPLACE | **① 落库时即刻排**（`RecordIntake`：手工落离线 / 外部 Intent 静默入账 / 通知自动入账 / 弹窗确认 / 通知中心单条确认写完 pending 后；通知中心批量确认在循环结束排一次）；② `NetworkMonitor` 监听「离线→在线」跳变；③ App 启动（`AiBillApp.scheduleWorkers`）；④ 用户手动点同步（`TransactionRepository.syncPending`）；⑤ 同账号重新登录后（`onSameAccountRelogin` 重置 401 记录并主动排） |
+| SyncWorker | **OneTime** | NetworkType.CONNECTED + APPEND_OR_REPLACE | 触发点仍是这 5 处，只是**排调度入口统一为 `SyncQueue.requestSync()`**（收口前这 5 处各自直调 `SyncScheduler`）：**① 落库时即刻排**（`RecordIntake`：手工落离线 / 外部 Intent 静默入账 / 通知自动入账 / 弹窗确认 / 通知中心单条确认写完 pending 后；通知中心批量确认按 `RecordOutcome.syncScheduled` 在循环结束排一次）；② `NetworkMonitor` 监听「离线→在线」跳变；③ App 启动（`AiBillApp` 注入 `NetworkMonitor` → 注册回调时立即回调一次）；④ 用户手动点同步（`HomeViewModel.triggerSync`）；⑤ 同账号重新登录后（`onSameAccountRelogin` 经 `recoverTokenExpiredFailures` 重置 401 记录并主动排） |
 | RulesSyncWorker | Periodic | NetworkType.CONNECTED | 拉取云端规则（ETag/304） |
 | UpdateCheckWorker | Periodic | NetworkType.CONNECTED | GitHub Release 检查 |
 | NlsHealthCheckWorker | Periodic | 通知监听断连恢复 |
 | A11yHealthCheckWorker | Periodic | 无障碍服务健康检查 |
+
+> **通知中心批量确认的排调度：一批最多排 1 次，且不是「无条件排」。**
+> 收口前 `confirmAll` 循环结束后**无条件**调一次 `scheduleBatchSync()`，
+> 于是「全部被跳过（金额无效 / 记录已不存在）的那一批」也会排一次同步——
+> 顺带把队列里**别的** pending 冲一遍。现在排不排由 `RecordOutcome.syncScheduled`
+> 说了算：**本批入过账就排 1 次（时机与旧实现相同）；一批都没入账就不排**，
+> 那一顺带行为不再发生。其余触发点不受影响。
+>
+> 同理，`requestSync()` 被拒（WorkManager 不可用）时该笔的 `syncScheduled` 也是 false，
+> 批量路径会因此在收尾补排一次——这是刻意的（失败重试），不是巧合。
 
 > ⚠️ **SyncWorker 是 OneTime，不是 Periodic，也没有定时兜底。**
 > 离线队列完全依赖上表列出的触发点，其中最关键的是 `NetworkMonitor`
@@ -673,23 +734,36 @@ sealed class AuthEvent {
 
 ### 11.2 认知陷阱（不改会误导后来者）
 
-- `PendingTransactionDao.getPendingCount()` **生产零调用**——它只数 `pending`，是全仓最容易被误用的方法。需要 `pending + failed` 时用 `getAnyUnsyncedCount()`（`ServerConfigViewModel` 用例）与 `SyncQueueStatus`（横幅用）。
+- ~~`PendingTransactionDao.getPendingCount()` 生产零调用、最容易被误用~~ —— 架构候选 3 已**删除**该方法（它只数 `pending`，却与 `getAnyUnsyncedCount()` 只差一个字母）。现在 pending-only 的唯一读法是 `observeSyncStatus()` 的 pending 列（横幅），`pending + failed` 的唯一读法是 `SyncQueue.unsyncedCount()`（清空前的警告）。**新增计数前先想清楚要回答哪个问题**，这两个之外再加第三种就是新 bug。
 - `SyncWorker` 尾部注释「检查剩余 pending（含 failed 状态）数……则 retry」易被误读成 `failed` 会被重试。实际 `getAllPending()` 只捞 `pending`，且空队列时 `doWork` 在计算该计数**之前**就早退 `Result.success()`。
-- `TransactionRepository.syncPending()` 返回的 `Success` **只代表已入队**，不代表已上传；`SyncScheduler.scheduleSyncIfNeeded` 同理。不得据此写「已同步/已上传」。
+- `SyncQueue.requestSync()` 返回的 `SyncRequest.Enqueued` **只代表已入队**，不代表已上传（`TransactionRepository.syncPending()` 的 `Result.Success` 已随该方法删除）。不得据此写「已同步/已上传」——首页手动同步的 toast 因此是「已加入同步队列」，`HomeViewModelTest` 显式禁掉了「已同步 / 已上传 / 同步完成」三个词。
+- `RecordOutcome.syncScheduled` 回答的是「**本笔**排了没排」，不是「这批排了没排」。`NotificationCenterViewModel.confirmAll` 必须按它决定要不要在循环后补排一次；漏看 = 这一批通知确认的账永远不自动上传（兜底只剩网络跳变与启动）。
 
 ### 11.3 测试基建的技术债
 
+- **`testReleaseUnitTest` 有 9 个既有失败**（在收口队列 module 之前的 tip `c35ce3e` 与之后各跑一次，数字一致）：
+  `TransactionsPagingAppendTest`(2) + `PendingSyncBannerRenderTest`(7)，全部抛
+  `RuntimeException: Unable to resolve activity for Intent { … androidx.activity.ComponentActivity }`，
+  **发生在用例体之前**（`ActivityScenario.launch` 起不来），属 release 变体下 Robolectric
+  拉不起 Compose 测试宿主的基建问题。**根因未查明**；与 CI 的 `testDebugUnitTest` 无关
+  （CI 只跑 debug 变体 + `koverVerify`）。看到这 9 个红**不要**当成某次改动的回归——
+  先用 `git stash` 在改动前的提交上复跑确认。
 - **跨表写入的事务回滚未覆盖**：生产用 `RoomRecordWriter`（Room 真事务），单测用 `DirectRecordWriter`（直写），
   因为 mockk 1.13.13 跑不动 `RoomDatabase.withTransaction { }` 的 suspend lambda。
   因此「三步写在一个事务里、中途失败不留下半行」这条**没有自动化测试**（见 [§2.3](#23-入账recordintake)）。
   根治需引入 `hilt-android-testing` + Room 集成测试（Robolectric 或 androidTest），属新增依赖，需单独立项。
+  （三步的**顺序与关联键**已由 `DirectRecordWriterTest` 钉死，缺的只是「原子」这一层。）
 - `PendingTransactionDao.cleanSyncedBefore` 等三个「清理」方法定义未调用（存储无上限，见 §6.2）。
 - `HomeViewModelTest` 用 5 个非 relaxed mock 打桩 `init` 的四路 `refresh()`；`init` 再新增任何调用都会让全部用例因 `no answer found` 变红（红因与被测行为无关）。
 - **Hilt 门禁挡住 receiver/service 的可测性**：`Hilt_*` 生成类在 `onReceive` / `goAsync()` 均 `inject()`，而本工程 Robolectric 给不出 `@HiltAndroidApp` 的 `Application`（`Application::class` 抛 Hilt 前置条件；`AiBillApp::class` 抛 `AndroidKeyStore not found`）。为此 `ExternalActionReceiver` 把 autoConfirm 块提取为 `internal suspend fun` 才能测（先例：`AutoRecordActionReceiver.handleUndo`）。根治需引入 `hilt-android-testing` + `HiltTestApplication`（新增依赖，需单独立项）。
 - `ExternalActionReceiver` 的「权限被拒」与「autoConfirm=false」两条「不排同步」分支仍不可测（入账收口未改动 `onReceive`，靠 review 把守）。
 - `AutoRecordActionReceiverUndoTest` 的约束断言（禁「上传/服务器/流水页」）未覆盖 `MSG_NOT_FOUND` 分支；现状文案合规，等值双写断言兜底。
-- `RecordIntakeTest` 直接构造 `RecordIntakeImpl` + `DirectRecordWriter`（不 mock 入账入口），
+- `RecordIntakeTest` 直接构造 `RecordIntakeImpl` + 匿名 `object : RecordWriter`（不 mock 入账入口），
   因此「入账时界面不崩」这点仍依赖 Hilt 图的编译期正确性，无运行时测试。
+  ⚠️ 正因为它注入的是匿名 writer，`RecordWriter` 的三步写入一度**全仓无断言**（候选 1 的 KDoc 与代码不符），
+  已在候选 3 补上 `DirectRecordWriterTest`。**再往 `RecordIntake` 里塞新的 writer 实现前，先想清楚它会被哪个用例驱动。**
+- `NotificationCenterViewModel.confirmAll` 的「循环后收尾排一次」只有逐笔 `syncScheduled=false` 的事实，
+  没有端到端用例（VM 本身因 `Settings.Secure` / channel 依赖不可直接测），与「Hilt 门禁」那条同源。
 - **adapter 本身仍不可测**（同一道 Hilt 门禁）：`NotificationMonitorService` / `SmsReceiverService` /
   `PaymentAccessibilityService` 里的「平台翻译」（extras 取文本、报文拼接、节点树三重条件）无法进单测。
   预筛收口（见 [§2.4](#24-预筛notificationprefilter)）把**判据**从 adapter 挪进了可测的 module，

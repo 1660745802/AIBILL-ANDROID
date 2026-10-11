@@ -2,7 +2,6 @@ package com.aibill.android.data.local.work
 
 import android.content.Context
 import androidx.work.WorkManager
-import com.aibill.android.service.SyncScheduler
 import com.aibill.android.service.SyncWorker
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -17,17 +16,13 @@ import javax.inject.Singleton
  * 会触发 AbstractMethodError）。
  *
  * 通过这个接口，测试可以传入 mock 实现，不需要触发真实 WorkManager。
+ *
+ * ⚠️ **排同步不在本接口**：它归离线队列 module（`SyncQueue.requestSync`）。
+ * 收口前这里也有一个 `scheduleSync()`，与它做的事完全一样——两个入口，
+ * 迟早有人改了一个忘了另一个（且测试会互相遮住）。
  */
 interface WorkManagerProvider {
     fun cancelSyncWorker()
-
-    /**
-     * 入队一次同步（OneTime + NetworkType.CONNECTED）。
-     *
-     * AuthRepositoryImpl 在同账号重新登录后调用：把因 401 卡在 failed 的离线记录
-     * 重置为 pending 后，必须主动排一次 SyncWorker，否则要等下一次网络回调/手动同步。
-     */
-    fun scheduleSync()
 }
 
 @Singleton
@@ -36,9 +31,5 @@ class DefaultWorkManagerProvider @Inject constructor(
 ) : WorkManagerProvider {
     override fun cancelSyncWorker() {
         WorkManager.getInstance(context).cancelUniqueWork(SyncWorker.WORK_NAME)
-    }
-
-    override fun scheduleSync() {
-        SyncScheduler.scheduleSyncIfNeeded(context)
     }
 }

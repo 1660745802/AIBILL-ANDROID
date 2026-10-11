@@ -2,9 +2,10 @@ package com.aibill.android.presentation.ui.auth
 
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
+import android.content.Context
 import com.aibill.android.data.local.datastore.UserPreferences
+import com.aibill.android.data.queue.SyncQueueImpl
 import com.aibill.android.data.repository.NotificationRecordRepositoryImpl
-import com.aibill.android.data.repository.PendingTransactionRepositoryImpl
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import io.mockk.coEvery
@@ -29,13 +30,12 @@ import org.junit.jupiter.api.Test
  * `ServerConfigViewModel` 的回归测试，锁住「切换服务器前的二次确认」三件事：
  * 口径（含 failed）、弹框判定、以及 `onSave` 的清空行为。
  *
- * ## 测试边界为什么是 DAO 而不是 repository
+ * ## 测试边界为什么是 DAO 而不是 queue interface
  *
- * 本类用**真实** `PendingTransactionRepositoryImpl` + `mockk<PendingTransactionDao>`，
- * 而不是 `mockk<PendingTransactionRepository>()`。原因是一个可编译性事实：
- * domain 接口上**只有** `getAnyUnsyncedCount()`，`getPendingCount()` 只存在于
- * `PendingTransactionRepositoryImpl` 的委托里。真正的历史 bug 形态
- * 「domain 承诺 pending+failed，实现却委托 `dao.getPendingCount()`」
+ * 本类用**真实** `SyncQueueImpl` + `mockk<PendingTransactionDao>`，
+ * 而不是 `mockk<SyncQueue>()`。原因是一个可编译性事实：
+ * 「未同步含 failed」这个口径写死在 `SyncQueueImpl` 委托的那一行 DAO 调用上，
+ * 真正的历史 bug 形态「domain 承诺 pending+failed，实现却只数 pending」
  * 若在接口层打桩，mock 会**遮住**这次委托，变异永远不会被发现。
  * 只有让被测链路穿过真实 impl，才能钉住那行委托。
  *
@@ -47,8 +47,10 @@ import org.junit.jupiter.api.Test
  * ## SQL 层口径另有覆盖，本文件只锁委托层与 ViewModel 决策
  *
  * `IN ('pending','failed')` 这条 SQL 本身不是本文件的职责——它由
- * `PendingTransactionDaoMarkFailedTest.kt:206-217` 用**真实 Room** 端到端验证
- * （那里同时钉住 `getPendingCount()` 确实不含 failed）。本文件不重复那层，
+ * `PendingTransactionDaoMarkFailedTest.kt` 用**真实 Room** 端到端验证。
+ * 收口前那里还用 `getPendingCount()` 与它对拍；该方法已在架构候选 3 删除
+ * （生产零调用），pending-only 的唯一读法现在是 `observeSyncStatus()` 的那一列。
+ * 本文件不重复那层，
  * 只断言两件事：「impl 委托到了哪个 DAO 方法」+「ViewModel 拿到的数怎么变成弹框判定」。
  *
  * ## 框架红线
@@ -80,6 +82,7 @@ class ServerConfigViewModelTest {
     private val categoryRepository = mockk<CategoryRepository>()
     private val accountRepository = mockk<AccountRepository>()
     private val notificationDao = mockk<NotificationRecordDao>()
+    private val context: Context = mockk(relaxed = true)
 
     @BeforeEach
     fun setUp() {
@@ -89,9 +92,9 @@ class ServerConfigViewModelTest {
         every { userPreferences.serverUrl } returns flowOf(SERVER_URL)
         coEvery { userPreferences.setServerUrl(any()) } just runs
 
-        // 双口径同时打桩：让「退回只数 pending」以断言失败而非 mock 未命中暴露出来。
+        // 「未同步」口径含 failed。pending-only 的读法（dao.getPendingCount）已随架构候选 3
+        // 删除，所以这里只有一个桩：impl 改数一次查询，下面的 coVerify 立刻红。
         coEvery { pendingDao.getAnyUnsyncedCount() } returns 0
-        coEvery { pendingDao.getPendingCount() } returns 0
         coEvery { pendingDao.deleteAll() } just runs
 
         coEvery { categoryRepository.deleteAll() } just runs
@@ -110,7 +113,7 @@ class ServerConfigViewModelTest {
      */
     private fun buildViewModel() = ServerConfigViewModel(
         userPreferences = userPreferences,
-        pendingTransactionRepository = PendingTransactionRepositoryImpl(pendingDao),
+        syncQueue = SyncQueueImpl(pendingDao, context),
         categoryRepository = categoryRepository,
         accountRepository = accountRepository,
         notificationRecordRepository = NotificationRecordRepositoryImpl(notificationDao),
@@ -121,7 +124,6 @@ class ServerConfigViewModelTest {
         runTest {
             // 典型形态：唯一一条离线记录被 401 标成 failed，pending 归零。
             coEvery { pendingDao.getAnyUnsyncedCount() } returns 1
-            coEvery { pendingDao.getPendingCount() } returns 0
 
             val viewModel = buildViewModel()
 
@@ -131,8 +133,6 @@ class ServerConfigViewModelTest {
             assertEquals(true, viewModel.hasPendingData())
             // [口径] impl 必须委托 getAnyUnsyncedCount
             coVerify(exactly = 1) { pendingDao.getAnyUnsyncedCount() }
-            // [口径双保险] 一旦 impl 退回委托 dao.getPendingCount()，这行必红
-            coVerify(exactly = 0) { pendingDao.getPendingCount() }
         }
 
     @Test

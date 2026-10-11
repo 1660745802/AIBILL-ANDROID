@@ -12,10 +12,10 @@
 | **记账（记一笔）** | 让一笔收支成为本地事实：手工、通知自动识别、通知确认、外部 Intent、小组件入口都算 | `RecordIntake`（入账 module，见 [架构文档 §2.3](docs/ARCHITECTURE.md#23-入账recordintake)） |
 | **入账意图**（intent） | 调用方对入账 module 表达的「要记这一笔」，一个 subtype = 一条历史写入路径的全部差异 | `RecordIntent` |
 | **入账行 / 队列行** | `pending_transactions` 表的一行。一次记账落库的产物，未必已上传 | `PendingTransactionEntity` |
-| **离线队列** | `pending_transactions` 表中尚未确认上传到服务端的全部行 | `PendingTransactionDao` |
-| **排队等上传**（pending） | `sync_status='pending'`：可被 `SyncWorker` 自动捞起。**不含 failed** | `PendingTransactionDao.getAllPending()` |
-| **待人管**（failed） | `sync_status='failed'`：本地终态，需要用户介入，不会自动重试 | `SyncWorker.markFailed` |
-| **已入队 ≠ 已上传** | 排上 `SyncWorker` 只代表 WorkManager 接受了请求 | `SyncScheduler.scheduleSyncIfNeeded` |
+| **离线队列** | `pending_transactions` 表中尚未确认上传到服务端的全部行。入队/快照/排调度/失败恢复是**一个** module | `SyncQueue`（离线队列 module，见 [架构文档 §2.5](docs/ARCHITECTURE.md#25-离线队列syncqueue)） |
+| **排队等上传**（pending） | `sync_status='pending'`：可被 `SyncWorker` 自动捞起。**不含 failed** | `PendingTransactionDao.getAllPending()` / `SyncQueueStatus.pending` |
+| **待人管**（failed） | `sync_status='failed'`：本地终态，需要用户介入，不会自动重试（401 除外） | `SyncWorker.markFailed` / `SyncQueueStatus.failed` |
+| **已入队 ≠ 已上传** | 排上 `SyncWorker` 只代表 WorkManager 接受了请求。这个区别现在**是类型**不是注释 | `SyncQueue.requestSync()` → `SyncRequest.Enqueued` |
 | **同步锁（SyncLock）** | 换号/清缓存前等在飞的同步循环跑完，避免 A 的账写进 B 的服务端 | `data/local/datastore/SyncLock.kt` |
 
 ## 通知入账

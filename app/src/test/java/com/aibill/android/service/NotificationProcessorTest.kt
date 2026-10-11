@@ -5,11 +5,12 @@ import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
-import com.aibill.android.data.record.DirectRecordWriter
+import com.aibill.android.data.queue.DirectRecordWriter
+import com.aibill.android.data.queue.SyncQueueImpl
 import com.aibill.android.data.record.RecordClock
 import com.aibill.android.data.record.RecordIntakeImpl
 import com.aibill.android.data.record.RecordMoment
-import com.aibill.android.data.record.RecordWriter
+import com.aibill.android.data.queue.RecordWriter
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.data.remote.api.AiApi
 import com.aibill.android.data.remote.dto.response.AiParseResponseDto
@@ -73,8 +74,8 @@ class NotificationProcessorTest {
         Dispatchers.setMain(testDispatcher)
 
         // Mock static calls that happen during commitBest
-        io.mockk.mockkObject(com.aibill.android.service.SyncScheduler)
-        every { com.aibill.android.service.SyncScheduler.scheduleSyncIfNeeded(any()) } returns Unit
+        io.mockk.mockkObject(com.aibill.android.data.queue.SyncScheduler)
+        every { com.aibill.android.data.queue.SyncScheduler.scheduleSyncIfNeeded(any()) } returns Unit
         io.mockk.mockkObject(com.aibill.android.service.WidgetDataUpdater)
         every { com.aibill.android.service.WidgetDataUpdater.notifyTransactionAdded(any(), any(), any(), any()) } returns Unit
         io.mockk.mockkObject(com.aibill.android.util.NotificationHelper)
@@ -122,6 +123,7 @@ class NotificationProcessorTest {
         return RecordIntakeImpl(
             context = context,
             recordWriter = writer,
+            syncQueue = SyncQueueImpl(pendingTransactionDao, context),
             recordClock = clock,
             userPreferences = userPreferences,
             categoryLearningEngine = categoryLearningEngine,
@@ -133,7 +135,7 @@ class NotificationProcessorTest {
     @AfterEach
     fun tearDown() {
         Dispatchers.resetMain()
-        io.mockk.unmockkObject(com.aibill.android.service.SyncScheduler)
+        io.mockk.unmockkObject(com.aibill.android.data.queue.SyncScheduler)
         io.mockk.unmockkObject(com.aibill.android.service.WidgetDataUpdater)
         io.mockk.unmockkStatic(com.aibill.android.util.NotificationHelper::class)
         io.mockk.unmockkObject(com.aibill.android.util.NotificationHelper)

@@ -20,9 +20,6 @@ interface PendingTransactionDao {
     @Query("SELECT * FROM pending_transactions WHERE sync_status = 'pending' ORDER BY created_at ASC")
     suspend fun getAllPending(): List<PendingTransactionEntity>
 
-    @Query("SELECT COUNT(*) FROM pending_transactions WHERE sync_status = 'pending'")
-    suspend fun getPendingCount(): Int
-
     /**
      * 统计任意未同步成功的记录（pending + failed）。
      * 用于 SyncWorker 在发现还有未处理项时继续 retry，
@@ -42,6 +39,11 @@ interface PendingTransactionDao {
      * 这是**刻意**只数 pending：本方法回答「排队等上传的条数」，
      * 而 `failed` 需要用户介入，混进去会让数字与「实际可自动续传的条数」对不上。
      * 需要 pending + failed 时用 [getAnyUnsyncedCount]。
+     *
+     * ⚠️ 收口前这里还有一个 `getPendingCount()`（同一条 SQL 的 suspend 版本），
+     * **生产零调用**——它只数 pending，却叫得出「unsynced」的误会空间。
+     * 架构候选 3 已删：pending-only 的唯一读法是 [observeSyncStatus] 的那一列，
+     * pending+failed 的唯一读法是 [getAnyUnsyncedCount]。
      */
     @Query("SELECT COUNT(*) FROM pending_transactions WHERE sync_status = 'pending'")
     fun observePendingCount(): Flow<Int>

@@ -4,7 +4,11 @@ import android.content.Context
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.local.datastore.UserPreferences
+import com.aibill.android.data.queue.RecordWrite
+import com.aibill.android.data.queue.RecordWriter
 import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.domain.queue.SyncQueue
+import com.aibill.android.domain.queue.SyncRequest
 import com.aibill.android.domain.record.RecordIntent
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.record.RecordOutcome
@@ -12,7 +16,6 @@ import com.aibill.android.domain.record.SyncScheduling
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakTracker
 import com.aibill.android.service.NotificationRulesManager
-import com.aibill.android.service.SyncScheduler
 import com.aibill.android.service.WidgetDataUpdater
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationSourceMapping
@@ -36,9 +39,10 @@ import javax.inject.Singleton
  *
  * ## ⚠️ 排同步失败只记日志、绝不回滚、绝不抛出
  *
- * 入队失败（WorkManager 抛异常）时这笔账**已经落库**，回滚等于丢用户数据；
- * 抛给调用方则会让异常逃出调用方的协程作用域——本工程**没有**全局
- * `CoroutineExceptionHandler`，未捕获异常走线程默认处理器 = **直接崩溃进程**；
+ * 排调度由离线队列 module（[SyncQueue.requestSync]）执行，入队失败时它返回
+ * [SyncRequest.Rejected] 而不是抛异常，本类只把它记成日志。那笔账**已经落库**，
+ * 回滚等于丢用户数据；抛给调用方则会让异常逃出调用方的协程作用域——本工程**没有**
+ * 全局 `CoroutineExceptionHandler`，未捕获异常走线程默认处理器 = **直接崩溃进程**；
  * 即便假设它被吞，`ManualRecordViewModel` 末尾的 `isSaving` 复位也会被异常跳过，
  * 按钮永久卡在「保存中」。剩余兜底仍有：网络跳变、启动排同步、Home 横幅的手动同步按钮。
  *
@@ -46,15 +50,17 @@ import javax.inject.Singleton
  * 收口后由本类统一承担（弹窗/通知中心那几条原本连 try/catch 都没有，是行为变更，
  * 已在提交信息里写明）。
  *
- * ## Success 只代表「已入队」，不代表「已上传」
+ * ## 已入队 ≠ 已上传
  *
- * [SyncScheduler.scheduleSyncIfNeeded] 只是把 SyncWorker 入队，真实上传结果由队列状态与
- * 横幅呈现。不得据此在调用方改写成「已同步 / 已上传」类文案。
+ * [SyncQueue.requestSync] 只是把 SyncWorker 入队，真实上传结果由队列快照与横幅呈现。
+ * 本类把结果写进 [RecordOutcome.syncScheduled]（排没排），
+ * 不得据此在调用方改写成「已同步 / 已上传」类文案。
  */
 @Singleton
 class RecordIntakeImpl @Inject constructor(
     @ApplicationContext private val context: Context,
     private val recordWriter: RecordWriter,
+    private val syncQueue: SyncQueue,
     private val recordClock: RecordClock,
     private val userPreferences: UserPreferences,
     private val categoryLearningEngine: CategoryLearningEngine,
@@ -68,14 +74,6 @@ class RecordIntakeImpl @Inject constructor(
         is RecordIntent.NotificationCenterConfirm -> intakeNotificationCenterConfirm(intent)
         is RecordIntent.ExternalQuickRecord -> intakeExternalQuickRecord(intent)
         is RecordIntent.ManualOffline -> intakeManualOffline(intent)
-    }
-
-    override fun scheduleBatchSync() {
-        try {
-            SyncScheduler.scheduleSyncIfNeeded(context)
-        } catch (e: Exception) {
-            Timber.w(e, "批量入账完成但排同步失败")
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -118,9 +116,9 @@ class RecordIntakeImpl @Inject constructor(
                     receivedAt = intent.captured.receivedAt,
                 ),
             )
-        ).orZero()
+        )
 
-        scheduleSync(clientId)
+        val scheduled = scheduleSync(clientId)
         streakTracker.onTransactionRecorded()
         WidgetDataUpdater.notifyTransactionAdded(
             context = context,
@@ -128,22 +126,30 @@ class RecordIntakeImpl @Inject constructor(
             amountCents = intent.amount,
             date = pending.date,
         )
-        NotificationHelper.showAutoRecordedNotification(
-            context = context,
-            recordId = recordId,
-            amount = intent.amount,
-            description = intent.description,
-            source = sourceDetail,
-            privacyMode = userPreferences.notificationPrivacy.first(),
-            clientId = clientId,
-        )
+        if (recordId == null) {
+            // 审计行是本意图**新建**的，写入器理应回传它的 id（Room 的 @Insert 自增主键）。
+            // 拿不到就不发回执：recordId 同时是通知 id 与「撤销」的定位键，
+            // 拿一个假 id（如历史的 orZero() → 0）去发通知 = 用另一条通知覆盖掉真实的那条，
+            // 用户点「撤销」会撤销错账。宁可这一笔没有回执。
+            Timber.e("AI 自动入账未拿到审计记录 id，跳过回执 clientId=%s", clientId)
+        } else {
+            NotificationHelper.showAutoRecordedNotification(
+                context = context,
+                recordId = recordId,
+                amount = intent.amount,
+                description = intent.description,
+                source = sourceDetail,
+                privacyMode = userPreferences.notificationPrivacy.first(),
+                clientId = clientId,
+            )
+        }
         // 学习放在回执**之后**：原实现是在 commitBest 里 directInsert 返回后才学，
         // 这里保持同序（顺序本身不影响结果，但收口不改变既有行为）。
         val learnKey = intent.description?.trim()
         if (!learnKey.isNullOrBlank() && intent.categoryId != null) {
             categoryLearningEngine.learnFromCorrection(learnKey, intent.categoryId)
         }
-        return RecordOutcome(clientId)
+        return RecordOutcome(clientId = clientId, recordId = recordId, syncScheduled = scheduled)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -179,7 +185,7 @@ class RecordIntakeImpl @Inject constructor(
 
         recordWriter.write(RecordWrite(pending = pending, confirmRecordId = intent.recordId))
 
-        scheduleSync(clientId)
+        val scheduled = scheduleSync(clientId)
 
         WidgetDataUpdater.notifyTransactionAdded(
             context = context,
@@ -204,7 +210,7 @@ class RecordIntakeImpl @Inject constructor(
             source = sourceDetail,
             privacyMode = false,
         )
-        return RecordOutcome(clientId)
+        return RecordOutcome(clientId = clientId, syncScheduled = scheduled)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -236,10 +242,9 @@ class RecordIntakeImpl @Inject constructor(
 
         recordWriter.write(RecordWrite(pending = pending, confirmRecordId = intent.recordId))
 
-        // 批量确认走 DEFERRED：由调用方在循环结束后统一排一次（历史行为，见 scheduleBatchSync）
-        if (intent.scheduling == SyncScheduling.IMMEDIATE) {
-            scheduleSync(clientId)
-        }
+        // 批量确认走 DEFERRED：本笔不排调度，调用方据 [RecordOutcome.syncScheduled] = false
+        // 在循环结束后统一排一次（每笔一次会把 1 次入队变成 N 次，那是行为变更）
+        val scheduled = intent.scheduling == SyncScheduling.IMMEDIATE && scheduleSync(clientId)
 
         WidgetDataUpdater.notifyTransactionAdded(
             context = context,
@@ -248,7 +253,7 @@ class RecordIntakeImpl @Inject constructor(
             date = pending.date,
         )
         // 不预测分类、不学习：学习在 confirmWithEdit 里显式做（用户主动改了分类才学）
-        return RecordOutcome(clientId)
+        return RecordOutcome(clientId = clientId, syncScheduled = scheduled)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -276,9 +281,9 @@ class RecordIntakeImpl @Inject constructor(
         recordWriter.write(RecordWrite(pending = pending))
         // 排一次同步：否则这条 pending 只能等「网络跳变 / 下次启动 / 用户手动点同步」——
         // WiFi 常连的静默入账会一直躺着。
-        scheduleSync(clientId)
+        val scheduled = scheduleSync(clientId)
         // 不刷 widget：原实现就没有刷，保留。
-        return RecordOutcome(clientId)
+        return RecordOutcome(clientId = clientId, syncScheduled = scheduled)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -308,9 +313,9 @@ class RecordIntakeImpl @Inject constructor(
             clientCreatedAt = recordClock.now().instant.toString(),
         )
         recordWriter.write(RecordWrite(pending = pending))
-        scheduleSync(clientId)
+        val scheduled = scheduleSync(clientId)
         // 不刷 widget：原实现就没有刷，保留。
-        return RecordOutcome(clientId)
+        return RecordOutcome(clientId = clientId, syncScheduled = scheduled)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -320,19 +325,20 @@ class RecordIntakeImpl @Inject constructor(
     /** clientId = UUID v4（幂等与撤销的唯一凭据，架构决策 #6） */
     private fun newClientId(): String = UUID.randomUUID().toString()
 
-    /** 写库之后才排调度；失败只记日志（理由见类 KDoc） */
-    private fun scheduleSync(clientId: String) {
-        try {
-            SyncScheduler.scheduleSyncIfNeeded(context)
-        } catch (e: Exception) {
-            Timber.w(e, "入账成功但排同步失败 clientId=%s", clientId)
+    /** 写库之后才排调度；失败只记日志（理由见类 KDoc）。
+     *
+     * @return 本笔是否真的排上了（`false` = 未排：意图是 DEFERRED，或 WorkManager 没接受入队）
+     */
+    private fun scheduleSync(clientId: String): Boolean = when (val request = syncQueue.requestSync()) {
+        is SyncRequest.Enqueued -> true
+        is SyncRequest.Rejected -> {
+            Timber.w(request.cause, "入账成功但排同步失败 clientId=%s", clientId)
+            false
         }
     }
 
     private fun String.toTransactionType(): TransactionType =
         TransactionType.fromValue(this) ?: TransactionType.EXPENSE
-
-    private fun Long?.orZero(): Long = this ?: 0L
 
     private companion object {
         const val SOURCE_APP_NOTIFICATION = "app_notification"

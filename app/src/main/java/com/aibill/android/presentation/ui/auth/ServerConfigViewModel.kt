@@ -3,10 +3,10 @@ package com.aibill.android.presentation.ui.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.datastore.UserPreferences
+import com.aibill.android.domain.queue.SyncQueue
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.NotificationRecordRepository
-import com.aibill.android.domain.repository.PendingTransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,20 +29,21 @@ data class ServerConfigUiState(
      * 未同步条数（含 failed），UI 用于切换服务器前的二次确认。
      *
      * **快照**：仅在 `init` 里取一次，之后不随队列变化刷新。
-     * 口径见 [PendingTransactionRepository.getAnyUnsyncedCount]。
+     * 口径见 [SyncQueue.unsyncedCount]。
      */
     val unsyncedCount: Int = 0,
 )
 
 /**
- * 服务器配置 ViewModel。**已重构**：移除 3 个 DAO 直接依赖，全部走 Repository。
+ * 服务器配置 ViewModel。**已重构**：移除 3 个 DAO 直接依赖，全部走 Repository
+ * 与离线队列 module。
  *
  * 保留 UserPreferences（DataStore facade，按项目惯例允许直接使用）。
  */
 @HiltViewModel
 class ServerConfigViewModel @Inject constructor(
     private val userPreferences: UserPreferences,
-    private val pendingTransactionRepository: PendingTransactionRepository,
+    private val syncQueue: SyncQueue,
     private val categoryRepository: CategoryRepository,
     private val accountRepository: AccountRepository,
     private val notificationRecordRepository: NotificationRecordRepository,
@@ -54,7 +55,7 @@ class ServerConfigViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             val savedUrl = userPreferences.serverUrl.first()
-            val count = pendingTransactionRepository.getAnyUnsyncedCount()
+            val count = syncQueue.unsyncedCount()
             _uiState.update {
                 it.copy(
                     serverUrl = savedUrl.orEmpty(),
@@ -116,7 +117,7 @@ class ServerConfigViewModel @Inject constructor(
         viewModelScope.launch {
             val url = normalizeUrl(_uiState.value.serverUrl)
             if (clearLocalCache) {
-                pendingTransactionRepository.deleteAll()
+                syncQueue.clear()
                 categoryRepository.deleteAll()
                 accountRepository.deleteAll()
                 notificationRecordRepository.deleteAll()

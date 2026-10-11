@@ -195,14 +195,18 @@ class PendingTransactionDaoMarkFailedTest {
      * 返回 retry() 还是 success()。若这个计数漏掉 failed，
      * 队列会被误判为「全部成功」而停止调度。
      *
-     * 同时固定一个容易误改的语义：getPendingCount **不**计 failed。
-     * 这是**刻意**的：本方法回答「排队等上传的条数」，failed 需要用户介入，
-     * 混进去会让数字与「实际可自动续传的条数」对不上。
+     * 同时固定两个容易误改的语义：
+     * - `getAnyUnsyncedCount()` 含 failed（**清空前的警告口径**，
+     *   `SyncQueue.unsyncedCount` 委托的就是它）；
+     * - `getAllPending()` **不含** failed（**排队等上传的口径**，横向幅读它）。
      *
      * ⚠️ 这里曾是「Home 横幅看不到失败行」的可观测性缺口，现已由
-     * `SyncQueueStatus`（`PendingTransactionDaoQueueStatusTest` 锁）在**另一条查询**里补齐
-     * ——横幅改读 `observeSyncStatus()`，`getPendingCount` 仍是 pending-only。
-     * 所以断言一行不动：它钉住的是口径，不是缺陷。
+     * `SyncQueueStatus`（`PendingTransactionDaoQueueStatusTest` 锁）在**另一条查询**里补齐。
+     *
+     * 📌 收口前本用例还与 `getPendingCount()`（生产零调用）对拍，钉住
+     * 「pending-only ≠ unsynced」。该方法已在架构候选 3 删除——
+     * pending-only 的唯一读法现在是 `observeSyncStatus()` 的 pending 列，
+     * 由上面那条 QueueStatus 测试以真实 SQL 钉死。
      */
     @Test
     fun `failed rows still count as unsynced`() = runTest {
@@ -210,15 +214,14 @@ class PendingTransactionDaoMarkFailedTest {
         dao.insert(entity("U2"))
         dao.markFailed("U1", SyncWorker.ERROR_TOKEN_EXPIRED, updatedAt = 100L)
 
-        // U1 failed + U2 pending = 2
+        // U1 failed + U2 pending = 2（unsynced 口径含 failed）
         assertEquals(2, dao.getAnyUnsyncedCount())
-        // getPendingCount 只数 pending，故不包含 U1
-        assertEquals(1, dao.getPendingCount())
+        // 但排队等上传的只有 U2（pending 口径不计 failed）
         assertEquals(listOf("U2"), dao.getAllPending().map { it.clientId })
 
-        // U1 复活后重新计入 pending / unsynced
+        // U1 复活后重新计入两个口径
         assertEquals(1, dao.resetFailedMatching(SyncWorker.ERROR_TOKEN_EXPIRED_PATTERN, now = 200L))
-        assertEquals(2, dao.getPendingCount())
+        assertEquals(2, dao.getAllPending().size)
         assertEquals(2, dao.getAnyUnsyncedCount())
     }
 }

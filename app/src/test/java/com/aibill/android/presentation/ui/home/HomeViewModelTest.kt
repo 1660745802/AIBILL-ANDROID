@@ -3,6 +3,8 @@ package com.aibill.android.presentation.ui.home
 import app.cash.turbine.test
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.SyncQueueStatus
+import com.aibill.android.domain.queue.SyncQueue
+import com.aibill.android.domain.queue.SyncRequest
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.NotificationRecordRepository
@@ -14,6 +16,7 @@ import com.aibill.android.service.WidgetSyncScheduler
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +27,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -65,6 +69,7 @@ class HomeViewModelTest {
     private lateinit var accountRepository: AccountRepository
     private lateinit var statsRepository: StatsRepository
     private lateinit var notificationRepository: NotificationRecordRepository
+    private lateinit var syncQueue: SyncQueue
     private lateinit var widgetSyncScheduler: WidgetSyncScheduler
     private lateinit var syncStatus: MutableStateFlow<SyncQueueStatus>
     private lateinit var viewModel: HomeViewModel
@@ -78,6 +83,7 @@ class HomeViewModelTest {
         accountRepository = mockk()
         statsRepository = mockk()
         notificationRepository = mockk()
+        syncQueue = mockk()
         // 最终类 + 无挂起函数：relaxed 免去 stub scheduleMonthlyUpdate
         widgetSyncScheduler = mockk(relaxed = true)
 
@@ -95,7 +101,9 @@ class HomeViewModelTest {
         every { notificationRepository.observePendingCount() } returns flowOf(0)
 
         syncStatus = MutableStateFlow(SyncQueueStatus(pending = 0, failed = 0))
-        every { transactionRepository.observeSyncStatus() } returns syncStatus
+        // 队列快照与排调度都归离线队列 module（收口前这里是 TransactionRepository.observeSyncStatus）
+        every { syncQueue.observeStatus() } returns syncStatus
+        every { syncQueue.requestSync() } returns SyncRequest.Enqueued
 
         viewModel = HomeViewModel(
             transactionRepository = transactionRepository,
@@ -103,6 +111,7 @@ class HomeViewModelTest {
             accountRepository = accountRepository,
             statsRepository = statsRepository,
             notificationRepository = notificationRepository,
+            syncQueue = syncQueue,
             widgetSyncScheduler = widgetSyncScheduler,
         )
     }
@@ -139,7 +148,7 @@ class HomeViewModelTest {
         assertEquals(false, state.syncStatus.isEmpty)
     }
 
-    /** 横幅数据只能来自 observeSyncStatus：refresh 不得覆盖它。 */
+    /** 横幅数据只能来自 observeStatus：refresh 不得覆盖它。 */
     @Test
     fun `refresh does not overwrite the queue snapshot`() = runTest {
         syncStatus.value = SyncQueueStatus(pending = 1, failed = 2)
@@ -147,5 +156,47 @@ class HomeViewModelTest {
         viewModel.refresh()
 
         assertEquals(SyncQueueStatus(pending = 1, failed = 2), viewModel.uiState.value.syncStatus)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 手动同步：已入队 ≠ 已上传（收口自 TransactionRepositorySyncPendingTest）
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * 排上调度后给用户的文案只能说「入队」。
+     *
+     * 收口前这条路径走 `TransactionRepository.syncPending()`，它的 `Result.Success`
+     * 只代表 WorkManager 接受了入队，界面却写「同步完成」——正是本 module
+     * [com.aibill.android.domain.queue.SyncRequest] 要消灭的那类误读。
+     */
+    @Test
+    fun `manual sync reports enqueued instead of claiming the upload finished`() = runTest {
+        viewModel.uiEvent.test {
+            viewModel.triggerSync()
+
+            val event = awaitItem()
+            assertTrue(event is HomeViewModel.UiEvent.ShowToast)
+            val message = (event as HomeViewModel.UiEvent.ShowToast).message
+            assertEquals("已加入同步队列", message)
+            assertFalse(message.contains("已同步"))
+            assertFalse(message.contains("已上传"))
+            assertFalse(message.contains("同步完成"))
+        }
+        verify(exactly = 1) { syncQueue.requestSync() }
+    }
+
+    /** 排调度被拒（WorkManager 不可用）要报错，不能假报成功。 */
+    @Test
+    fun `manual sync surfaces the rejection instead of a success toast`() = runTest {
+        every { syncQueue.requestSync() } returns SyncRequest.Rejected(RuntimeException("WM down"))
+
+        viewModel.uiEvent.test {
+            viewModel.triggerSync()
+
+            val event = awaitItem()
+            assertTrue(event is HomeViewModel.UiEvent.ShowError)
+            assertEquals("同步失败: 触发同步失败: WM down", (event as HomeViewModel.UiEvent.ShowError).message)
+        }
+        assertEquals(false, viewModel.uiState.value.isSyncing)
     }
 }

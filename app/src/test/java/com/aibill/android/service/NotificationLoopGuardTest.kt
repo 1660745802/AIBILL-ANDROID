@@ -3,7 +3,8 @@ package com.aibill.android.service
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.NotificationRecordEntity
-import com.aibill.android.data.record.DirectRecordWriter
+import com.aibill.android.data.queue.DirectRecordWriter
+import com.aibill.android.data.queue.SyncQueueImpl
 import com.aibill.android.data.record.RecordClock
 import com.aibill.android.data.record.RecordIntakeImpl
 import com.aibill.android.data.record.RecordMoment
@@ -50,6 +51,7 @@ class NotificationLoopGuardTest {
         val intake: RecordIntake = RecordIntakeImpl(
             context = context,
             recordWriter = DirectRecordWriter(pendingDao, dao),
+            syncQueue = SyncQueueImpl(pendingDao, context),
             recordClock = object : RecordClock {
                 override fun now(): RecordMoment = RecordMoment.system()
             },

@@ -3,7 +3,6 @@ package com.aibill.android.data.repository
 import com.aibill.android.data.local.dao.AccountDao
 import com.aibill.android.data.local.dao.CategoryDao
 import com.aibill.android.data.local.dao.NotificationRecordDao
-import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.SyncLock
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.work.WorkManagerProvider
@@ -15,12 +14,13 @@ import com.aibill.android.data.remote.dto.response.AuthResponse
 import com.aibill.android.data.remote.dto.response.UserDto
 import com.aibill.android.data.remote.interceptor.SessionEndReason
 import com.aibill.android.data.remote.interceptor.TokenManager
-import com.aibill.android.service.SyncWorker
+import com.aibill.android.domain.queue.SyncQueue
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -46,13 +46,22 @@ import org.junit.jupiter.api.Test
  * 7. **B6**：logout 不得删除 `last_known_user_id` —— 否则「登出→登回同账号」
  *    退化为「首次登录」并清空离线队列，违反登出弹窗对用户的承诺。
  *    但保留它也不得削弱换号防护（见下面两个 B6 用例）
+ *
+ * ## 架构候选 3 之后的边界
+ *
+ * 离线队列那一张表不再直连 DAO，而是走离线队列 module（`SyncQueue`）：
+ * 清空 → `syncQueue.clear()`，401 恢复 → `syncQueue.recoverTokenExpiredFailures()`，
+ * 重置后排同步 → `syncQueue.requestSync()`。所以本类的断言从 `PendingTransactionDao`
+ * 换成了 `SyncQueue`（**4 张表仍然逐张断言**，只是第一张换了个入口）。
+ * 401 模式的配对（写入侧 `markFailed` → 读取侧 `resetFailedMatching`）改由
+ * `SyncQueueImplTest` 用**真实 Room** 钉住。
  */
 class AuthRepositoryImplTest {
 
     private val authApi: AuthApi = mockk()
     private val tokenManager: TokenManager = mockk(relaxed = true)
     private val userPreferences: UserPreferences = mockk(relaxed = true)
-    private val pendingDao: PendingTransactionDao = mockk(relaxed = true)
+    private val syncQueue: SyncQueue = mockk(relaxed = true)
     private val categoryDao: CategoryDao = mockk(relaxed = true)
     private val accountDao: AccountDao = mockk(relaxed = true)
     private val notificationDao: NotificationRecordDao = mockk(relaxed = true)
@@ -76,7 +85,7 @@ class AuthRepositoryImplTest {
         authApi = authApi,
         tokenManager = tokenManager,
         userPreferences = userPreferences,
-        pendingTransactionDao = pendingDao,
+        syncQueue = syncQueue,
         categoryDao = categoryDao,
         accountDao = accountDao,
         notificationRecordDao = notificationDao,
@@ -105,13 +114,13 @@ class AuthRepositoryImplTest {
         coVerify(exactly = 1) { workManagerProvider.cancelSyncWorker() }
 
         // P1#44：换号 → 4 张本地表全部 deleteAll（防止 user A 的脏数据进 user B）
-        coVerify(exactly = 1) { pendingDao.deleteAll() }
+        coVerify(exactly = 1) { syncQueue.clear() }
         coVerify(exactly = 1) { categoryDao.deleteAll() }
         coVerify(exactly = 1) { accountDao.deleteAll() }
         coVerify(exactly = 1) { notificationDao.deleteAll() }
 
         // 换号不走「同账号重登」路径
-        coVerify(exactly = 0) { pendingDao.resetFailedMatching(any(), any()) }
+        coVerify(exactly = 0) { syncQueue.recoverTokenExpiredFailures() }
 
         // M1：tokenManager.saveSession 收到 4 字段
         coVerifyOrder {
@@ -132,7 +141,7 @@ class AuthRepositoryImplTest {
         // 用户「断网时记的账」被物理删除，不可恢复。
         every { syncLock.isActive() } returns false
         every { tokenManager.getLastKnownUserId() } returns 42
-        coEvery { pendingDao.resetFailedMatching(any(), any()) } returns 3
+        coEvery { syncQueue.recoverTokenExpiredFailures() } returns 3
         coEvery { authApi.login(LoginRequest("alice", "pass")) } returns ApiResponse(
             code = 0, data = makeAuthResponse(), message = "ok"
         )
@@ -142,21 +151,18 @@ class AuthRepositoryImplTest {
         assertTrue(result is com.aibill.android.domain.model.Result.Success)
 
         // 核心断言：pending 队列绝不能被清空
-        coVerify(exactly = 0) { pendingDao.deleteAll() }
+        coVerify(exactly = 0) { syncQueue.clear() }
         // 同账号下 categories/accounts/notification_records 也保留（server 派生缓存会重新拉）
         coVerify(exactly = 0) { categoryDao.deleteAll() }
         coVerify(exactly = 0) { accountDao.deleteAll() }
         coVerify(exactly = 0) { notificationDao.deleteAll() }
 
         // 401 卡住的记录必须被重置回 pending，否则 getAllPending() 永远捞不到 → 永不上传
-        coVerify(exactly = 1) {
-            pendingDao.resetFailedMatching(
-                errorPattern = com.aibill.android.service.SyncWorker.ERROR_TOKEN_EXPIRED_PATTERN,
-                now = any(),
-            )
-        }
+        // 401 模式由 SyncQueueImpl 内部翻译成 dao.resetFailedMatching(ERROR_TOKEN_EXPIRED_PATTERN)，
+        // 写入侧配对由 SyncQueueImplTest 用真实 Room 钉死
+        coVerify(exactly = 1) { syncQueue.recoverTokenExpiredFailures() }
         // 重置后必须主动排同步，否则要等下一次网络回调
-        coVerify(exactly = 1) { workManagerProvider.scheduleSync() }
+        verify(exactly = 1) { syncQueue.requestSync() }
         // session 照常刷新
         coVerify(exactly = 1) {
             tokenManager.saveSession(
@@ -177,8 +183,8 @@ class AuthRepositoryImplTest {
 
         newRepo().login("alice", "pass")
 
-        coVerify(exactly = 1) { pendingDao.deleteAll() }
-        coVerify(exactly = 0) { pendingDao.resetFailedMatching(any(), any()) }
+        coVerify(exactly = 1) { syncQueue.clear() }
+        coVerify(exactly = 0) { syncQueue.recoverTokenExpiredFailures() }
     }
 
     @Test
@@ -192,7 +198,7 @@ class AuthRepositoryImplTest {
 
         assertTrue(result is com.aibill.android.domain.model.Result.Error)
         // 关键：错误时不动本地缓存（用户输错密码不至于丢离线交易）
-        coVerify(exactly = 0) { pendingDao.deleteAll() }
+        coVerify(exactly = 0) { syncQueue.clear() }
         coVerify(exactly = 0) { categoryDao.deleteAll() }
         coVerify(exactly = 0) { accountDao.deleteAll() }
         coVerify(exactly = 0) { notificationDao.deleteAll() }
@@ -211,7 +217,7 @@ class AuthRepositoryImplTest {
         // P0#3 fix：register 真的调用了 AuthApi.register
         coVerify(exactly = 1) { authApi.register(RegisterRequest("bob", "pass", "INV-1", "Bob")) }
         assertTrue(result is com.aibill.android.domain.model.Result.Success)
-        coVerify(exactly = 1) { pendingDao.deleteAll() }
+        coVerify(exactly = 1) { syncQueue.clear() }
         coVerify(exactly = 1) { categoryDao.deleteAll() }
         coVerify(exactly = 1) { accountDao.deleteAll() }
         coVerify(exactly = 1) { notificationDao.deleteAll() }
@@ -239,7 +245,7 @@ class AuthRepositoryImplTest {
 
         // 验证顺序：先清缓存，再写 session
         coVerifyOrder {
-            pendingDao.deleteAll()
+            syncQueue.clear()
             tokenManager.saveSession(any(), any(), any(), any())
         }
     }
@@ -269,7 +275,7 @@ class AuthRepositoryImplTest {
         every { syncLock.isActive() } returns false
         // 登出保留了 last_known_user_id
         every { tokenManager.getLastKnownUserId() } returns 42
-        coEvery { pendingDao.resetFailedMatching(any(), any()) } returns 2
+        coEvery { syncQueue.recoverTokenExpiredFailures() } returns 2
         coEvery { authApi.login(LoginRequest("alice", "pass")) } returns ApiResponse(
             code = 0, data = makeAuthResponse(), message = "ok"
         )
@@ -279,18 +285,13 @@ class AuthRepositoryImplTest {
 
         assertTrue(result is com.aibill.android.domain.model.Result.Success)
         // 核心：离线队列一个字节都不能少
-        coVerify(exactly = 0) { pendingDao.deleteAll() }
+        coVerify(exactly = 0) { syncQueue.clear() }
         coVerify(exactly = 0) { categoryDao.deleteAll() }
         coVerify(exactly = 0) { accountDao.deleteAll() }
         coVerify(exactly = 0) { notificationDao.deleteAll() }
         // 401 卡住的记录被复活，并主动排同步
-        coVerify(exactly = 1) {
-            pendingDao.resetFailedMatching(
-                errorPattern = SyncWorker.ERROR_TOKEN_EXPIRED_PATTERN,
-                now = any(),
-            )
-        }
-        coVerify(exactly = 1) { workManagerProvider.scheduleSync() }
+        coVerify(exactly = 1) { syncQueue.recoverTokenExpiredFailures() }
+        verify(exactly = 1) { syncQueue.requestSync() }
     }
 
     /**
@@ -311,10 +312,10 @@ class AuthRepositoryImplTest {
 
         assertTrue(result is com.aibill.android.domain.model.Result.Success)
         // 跨账号防护不得因为保留 last_known_user_id 而削弱
-        coVerify(exactly = 1) { pendingDao.deleteAll() }
+        coVerify(exactly = 1) { syncQueue.clear() }
         coVerify(exactly = 1) { categoryDao.deleteAll() }
         coVerify(exactly = 1) { accountDao.deleteAll() }
         coVerify(exactly = 1) { notificationDao.deleteAll() }
-        coVerify(exactly = 0) { pendingDao.resetFailedMatching(any(), any()) }
+        coVerify(exactly = 0) { syncQueue.recoverTokenExpiredFailures() }
     }
 }

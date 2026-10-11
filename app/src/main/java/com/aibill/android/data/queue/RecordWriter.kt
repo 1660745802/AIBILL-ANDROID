@@ -1,4 +1,4 @@
-package com.aibill.android.data.record
+package com.aibill.android.data.queue
 
 import androidx.room.RoomDatabase
 import androidx.room.withTransaction
@@ -8,7 +8,11 @@ import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 
 /**
- * 跨表写入器：入账唯一的**落库出口**。
+ * 跨表写入器：**离线队列的入队口**，入账唯一的落库出口。
+ *
+ * 归属离线队列 module（架构候选 3）：入队要写 `pending_transactions` 并按形态联动
+ * `notification_records`，因此它是本 module 的 data 层能力，**不**暴露成 domain 接口
+ * （签名带 entity 的 domain 接口只能是一层转发，理由见 `domain/queue/SyncQueue.kt`）。
  *
  * ## 为什么要有这一层
  *
@@ -22,7 +26,14 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
  * 写入器：生产走 [RoomRecordWriter]（Room 真事务），单测走 [DirectRecordWriter]（直写）。
  *
  * ⚠️ 因此 [DirectRecordWriter] **不提供任何原子性**。它只允许出现在单测里；
- * 生产构建的 Hilt 绑定见 `di/RecordIntakeModule`，指向的是 [RoomRecordWriter]。
+ * 生产构建的 Hilt 绑定见 `di/QueueModule`，指向的是 [RoomRecordWriter]。
+ *
+ * ## 三步写入有不变量，由 `DirectRecordWriterTest` 钉死
+ *
+ * 第三步 `updateStatus(confirmId, "confirmed", pending.clientId)` 丢不得：它把审计行
+ * 移出 `observePending()` 的待确认集合。丢了 = 用户再点一次确认 = 重复账。
+ * 且传入的 clientId **必须**是写进 `pending_transactions` 的那一个（两表关联键，
+ * 撤销链路靠它定位队列行）。
  */
 interface RecordWriter {
 
@@ -94,7 +105,8 @@ class RoomRecordWriter(
 /**
  * 单测 adapter：直接写，不包事务。
  *
- * 存在的意义是让 [com.aibill.android.domain.record.RecordIntake] 的全部行为
+ * 存在的意义是让 [com.aibill.android.domain.record.RecordIntake] 与离线队列 module
+ * 的全部行为
  * （字段装配、调用顺序、locale 不变）在纯 JVM 单测里可断言——而 mockk 1.13.13 无法
  * 让 `withTransaction` 的 suspend lambda 在测试里跑起来。
  *

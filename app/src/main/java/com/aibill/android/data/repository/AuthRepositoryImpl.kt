@@ -3,7 +3,6 @@ package com.aibill.android.data.repository
 import com.aibill.android.data.local.dao.AccountDao
 import com.aibill.android.data.local.dao.CategoryDao
 import com.aibill.android.data.local.dao.NotificationRecordDao
-import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.SyncLock
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.work.WorkManagerProvider
@@ -15,9 +14,9 @@ import com.aibill.android.data.remote.interceptor.TokenManager
 import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.User
+import com.aibill.android.domain.queue.SyncQueue
 import com.aibill.android.domain.repository.AuthRepository
 import com.aibill.android.service.NotificationProcessor
-import com.aibill.android.service.SyncWorker
 import kotlinx.coroutines.delay
 import timber.log.Timber
 import javax.inject.Inject
@@ -28,7 +27,7 @@ class AuthRepositoryImpl @Inject constructor(
     private val authApi: AuthApi,
     private val tokenManager: TokenManager,
     private val userPreferences: UserPreferences,
-    private val pendingTransactionDao: PendingTransactionDao,
+    private val syncQueue: SyncQueue,
     private val categoryDao: CategoryDao,
     private val accountDao: AccountDao,
     private val notificationRecordDao: NotificationRecordDao,
@@ -141,14 +140,12 @@ class AuthRepositoryImpl @Inject constructor(
      * - notification_records：本地通知审计记录，保留
      */
     private suspend fun onSameAccountRelogin(userId: Int) {
-        val reset = pendingTransactionDao.resetFailedMatching(
-            errorPattern = SyncWorker.ERROR_TOKEN_EXPIRED_PATTERN,
-        )
+        val reset = syncQueue.recoverTokenExpiredFailures()
         if (reset > 0) {
             Timber.i("Auth: 同账号重登(userId=$userId)，重置 $reset 条 401 卡住的离线记录为待同步")
         }
         // 重置后主动排一次同步：否则要等下一次网络回调 / 用户手动点同步才会上传
-        workManagerProvider.scheduleSync()
+        syncQueue.requestSync()
     }
 
     /**
@@ -161,7 +158,7 @@ class AuthRepositoryImpl @Inject constructor(
      * （`AuthRepositoryImplTest` / `ServerConfigViewModelTest`）。
      */
     private suspend fun clearLocalCache() {
-        pendingTransactionDao.deleteAll()
+        syncQueue.clear()
         categoryDao.deleteAll()
         accountDao.deleteAll()
         notificationRecordDao.deleteAll()

@@ -29,7 +29,7 @@ import com.aibill.android.domain.model.Transaction
  * | [RecordIntent.NotificationConfirm] | `NotificationActionReceiver.handleConfirm` | [ReceiptPolicy.CONFIRM_RECEIPT] | 是 | 否 | 每笔 |
  * | [RecordIntent.NotificationConfirm] | `NotificationActionReceiver.handleConfirmWithNote` | [ReceiptPolicy.CONFIRM_RECEIPT] | 是 | 是 | 每笔 |
  * | [RecordIntent.NotificationCenterConfirm] | `NotificationCenterViewModel.insertTransaction` | [ReceiptPolicy.NONE] | 否 | 否 | 每笔 |
- * | [RecordIntent.NotificationCenterConfirm] | `NotificationCenterViewModel.confirmAll` | [ReceiptPolicy.NONE] | 否 | 否 | [SyncScheduling.DEFERRED] |
+ * | [RecordIntent.NotificationCenterConfirm] | `NotificationCenterViewModel.confirmAll` | [ReceiptPolicy.NONE] | 否 | 否 | [SyncScheduling.DEFERRED] → [RecordOutcome.syncScheduled] = false |
  * | [RecordIntent.ExternalQuickRecord] | `ExternalActionReceiver.handleAutoConfirmRecord` | [ReceiptPolicy.NONE] | 否 | 否 | 每笔 |
  * | [RecordIntent.ManualOffline] | `TransactionRepositoryImpl.createTransactionOffline` | [ReceiptPolicy.NONE] | 否 | 否 | 每笔 |
  *
@@ -43,23 +43,37 @@ interface RecordIntake {
      *
      * 内部顺序**不可调换**：先写库、后排调度（反过来可能让 SyncWorker 早于本行提交
      * 就跑到空队列，白跑一轮还要等下一次网络跳变才补传），再刷 widget / streak / 回执。
+     *
+     * **排调度由本入口自己决定**：绝大多数意图每笔都排；只有
+     * [RecordIntent.NotificationCenterConfirm] 的 [SyncScheduling.DEFERRED] 不排，
+     * 那时结果里的 [RecordOutcome.syncScheduled] = false，调用方据此在批量结束后
+     * 通过 `SyncQueue.requestSync()` 统一排一次。
+     *
+     * 收口前这里另有第二个方法 `scheduleBatchSync()`，把「批量循环结束记得收尾」
+     * 这个不变量交给调用方自觉。现已并入返回值：调用方读自己拿到的那一份结果，
+     * 不需要另外记得调一个收尾方法（漏调 = 批量记账永远不自动上传）。
      */
     suspend fun intake(intent: RecordIntent): RecordOutcome
-
-    /**
-     * 批量入账收尾：循环结束后**统一**排一次同步。
-     *
-     * 存在的唯一理由是 [RecordIntent.NotificationCenterConfirm] 的
-     * [SyncScheduling.DEFERRED]：`confirmAll` 历史上就是「每笔只写库 + 刷 widget，
-     * 循环结束才排一次」。收口成「每笔一次排调度」会把 1 次入队变成 N 次
-     * （`SyncScheduler` 用 `APPEND_OR_REPLACE`，连排 N 笔就入队 N 个 worker），
-     * 那是行为变更，不在本次收口范围内。
-     */
-    fun scheduleBatchSync()
 }
 
-/** 一次入账的结果。目前只有 clientId 对调用方有意义（撤销与幂等的唯一凭据）。 */
-data class RecordOutcome(val clientId: String)
+/**
+ * 一次入账的结果。
+ *
+ * @property clientId 撤销与幂等的唯一凭据（写进 `pending_transactions.client_id`）
+ * @property recordId 本笔新建的通知审计记录 id。**仅** [RecordIntent.NotificationAuto]
+ *   非 null（它是唯一会新建审计行的意图）：它同时是 AUTO 回执的通知 id 与「撤销」的定位键。
+ *   其余意图改的是早已存在的审计行，没有 id 可回传。
+ * @property syncScheduled 本笔是否**真的**排上了同步调度。两个 false 的来源：
+ *   ① 意图是 [SyncScheduling.DEFERRED]（批量确认）——调用方需要在循环结束后补一次
+ *   `SyncQueue.requestSync()`，否则这一批永远不会自动上传；
+ *   ② WorkManager 没接受入队（[com.aibill.android.domain.queue.SyncRequest.Rejected]）——
+ *   批量调用方同样会补排一次，而单笔调用方只剩网络跳变 / 启动 / 手动同步三个兜底。
+ */
+data class RecordOutcome(
+    val clientId: String,
+    val recordId: Long? = null,
+    val syncScheduled: Boolean = false,
+)
 
 /** 给用户什么回执。 */
 enum class ReceiptPolicy {
@@ -77,12 +91,14 @@ enum class ReceiptPolicy {
  * 排同步调度的时机。
  *
  * 绝大多数意图是 [IMMEDIATE]；只有通知中心批量确认是 [DEFERRED]。
+ * 收口前它还带着一句「由调用方调 `RecordIntake.scheduleBatchSync`」，
+ * 那第二个方法已删；现在由 [RecordOutcome.syncScheduled] 表达同一件事。
  */
 enum class SyncScheduling {
     /** 本笔写完立即排 */
     IMMEDIATE,
 
-    /** 本笔不排，由调用方在批量结束后调 [RecordIntake.scheduleBatchSync] 统一排一次 */
+    /** 本笔不排，结果里的 [RecordOutcome.syncScheduled] = false，由批量调用方在循环结束后排一次 */
     DEFERRED,
 }
 
@@ -177,7 +193,8 @@ sealed interface RecordIntent {
      * - **不预测分类、不学习**：学习仍在 `confirmWithEdit` 里显式做（用户主动改了分类才学）；
      * - 无回执。
      *
-     * @param scheduling 批量确认传 [SyncScheduling.DEFERRED]，单条确认用 [SyncScheduling.IMMEDIATE]
+     * @param scheduling 批量确认传 [SyncScheduling.DEFERRED]，单条确认用 [SyncScheduling.IMMEDIATE]；
+     *   批量确认的收尾排调度由调用方读 [RecordOutcome.syncScheduled] 完成（`confirmAll`）
      */
     data class NotificationCenterConfirm(
         val recordId: Long,

@@ -4,6 +4,9 @@ import android.content.Context
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
+import com.aibill.android.data.queue.RecordWrite
+import com.aibill.android.data.queue.RecordWriter
+import com.aibill.android.data.queue.SyncQueueImpl
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
@@ -16,7 +19,7 @@ import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakInfo
 import com.aibill.android.domain.usecase.StreakTracker
 import com.aibill.android.service.NotificationRulesManager
-import com.aibill.android.service.SyncScheduler
+import com.aibill.android.data.queue.SyncScheduler
 import com.aibill.android.service.WidgetDataUpdater
 import com.aibill.android.util.NotificationHelper
 import io.mockk.coEvery
@@ -50,15 +53,22 @@ import java.util.Locale
  * 而服务端契约是 `YYYY-MM-DD`。收口后这 6 条路径共用同一个入口，
  * **入口就是全部写入行为的测试面**：字段装配、调用顺序、locale 不变都在这里钉。
  *
- * ## 为什么用 [DirectRecordWriter]
+ * ## 本类**不用** [com.aibill.android.data.queue.DirectRecordWriter]
  *
- * 生产用 [RoomRecordWriter]（Room 真事务），单测用 `DirectRecordWriter`（直写）：
- * mockk 1.13.13 跑不动 `RoomDatabase.withTransaction { }` 的 suspend lambda，
- * 这正是历史实现把事务注释掉（`// NOTE: P1`）的原因。拆成两个 adapter 换回可测性，
- * 而不是继续注释「等 mockk 升级」。
+ * `DirectRecordWriter` 的三步写入（建审计行 → 写队列行 → 回填 `status` + `linked_client_id`）
+ * 由 `DirectRecordWriterTest` **直接驱动**并逐行断言（含两表关联键）。
+ * 本类注入的是匿名 `object : RecordWriter`：它只关心入账 module 自己的顺序与字段，
+ * 用 fake 记录调用序列（`write` / `confirm-record` / `schedule` / `widget` / `receipt`）
+ * 才能断言到「AUTO 把 streak 插在排调度与刷 widget 之间」这种次序不变量。
  *
- * ⚠️ 本类因此**不覆盖**事务回滚（那要 Robolectric/Room 集成测试）；
- * 「三步写在一个事务里」这条由 `RoomRecordWriter` 的实现保证，不由本类保证。
+ * ⚠️ 因此「第三步真的回填了审计记录」在本类**看不到**——若有人删掉
+ * `RecordWriter.applyRecordWrite` 的第三步，本类**仍然全绿**。
+ * 这正是收口当时留下的覆盖缺口（类 KDoc 写着「为什么用 DirectRecordWriter」，
+ * 代码却注入的是匿名 object），已在架构候选 3 补上。
+ *
+ * ⚠️ 本类同样**不覆盖**事务回滚（那要 Robolectric/Room 集成测试）；
+ * 「三步写在一个事务里」这条由生产 [com.aibill.android.data.queue.RoomRecordWriter]
+ * 的实现保证，不由本类保证。
  *
  * ## 时钟是注入的
  *
@@ -109,17 +119,24 @@ class RecordIntakeTest {
                 val newId = write.newRecord?.also { insertedRecords += it }?.let { 7L }
                 insertedRows += write.pending
                 // 回填既有审计记录这一步由 DirectRecordWriter 做，这里只记顺序
+                // （第三步本身由 DirectRecordWriterTest 断言）
                 if (write.confirmRecordId != null || newId != null) calls += "confirm-record"
                 return newId
             }
         }
+        intake = buildIntake(writer)
+    }
+
+    /** 真实实现 + 换掉写入器（其余依赖仍来自 setUp 的 stub）。 */
+    private fun buildIntake(writer: RecordWriter): RecordIntake {
         val clock = object : RecordClock {
             override fun now(): RecordMoment = RecordMoment.of(fixedInstant, fixedZone)
         }
 
-        intake = RecordIntakeImpl(
+        return RecordIntakeImpl(
             context = context,
             recordWriter = writer,
+            syncQueue = SyncQueueImpl(mockk(relaxed = true), context),
             recordClock = clock,
             userPreferences = userPreferences,
             categoryLearningEngine = learningEngine,
@@ -222,6 +239,9 @@ class RecordIntakeTest {
 
         val row = onlyRow()
         assertEquals(outcome.clientId, row.clientId)
+        // 新建审计行的 id 要随结果回传（它就是回执的通知 id / 撤销的定位键）
+        assertEquals(7L, outcome.recordId)
+        assertTrue(outcome.syncScheduled)
         assertTrue(row.clientId.isNotBlank(), "clientId 是幂等与撤销的唯一凭据")
         assertEquals(3200, row.amount)
         assertEquals("expense", row.type)
@@ -385,10 +405,10 @@ class RecordIntakeTest {
     }
 
     @Test
-    @DisplayName("批量确认：每笔不排调度，循环结束后由 scheduleBatchSync 统一排一次")
+    @DisplayName("批量确认：每笔不排调度，结果里如实报告「没排」，由批量调用方收尾排一次")
     fun `batch confirm defers a single sync`() = runTest {
         repeat(3) { i ->
-            intake.intake(
+            val outcome = intake.intake(
                 RecordIntent.NotificationCenterConfirm(
                     recordId = i.toLong(),
                     packageName = "com.tencent.mm",
@@ -398,16 +418,73 @@ class RecordIntakeTest {
                     scheduling = SyncScheduling.DEFERRED,
                 )
             )
+            // A3：入账入口自己回答「本笔排了没排」，调用方不再需要记住调一个收尾方法
+            assertFalse(outcome.syncScheduled, "DEFERRED 的本笔必须如实报告未排调度")
         }
 
         // 逐笔只写库 + 刷 widget；把 1 次入队变成 N 次就是行为变更
         assertFalse(calls.contains("schedule"), "DEFERRED 时每笔都不排调度")
         assertEquals(3, insertedRows.size)
         assertEquals(3, calls.count { it == "widget" })
+    }
 
-        calls.clear()
-        intake.scheduleBatchSync()
-        assertEquals(listOf("schedule"), calls)
+    @Test
+    @DisplayName("单条确认与其它意图：结果里如实报告「已排调度」")
+    fun `immediate intents report that sync was scheduled`() = runTest {
+        val single = intake.intake(
+            RecordIntent.NotificationCenterConfirm(
+                recordId = 1L,
+                packageName = "com.tencent.mm",
+                amount = 100,
+                type = "expense",
+                description = "单条",
+            )
+        )
+        val offline = intake.intake(
+            RecordIntent.ManualOffline(
+                Transaction(
+                    clientId = "C-1",
+                    type = TransactionType.EXPENSE,
+                    amount = 100,
+                    date = "2026-07-05",
+                )
+            )
+        )
+
+        assertTrue(single.syncScheduled)
+        assertTrue(offline.syncScheduled)
+        // 通知中心确认不改既有审计行 → 没有新建的审计 id 可回传
+        assertNull(single.recordId)
+    }
+
+    @Test
+    @DisplayName("A2：写入器没回传审计记录 id 时，宁可不发回执也不拿假 id 去盖真实通知")
+    fun `auto intake never fabricates a record id for the receipt`() = runTest {
+        // 历史实现是 `.orZero()`：writer 漏返回 id → recordId=0 → 用 id=0 发一条通知，
+        // 把别的通知覆盖掉，用户点「撤销」会撤销错账。
+        val silentWriter = object : RecordWriter {
+            override suspend fun write(write: RecordWrite): Long? {
+                calls += "write"
+                insertedRows += write.pending
+                return null
+            }
+        }
+
+        val outcome = buildIntake(silentWriter).intake(
+            RecordIntent.NotificationAuto(
+                captured = capturedNotification(),
+                amount = 3200,
+                type = "expense",
+                categoryId = 7,
+                description = "午餐",
+            )
+        )
+
+        assertNull(outcome.recordId, "拿不到 id 就如实返回 null")
+        assertFalse(calls.contains("receipt"), "没有 id 就不发回执：宁可没有回执，也不能盖掉真实通知")
+        // 其余步骤照旧：账仍然落库、照排调度、照刷 widget、照学习
+        assertEquals(1, insertedRows.size)
+        assertEquals(listOf("write", "schedule", "widget"), calls)
     }
 
     // ═══════════════════════════════════════════════════════════════

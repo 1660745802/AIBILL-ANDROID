@@ -1,34 +1,31 @@
 package com.aibill.android.data.repository
 
-import android.content.Context
-import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
 import com.aibill.android.data.remote.dto.request.TransactionItemRequest
 import com.aibill.android.data.remote.dto.response.TransactionDto
 import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.Result
-import com.aibill.android.domain.model.SyncQueueStatus
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.domain.queue.SyncQueue
 import com.aibill.android.domain.record.RecordIntent
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.repository.TransactionPage
 import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
-import com.aibill.android.service.SyncScheduler
-import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * 服务端那侧的账。**不再持有离线队列**：快照、排调度、清空、401 恢复全归
+ * [SyncQueue]，本类因此也不再需要 `Context` 与 `PendingTransactionDao`。
+ */
 @Singleton
 class TransactionRepositoryImpl @Inject constructor(
     private val transactionApi: TransactionApi,
-    private val pendingTransactionDao: PendingTransactionDao,
     private val recordIntake: RecordIntake,
-    @ApplicationContext private val context: Context,
 ) : TransactionRepository {
 
     override suspend fun createTransactions(items: List<Transaction>): Result<List<Transaction>> {
@@ -55,11 +52,11 @@ class TransactionRepositoryImpl @Inject constructor(
      * 排同步失败的处置（只记日志、不回滚、不抛出，理由见 `RecordIntakeImpl` 的类 KDoc）
      * 都已下沉到那里；下面四条契约**行为保持不变**，只是换了实现位置。
      *
-     * ## 语义边界：Success 只代表「已入队」
+     * ## 语义边界：已入队 ≠ 已上传
      *
-     * [SyncScheduler.scheduleSyncIfNeeded] 只是把 [SyncWorker] 入队
-     * （`NetworkType.CONNECTED` 约束 + unique work 串行），**不代表已上传**。
-     * 真实结果由队列状态与横幅呈现；调用方不得据此改写成「已同步/已上传」。
+     * 排调度由入账 module 交给 [SyncQueue]（`NetworkType.CONNECTED` 约束 +
+     * unique work 串行），**不代表已上传**。真实结果由队列快照与横幅呈现；
+     * 调用方不得据此改写成「已同步/已上传」。
      *
      * ## 失败策略：只记日志，绝不回滚、绝不抛出
      *
@@ -72,7 +69,7 @@ class TransactionRepositoryImpl @Inject constructor(
      *
      * ## 副作用：批量离线记账会排出多个 worker
      *
-     * [SyncScheduler.scheduleSyncIfNeeded] 用 `APPEND_OR_REPLACE`，连录 N 笔
+     * [SyncQueue.requestSync] 用 `APPEND_OR_REPLACE`，连录 N 笔
      * 离线账就入队 N 个 worker；第 1 个跑完 `getAllPending()` 清空队列后，
      * 第 2…N 个各自再取一次空队列并 `Result.success()` 早退。**不造成重复上传**
      * （队列已空，且服务端按 `clientId` 的 `duplicates[]` 幂等），只是多几次
@@ -145,21 +142,6 @@ class TransactionRepositoryImpl @Inject constructor(
             is Result.Success -> Result.Success(Unit)
             is Result.Error -> response
             is Result.Loading -> response
-        }
-    }
-
-    override fun observeSyncStatus(): Flow<SyncQueueStatus> =
-        pendingTransactionDao.observeSyncStatus()
-
-    override suspend fun syncPending(): Result<Unit> {
-        // PR 修复：原实现是空 stub，直接返回 Success 但啥也不做，导致
-        // HomeViewModel.triggerSync() 误以为同步完成。真实同步在 [SyncWorker] 中执行，
-        // 此处通过 [SyncScheduler] 入队 WorkManager，状态由 WorkInfo 流转。
-        return try {
-            SyncScheduler.scheduleSyncIfNeeded(context)
-            Result.Success(Unit)
-        } catch (e: Exception) {
-            Result.Error(-2, "触发同步失败: ${e.message}")
         }
     }
 

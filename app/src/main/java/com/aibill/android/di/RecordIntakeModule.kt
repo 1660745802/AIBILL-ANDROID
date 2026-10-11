@@ -1,13 +1,8 @@
 package com.aibill.android.di
 
-import com.aibill.android.data.local.dao.NotificationRecordDao
-import com.aibill.android.data.local.dao.PendingTransactionDao
-import com.aibill.android.data.local.db.AppDatabase
 import com.aibill.android.data.record.RecordClock
 import com.aibill.android.data.record.RecordIntakeImpl
 import com.aibill.android.data.record.RecordMoment
-import com.aibill.android.data.record.RecordWriter
-import com.aibill.android.data.record.RoomRecordWriter
 import com.aibill.android.domain.record.RecordIntake
 import dagger.Module
 import dagger.Provides
@@ -18,21 +13,12 @@ import javax.inject.Singleton
 /**
  * 入账 module 的装配。
  *
- * ⚠️ [RecordWriter] 的生产绑定是 [RoomRecordWriter]（Room 真事务）；
- * [com.aibill.android.data.record.DirectRecordWriter] 只出现在单测里，**不在此绑定**——
- * 它不提供跨表原子性，误接到生产构建上就是数据不一致。
+ * 入库的跨表写入器（[com.aibill.android.data.queue.RecordWriter]）已随离线队列
+ * 一起收进 `di/QueueModule`，入账侧不再直接持有它。
  */
 @Module
 @InstallIn(SingletonComponent::class)
 object RecordIntakeModule {
-
-    @Provides
-    @Singleton
-    fun provideRecordWriter(
-        database: AppDatabase,
-        pendingTransactionDao: PendingTransactionDao,
-        notificationRecordDao: NotificationRecordDao,
-    ): RecordWriter = RoomRecordWriter(database, pendingTransactionDao, notificationRecordDao)
 
     /**
      * 系统时钟。抽成接口只为单测能钉死 `date` / `time` / `client_created_at`

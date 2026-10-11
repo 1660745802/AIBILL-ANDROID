@@ -4,7 +4,8 @@ import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.PendingTransactionEntity
-import com.aibill.android.data.record.DirectRecordWriter
+import com.aibill.android.data.queue.DirectRecordWriter
+import com.aibill.android.data.queue.SyncQueueImpl
 import com.aibill.android.data.record.RecordClock
 import com.aibill.android.data.record.RecordIntakeImpl
 import com.aibill.android.data.record.RecordMoment
@@ -15,7 +16,7 @@ import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakTracker
 import com.aibill.android.service.NotificationRulesManager
-import com.aibill.android.service.SyncScheduler
+import com.aibill.android.data.queue.SyncScheduler
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
@@ -34,9 +35,10 @@ import org.junit.jupiter.api.Test
  *
  * ## 为什么单独一个文件（而不是追加进 `TransactionRepositorySyncPendingTest`）
  *
- * 那个文件的主题是**「谁触发的同步」**（`syncPending()` 的入队/错误契约），
- * 本文件的主题是**「离线落库之后发生了什么」**（落库 + 排调度 + 失败不回滚）。
- * 两者断言互不相干；挤在一起会让后来者改同步触发逻辑时顺手看坏离线落库语义。
+ * 架构候选 3 删掉了那个文件：`TransactionRepository.syncPending()` 已归入离线队列
+ * module，它的入队/错误契约现在由 `SyncQueueImplTest` 钉（`SyncRequest.Enqueued` /
+ * `Rejected`）。本文件的主题是**「离线落库之后发生了什么」**（落库 + 排调度 + 失败不回滚），
+ * 断言互不相干。
  *
  * ## 为什么要 mock `SyncScheduler`（object，不是 static）
  *
@@ -50,7 +52,7 @@ import org.junit.jupiter.api.Test
  * [com.aibill.android.domain.record.RecordIntake]，本类组装**真实的**入账实现
  * （落库走 `DirectRecordWriter`，只把 Room 事务换成直写），断言仍打在真实实现上。
  *
- * ## Success = 已入队，不是已同步
+ * ## 已入队 ≠ 已同步
  *
  * 本类任何文案/断言都**不得**出现「已同步 / 已上传」：`scheduleSyncIfNeeded` 只是
  * 把 `SyncWorker` 入队（`NetworkType.CONNECTED` + unique work 串行），真实上传结果
@@ -76,9 +78,7 @@ class TransactionRepositoryCreateOfflineTest {
 
     private fun repo() = TransactionRepositoryImpl(
         transactionApi = transactionApi,
-        pendingTransactionDao = pendingDao,
         recordIntake = intake(),
-        context = context,
     )
 
     /**
@@ -88,6 +88,7 @@ class TransactionRepositoryCreateOfflineTest {
     private fun intake(): RecordIntake = RecordIntakeImpl(
         context = context,
         recordWriter = DirectRecordWriter(pendingDao, notificationRecordDao),
+            syncQueue = SyncQueueImpl(pendingDao, context),
         recordClock = object : RecordClock {
             override fun now(): RecordMoment = RecordMoment.system()
         },

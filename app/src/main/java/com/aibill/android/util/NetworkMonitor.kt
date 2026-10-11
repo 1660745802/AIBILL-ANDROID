@@ -5,7 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import com.aibill.android.service.SyncScheduler
+import com.aibill.android.domain.queue.SyncQueue
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,7 +14,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 网络状态监听：网络从「不可用 → 可用」时触发一次 [SyncScheduler]，
+ * 网络状态监听：网络从「不可用 → 可用」时触发一次 [SyncQueue.requestSync]，
  * 让离线队列自动上传（README「离线可用：联网后 WorkManager 自动同步」的实现处）。
  *
  * ⚠️ **必须在本进程内被注入一次，否则本类完全不会运行。**
@@ -25,7 +25,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class NetworkMonitor @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val syncQueue: SyncQueue,
 ) {
 
     private val connectivityManager =
@@ -57,13 +58,16 @@ class NetworkMonitor @Inject constructor(
      * 统一的在线状态入口：**只在「不可用 → 可用」的跳变时**排一次同步。
      *
      * 之前 [onCapabilitiesChanged] 每次都排（计费切换 / WiFi↔蜂窝切换 / 网络能力刷新
-     * 都会回调），配合 SyncScheduler 的 `APPEND_OR_REPLACE` 会让 unique work 链不断增长。
+     * 都会回调），配合 `APPEND_OR_REPLACE` 会让 unique work 链不断增长。
+     *
+     * 排调度本身走离线队列 module（[SyncQueue.requestSync]），与入账、手动点同步、
+     * 同号重登共用同一个入口；它不抛异常，WorkManager 不可用时只记日志。
      */
     private fun onOnlineStateChanged(nowOnline: Boolean) {
         val wasOnline = _isOnline.value
         _isOnline.value = nowOnline
         if (nowOnline && !wasOnline) {
-            SyncScheduler.scheduleSyncIfNeeded(context)
+            syncQueue.requestSync()
         }
     }
 

@@ -1,10 +1,22 @@
 package com.aibill.android.domain.repository
 
 import com.aibill.android.domain.model.Result
-import com.aibill.android.domain.model.SyncQueueStatus
 import com.aibill.android.domain.model.Transaction
-import kotlinx.coroutines.flow.Flow
+import com.aibill.android.domain.record.RecordIntake
 
+/**
+ * **服务端那侧**的账。
+ *
+ * ## 离线队列不在这里
+ *
+ * 队列的读取与排调度归 [com.aibill.android.domain.queue.SyncQueue]（离线队列 module）。
+ * 收口前这里有 `observeSyncStatus()` 与 `syncPending()`：前者只是 DAO 的一行转发，
+ * 后者只是「排调度 + 包一层 `Result`」，两者都把「已入队 ≠ 已上传」这句告诫
+ * 复制在各自的 KDoc 里，越传越没人看。
+ *
+ * 手工记账落离线（[createTransactionOffline]）仍走本接口：它表达的是
+ * 「这笔账要成为本地事实」的用户意图，装配细节交给 [RecordIntake]。
+ */
 interface TransactionRepository {
 
     suspend fun createTransactions(items: List<Transaction>): Result<List<Transaction>>
@@ -29,19 +41,6 @@ interface TransactionRepository {
     suspend fun getTrash(): Result<List<Transaction>>
     suspend fun restoreTransaction(id: Int): Result<Unit>
     suspend fun permanentDeleteTransaction(id: Int): Result<Unit>
-
-    /**
-     * 离线队列的原子快照（pending / failed 两个分区，见 [SyncQueueStatus]）。
-     *
-     * 唯一的读取口径，取代了原 `observePendingCount(): Flow<Int>`——
-     * 后者只数 `pending`，把 failed 行的存在与否完全交给调用方猜，
-     * 于是横幅在「全部行都同步失败」时直接消失，等价于告诉用户
-     * 「没有未同步的数据」。两个数字必须来自同一条聚合查询，
-     * 才不会在两次独立读取之间出现不一致的中间状态。
-     */
-    fun observeSyncStatus(): Flow<SyncQueueStatus>
-
-    suspend fun syncPending(): Result<Unit>
 
     suspend fun getTags(): Result<List<String>>
 }

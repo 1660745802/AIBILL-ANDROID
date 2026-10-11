@@ -3,7 +3,9 @@ package com.aibill.android.service
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.PendingTransactionEntity
-import com.aibill.android.data.record.DirectRecordWriter
+import com.aibill.android.data.queue.DirectRecordWriter
+import com.aibill.android.data.queue.SyncQueueImpl
+import com.aibill.android.data.queue.SyncScheduler
 import com.aibill.android.data.record.RecordClock
 import com.aibill.android.data.record.RecordIntakeImpl
 import com.aibill.android.data.record.RecordMoment
@@ -41,10 +43,10 @@ import android.content.Context
  * ## 架构候选 1 之后的变化（不是行为变化）
  *
  * 写入路径已收进 [RecordIntake] module，本类改为组装**真实的** [RecordIntakeImpl]
- * （落库走 `DirectRecordWriter`，只把 Room 事务换成直写），因此断言仍打在
- * 真实的入账实现上，而不是 mock 掉入账入口。
- * 排同步不再经 `TransactionRepository.syncPending()`（它内部做的就是调
- * `SyncScheduler.scheduleSyncIfNeeded` + 捕异常），改为直接断言 `SyncScheduler`；
+ * （落库走 `DirectRecordWriter`，只把 Room 事务换成直写；排调度走 `SyncQueueImpl`），
+ * 因此断言仍打在真实的入账实现上，而不是 mock 掉入账入口。
+ * 排调度不再经 `TransactionRepository.syncPending()`（候选 1 起绕开，候选 3 起该方法已删除），
+ * 而是经离线队列 module 内部落到 `SyncScheduler`；断言仍直接打在 `SyncScheduler` 上，
  * 这也让「入队抛异常」这条原先不可测的分支变成了可测分支。
  *
  * ## 锁什么
@@ -88,6 +90,7 @@ class ExternalActionReceiverTest {
         recordIntake = RecordIntakeImpl(
             context = context,
             recordWriter = DirectRecordWriter(pendingDao, notificationRecordDao),
+            syncQueue = SyncQueueImpl(pendingDao, context),
             recordClock = object : RecordClock {
                 override fun now(): RecordMoment = RecordMoment.system()
             },

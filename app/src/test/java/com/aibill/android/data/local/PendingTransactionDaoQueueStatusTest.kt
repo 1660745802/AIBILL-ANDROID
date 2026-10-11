@@ -31,7 +31,7 @@ import org.robolectric.annotation.Config
  *
  * 这是本切片唯一真正在写 SQL 的地方。用 mockk 打桩 `dao.observeSyncStatus()`
  * 只能证明「ViewModel 会转发一个 Flow」，**无法证明 SQL 数对了**——
- * 而历史事故（`getPendingCount` 名义 unsynced、实现只数 pending）恰好就藏在
+ * 而历史事故（一个叫 unsynced、实际只数 pending 的计数方法）恰好就藏在
  * mock 覆盖不到的 SQL 里。三个用例各自对应一个可被变异破坏的点：
  *
  * - `1 pending + 1 failed + 1 synced → (1,1)`：pending 列若混入 failed 必红；
@@ -124,9 +124,9 @@ class PendingTransactionDaoQueueStatusTest {
         // 两分区并存时互不吞并
         assertEquals(false, status.isEmpty)
 
-        // 与既有口径对齐：failed 会计入 getAnyUnsyncedCount，但不计入 getPendingCount
+        // 与既有口径对齐：failed 会计入 getAnyUnsyncedCount，但**不会**被自动续传捞起
         assertEquals(2, dao.getAnyUnsyncedCount())
-        assertEquals(0, dao.getPendingCount())
+        assertEquals(0, dao.getAllPending().size)
     }
 
     /**

@@ -6,7 +6,6 @@ import com.aibill.android.data.repository.AuthRepositoryImpl
 import com.aibill.android.data.repository.CategoryRepositoryImpl
 import com.aibill.android.data.repository.CategoryRuleRepositoryImpl
 import com.aibill.android.data.repository.NotificationRecordRepositoryImpl
-import com.aibill.android.data.repository.PendingTransactionRepositoryImpl
 import com.aibill.android.data.repository.StatsRepositoryImpl
 import com.aibill.android.data.repository.StreakRepositoryImpl
 import com.aibill.android.data.repository.TemplateRepositoryImpl
@@ -17,7 +16,6 @@ import com.aibill.android.domain.repository.AuthRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.CategoryRuleRepository
 import com.aibill.android.domain.repository.NotificationRecordRepository
-import com.aibill.android.domain.repository.PendingTransactionRepository
 import com.aibill.android.domain.repository.StatsRepository
 import com.aibill.android.domain.repository.StreakRepository
 import com.aibill.android.domain.repository.TemplateRepository
@@ -75,7 +73,6 @@ abstract class RepositoryModule {
     @Singleton
     abstract fun bindNotificationRecordRepository(impl: NotificationRecordRepositoryImpl): NotificationRecordRepository
 
-    @Binds
-    @Singleton
-    abstract fun bindPendingTransactionRepository(impl: PendingTransactionRepositoryImpl): PendingTransactionRepository
+    // 离线队列（pending_transactions）的绑定不在这里：它归 `di/QueueModule` 的 SyncQueue。
+    // 收口前这里是 `bindPendingTransactionRepository`，一个 4 方法、每个方法一行转发的浅接口。
 }

@@ -6,8 +6,10 @@ import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.queue.SyncQueue
 import com.aibill.android.domain.record.RecordIntent
 import com.aibill.android.domain.record.RecordIntake
+import com.aibill.android.domain.record.RecordOutcome
 import com.aibill.android.domain.record.SyncScheduling
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.NotificationRecordRepository
@@ -34,6 +36,7 @@ import javax.inject.Inject
 class NotificationCenterViewModel @Inject constructor(
     private val notificationRepository: NotificationRecordRepository,
     private val recordIntake: RecordIntake,
+    private val syncQueue: SyncQueue,
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
     private val categoryLearningEngine: CategoryLearningEngine,
@@ -169,8 +172,9 @@ class NotificationCenterViewModel @Inject constructor(
     /**
      * 把一条通知翻译成入账意图。写库、排同步、刷 widget 都在入账 module 里。
      *
-     * @param scheduling 批量确认传 [SyncScheduling.DEFERRED]：循环结束后才统一排一次同步
-     *   （历史行为——每笔一次排调度会把 1 次 WorkManager 入队变成 N 次）。
+     * @param scheduling 批量确认传 [SyncScheduling.DEFERRED]：本笔不排调度，
+     *   返回的 [RecordOutcome.syncScheduled] 会是 false，调用方在循环结束后排一次。
+     * @return 入账结果（批量确认靠它知道要不要收尾排调度）
      */
     private suspend fun insertTransaction(
         recordId: Long,
@@ -181,13 +185,13 @@ class NotificationCenterViewModel @Inject constructor(
         categoryId: Int? = null,
         tags: List<String> = emptyList(),
         scheduling: SyncScheduling = SyncScheduling.IMMEDIATE,
-    ) {
+    ): RecordOutcome {
         val typeKey = if (type == "income") "income" else "expense"
         val category = categoryId?.let { id ->
             _categoriesByType.value[typeKey]?.firstOrNull { it.id == id }
         }
 
-        recordIntake.intake(
+        return recordIntake.intake(
             RecordIntent.NotificationCenterConfirm(
                 recordId = recordId,
                 packageName = packageName,
@@ -217,6 +221,10 @@ class NotificationCenterViewModel @Inject constructor(
                 val items = pendingNotifications.value
                 var confirmed = 0
                 var skipped = 0
+                // 本批是否有入账没排调度（DEFERRED）：有就要在循环结束后补排一次。
+                // 排多少笔由入账 module 决定，这里只根据它返回的结果收尾——
+                // 收口前是一个独立的 `recordIntake.scheduleBatchSync()`，漏调 = 这一批永远不自动上传。
+                var needsTailSync = false
                 items.forEach { item ->
                     val record = notificationRepository.findById(item.id) ?: return@forEach
 
@@ -228,7 +236,7 @@ class NotificationCenterViewModel @Inject constructor(
                     }
 
                     // 逐条入账；排调度统一推迟到循环结束（历史行为，见 insertTransaction）
-                    insertTransaction(
+                    val outcome = insertTransaction(
                         recordId = item.id,
                         type = record.parsedType ?: "expense",
                         amountCents = amount,
@@ -236,10 +244,15 @@ class NotificationCenterViewModel @Inject constructor(
                         packageName = record.packageName,
                         scheduling = SyncScheduling.DEFERRED,
                     )
+                    if (!outcome.syncScheduled) needsTailSync = true
                     confirmed++
                 }
 
-                recordIntake.scheduleBatchSync()
+                // 循环结束后统一排一次（时机与数量不变：仍然只排 1 次）。
+                // ⚠️ 只有真的入过账才排：全部跳过（金额无效 / 记录已不存在）时不排一次空同步。
+                if (needsTailSync) {
+                    syncQueue.requestSync()
+                }
 
                 val msg = when {
                     confirmed == 0 && skipped > 0 -> "无可自动确认的记录，$skipped 条需手动填写金额"

@@ -35,9 +35,9 @@ class ExternalActionReceiver : BroadcastReceiver() {
      * 入账（记一笔）唯一入口。clientId 生成、实体装配、跨表事务与排同步都在里面，
      * 本类只表达「静默入账这一笔」的意图（架构候选 1 收口）。
      *
-     * 排同步不再绕 `TransactionRepository.syncPending()`：`syncPending()` 内部做的
-     * 就是「调 `SyncScheduler.scheduleSyncIfNeeded` + 捕异常返回 `Result`」，
-     * 而失败处置（只记日志、不回滚、不抛出）已经下沉到入账 module 统一承担。
+     * 排同步不再绕 `TransactionRepository.syncPending()`（该方法已在架构候选 3 删除）：
+     * 排调度归离线队列 module 的 `SyncQueue.requestSync()`，失败处置
+     * （只记日志、不回滚、不抛出）由入账 module 统一承担。
      */
     @Inject lateinit var recordIntake: RecordIntake
 
