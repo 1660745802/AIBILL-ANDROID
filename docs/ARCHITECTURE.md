@@ -800,10 +800,24 @@ module 返回实际结果（`Retained` / `Cleared`）。4 张表的清单只在
 - **`testReleaseUnitTest` 有 9 个既有失败**（在收口队列 module 之前的 tip `c35ce3e` 与之后各跑一次，数字一致）：
   `TransactionsPagingAppendTest`(2) + `PendingSyncBannerRenderTest`(7)，全部抛
   `RuntimeException: Unable to resolve activity for Intent { … androidx.activity.ComponentActivity }`，
-  **发生在用例体之前**（`ActivityScenario.launch` 起不来），属 release 变体下 Robolectric
-  拉不起 Compose 测试宿主的基建问题。**根因未查明**；与 CI 的 `testDebugUnitTest` 无关
-  （CI 只跑 debug 变体 + `koverVerify`）。看到这 9 个红**不要**当成某次改动的回归——
-  先用 `git stash` 在改动前的提交上复跑确认。
+  **发生在用例体之前**（`ActivityScenario.launch` 起不来）。**根因已查明**：
+  `app/build.gradle.kts:173` 的 `debugImplementation(libs.compose.ui.test.manifest)`。
+  `androidx.compose.ui:ui-test-manifest` 会贡献一条清单声明
+  `<activity android:name="androidx.activity.ComponentActivity" android:exported="true" />`，
+  但它只进 **debug 变体**的合并清单；AGP 给单测的配置指向的是**被测变体**的
+  `packaged_manifests/<variant>/…/AndroidManifest.xml`，于是：
+  - debug 合并清单：有该 activity 声明（1 处）→ 用 `createComposeRule()` 的测试能起宿主；
+  - release 合并清单：0 处 → 同样这些测试在 release 变体下 Robolectric 解析不到宿主，
+    在用例体之前就炸。
+  全仓用 Compose 测试规则的只有上面那两个套件，正好就是失败的 9 个用例；`:168` 的
+  `testImplementation(libs.compose.ui.test.manifest)` 只把类放上**测试 classpath**
+  （所以编得过、只在运行时炸），不参与清单合并。
+
+  **为什么不修**：把这个依赖挪成 `implementation` 就等于往 **release APK** 里塞一个
+  `android:exported="true"` 的空 activity（任何应用都能拉起它）。debug-only 才是正确的
+  安全姿态，不是疏漏。因此 Compose UI 单测只在 debug 变体跑（CI 跑的正是
+  `testDebugUnitTest` + `koverVerify`），`testReleaseUnitTest` **不作为门禁**。
+  看到这 9 个失败**不要**当成某次改动的回归——那是变体配置决定的既有事实。
 - **跨表写入的事务回滚未覆盖**：生产用 `RoomRecordWriter`（Room 真事务），单测用 `DirectRecordWriter`（直写），
   因为 mockk 1.13.13 跑不动 `RoomDatabase.withTransaction { }` 的 suspend lambda。
   因此「三步写在一个事务里、中途失败不留下半行」这条**没有自动化测试**（见 [§2.3](#23-入账recordintake)）。
