@@ -57,18 +57,6 @@ class AppLogger @Inject constructor(
         }
     }
 
-    /** 清理所有日志（DB记录 + cache文件）— 用户手动触发 */
-    fun cleanAllLogs(context: android.content.Context? = null) {
-        scope.launch {
-            try {
-                appLogDao.cleanBefore(System.currentTimeMillis()) // 清全部
-                context?.cacheDir?.listFiles()?.filter {
-                    it.name.startsWith("aibill_log_")
-                }?.forEach { it.delete() }
-            } catch (_: Exception) {}
-        }
-    }
-
     /** App 打开时自动清理 2 天前的日志 + 旧日志文件，并按条数上限收缩 */
     /** App 打开时自动清理 2 天前的日志 */
     fun autoCleanOldLogs(context: android.content.Context? = null) {

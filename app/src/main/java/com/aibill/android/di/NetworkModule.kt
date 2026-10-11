@@ -5,7 +5,6 @@ import com.aibill.android.data.remote.api.AiApi
 import com.aibill.android.data.remote.api.AuthApi
 import com.aibill.android.data.remote.api.CategoryApi
 import com.aibill.android.data.remote.api.NotificationRulesApi
-import com.aibill.android.data.remote.api.SettingsApi
 import com.aibill.android.data.remote.api.StatsApi
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.interceptor.AuthInterceptor
@@ -111,11 +110,6 @@ object NetworkModule {
     @Singleton
     fun provideCategoryApi(retrofit: Retrofit): CategoryApi =
         retrofit.create(CategoryApi::class.java)
-
-    @Provides
-    @Singleton
-    fun provideSettingsApi(retrofit: Retrofit): SettingsApi =
-        retrofit.create(SettingsApi::class.java)
 
     @Provides
     @Singleton

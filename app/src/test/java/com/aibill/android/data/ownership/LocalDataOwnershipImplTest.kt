@@ -120,7 +120,6 @@ class LocalDataOwnershipImplTest {
         assertEquals(LocalOwnership(accountId = 42), current)
         assertEquals(true, current.isSameAccount(42))
         assertEquals(false, current.isSameAccount(7))
-        verify(exactly = 0) { tokenManager.getUserId() }
     }
 
     /** 判据不可知（首次安装 / 老版本无此字段）时一律判否 → 保守走换号清空。 */

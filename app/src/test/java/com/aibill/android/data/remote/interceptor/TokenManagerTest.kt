@@ -48,6 +48,9 @@ class TokenManagerTest {
     /** 生产用的 key 是 private，这里用字面量访问；用 round-trip 断言证明 key 本身没写错。 */
     private val keySessionEndReason = "session_end_reason"
     private val keyLastKnownUserId = "last_known_user_id"
+    private val keyUserId = "user_id"
+    private val keyUsername = "username"
+    private val keyNickname = "nickname"
 
     @Before
     fun setUp() {
@@ -73,9 +76,9 @@ class TokenManagerTest {
         )
 
         assertEquals("jwt-xyz", tokenManager.getToken())
-        assertEquals(42, tokenManager.getUserId())
-        assertEquals("alice", tokenManager.getUsername())
-        assertEquals("Alice", tokenManager.getNickname())
+        assertEquals(42, prefs.getInt(keyUserId, -1))
+        assertEquals("alice", prefs.getString(keyUsername, null))
+        assertEquals("Alice", prefs.getString(keyNickname, null))
         assertEquals(42, tokenManager.getLastKnownUserId())
         assertTrue(tokenManager.hasToken())
         // 登录成功 = 上一次会话结束已被处理完，标记必须清掉，
@@ -85,12 +88,10 @@ class TokenManagerTest {
     }
 
     @Test
-    fun `saveSession with null nickname stores empty string and reads back as null`() = runBlocking {
-        // getNickname() 对空串返回 null（takeIf { isNotEmpty() }）——保持既有语义
+    fun `saveSession with null nickname stores empty string`() = runBlocking {
         tokenManager.saveSession("jwt-1", 7, "bob", nickname = null)
 
-        assertEquals("", prefs.getString("nickname", null))
-        assertNull(tokenManager.getNickname())
+        assertEquals("", prefs.getString(keyNickname, null))
     }
 
     // ==================== endSession：B6 的核心不变量 ====================
@@ -103,9 +104,9 @@ class TokenManagerTest {
 
         // session 被清
         assertNull(tokenManager.getToken())
-        assertNull(tokenManager.getUserId())
-        assertNull(tokenManager.getUsername())
-        assertNull(tokenManager.getNickname())
+        assertFalse(prefs.contains(keyUserId))
+        assertFalse(prefs.contains(keyUsername))
+        assertFalse(prefs.contains(keyNickname))
         assertFalse(tokenManager.hasToken())
         // 结束原因被持久化，供冷启动区分「主动退出」
         assertEquals(SessionEndReason.SIGNED_OUT, tokenManager.getSessionEndReason())
@@ -123,7 +124,7 @@ class TokenManagerTest {
         tokenManager.endSession(SessionEndReason.TOKEN_EXPIRED)
 
         assertNull(tokenManager.getToken())
-        assertNull(tokenManager.getUserId())
+        assertFalse(prefs.contains(keyUserId))
         assertEquals(SessionEndReason.TOKEN_EXPIRED, tokenManager.getSessionEndReason())
         assertEquals("token_expired", prefs.getString(keySessionEndReason, null))
         // 401 路径历史上一直保留 lastKnown（B6 之前的行为），不得回归
@@ -154,7 +155,7 @@ class TokenManagerTest {
         tokenManager.saveSession("jwt-2", 99, "carol", "Carol")
 
         assertEquals(99, tokenManager.getLastKnownUserId())
-        assertEquals("carol", tokenManager.getUsername())
+        assertEquals("carol", prefs.getString(keyUsername, null))
         assertNull(tokenManager.getSessionEndReason())
     }
 
@@ -185,7 +186,6 @@ class TokenManagerTest {
         assertNull(empty.getSessionEndReason())
         assertNull(empty.getLastKnownUserId())
         assertNull(empty.getToken())
-        assertNull(empty.getUserId())
         assertFalse(empty.hasToken())
     }
 }

@@ -137,10 +137,6 @@ class UserPreferences @Inject constructor(
     // --- Sync ---
     val lastSyncTime: Flow<Long?> = dataStore.data.map { it[Keys.LAST_SYNC_TIME] }
 
-    suspend fun setLastSyncTime(time: Long) {
-        dataStore.edit { it[Keys.LAST_SYNC_TIME] = time }
-    }
-
     // --- Hide from Recents ---
     val hideFromRecents: Flow<Boolean> = dataStore.data.map { it[Keys.HIDE_FROM_RECENTS] ?: false }
 
@@ -179,10 +175,6 @@ class UserPreferences @Inject constructor(
 
     // --- Automation Level ---
     val automationLevel: Flow<String> = dataStore.data.map { it[Keys.AUTOMATION_LEVEL] ?: "standard" }
-
-    suspend fun setAutomationLevel(level: String) {
-        dataStore.edit { it[Keys.AUTOMATION_LEVEL] = level }
-    }
 
     /**
      * 登出：只清除**用户身份信息**。

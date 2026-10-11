@@ -30,8 +30,8 @@ package com.aibill.android.domain.record
  * | [RecordIntent.NotificationCenterConfirm] | `NotificationCenterViewModel.insertTransaction` | [ReceiptPolicy.NONE] | 否 | 否 |
  * | [RecordIntent.ExternalQuickRecord] | `ExternalActionReceiver`（`auto_confirm` 静默入账） | [ReceiptPolicy.NONE] | 否 | 否 |
  *
- * 上表里的「否」多数是**历史事实而非疏漏**：批量确认本来就不预测不学习，
- * 弹窗确认与带备注确认的差异是长期存在的。收口只搬运，不统一——见各意图的 KDoc。
+ * 上表里的「否」多数是**历史事实而非疏漏**：弹窗确认与带备注确认的差异是长期存在的。
+ * 收口只搬运，不统一——见各意图的 KDoc。
  */
 interface RecordIntake {
 
@@ -202,16 +202,15 @@ sealed interface RecordIntent {
     }
 
     /**
-     * 通知中心确认：用户在通知中心页单条确认或批量确认。
+     * 通知中心确认：用户在通知中心页单条确认。
      *
      * 对应 `NotificationCenterViewModel.insertTransaction`（含 `confirmItem` /
-     * `confirmWithEdit`）与 `confirmAll` 的循环体：
+     * `confirmWithEdit`）：
      * - 分类由用户在界面上手选，因此 name/icon 由调用方从分类列表里查好带进来；
-     * - 批量确认不传分类与标签（保持「批量只认原样入账」）；
      * - **不预测分类、不学习**：学习仍在 `confirmWithEdit` 里显式做（用户主动改了分类才学）；
      * - 无回执。
      *
-     * 失败的那几条**仍留在待审池**，由调用方按条数汇报，不要把失败也算进「已确认」。
+     * 失败的那一条**仍留在待审池**，调用方 Toast 如实报错即可，不许谎称「已确认」。
      */
     data class NotificationCenterConfirm(
         val recordId: Long,

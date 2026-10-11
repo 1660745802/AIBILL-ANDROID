@@ -110,9 +110,6 @@ class NotificationCenterViewModel @Inject constructor(
     val pendingCount: StateFlow<Int> = notificationRepository.observePendingCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
-    private val _isConfirming = MutableStateFlow(false)
-    val isConfirming: StateFlow<Boolean> = _isConfirming.asStateFlow()
-
     fun confirmItem(id: Long) {
         viewModelScope.launch {
             val record = notificationRepository.findById(id) ?: return@launch
@@ -181,7 +178,7 @@ class NotificationCenterViewModel @Inject constructor(
     /**
      * 把一条通知翻译成入账意图。送服务端确认、落缓存、刷 widget 都在入账 module 里。
      *
-     * @return 入账结果；批量确认靠它数出「几条真的记上了」
+     * @return 入账结果；调用方据此决定是报成功还是如实报错
      */
     private suspend fun insertTransaction(
         recordId: Long,
@@ -216,49 +213,6 @@ class NotificationCenterViewModel @Inject constructor(
         viewModelScope.launch {
             notificationRepository.updateStatus(id, "ignored")
             _uiEvent.send(UiEvent.ShowToast("已忽略"))
-        }
-    }
-
-    fun confirmAll() {
-        viewModelScope.launch {
-            _isConfirming.value = true
-            try {
-                val items = pendingNotifications.value
-                var confirmed = 0
-                var failed = 0
-                var skipped = 0
-                items.forEach { item ->
-                    val record = notificationRepository.findById(item.id) ?: return@forEach
-
-                    // 跳过未识别出有效金额的记录，避免生成 0 元账单
-                    val amount = record.parsedAmount ?: 0
-                    if (amount <= 0) {
-                        skipped++
-                        return@forEach
-                    }
-
-                    // 逐条入账；失败的那几条原样留在待审池，只计数、不假装成功
-                    val outcome = insertTransaction(
-                        recordId = item.id,
-                        type = record.parsedType ?: "expense",
-                        amountCents = amount,
-                        description = record.parsedDescription,
-                        packageName = record.packageName,
-                    )
-                    if (outcome.recorded) confirmed++ else failed++
-                }
-
-                val msg = when {
-                    failed > 0 && confirmed == 0 -> "$failed 条记账失败，可稍后重试"
-                    failed > 0 -> "已确认 $confirmed 条，$failed 条记账失败"
-                    confirmed == 0 && skipped > 0 -> "无可自动确认的记录，$skipped 条需手动填写金额"
-                    skipped > 0 -> "已确认 $confirmed 条，$skipped 条需手动填写金额"
-                    else -> "已确认 $confirmed 条通知"
-                }
-                _uiEvent.send(UiEvent.ShowToast(msg))
-            } finally {
-                _isConfirming.value = false
-            }
         }
     }
 }

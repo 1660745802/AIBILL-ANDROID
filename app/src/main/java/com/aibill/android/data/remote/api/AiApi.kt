@@ -9,7 +9,4 @@ interface AiApi {
 
     @POST("ai/parse")
     suspend fun parse(@Body request: Map<String, String>): ApiResponse<AiParseResponseDto>
-
-    @POST("ai/chat")
-    suspend fun chat(@Body request: Map<String, String>): ApiResponse<Map<String, String>>
 }

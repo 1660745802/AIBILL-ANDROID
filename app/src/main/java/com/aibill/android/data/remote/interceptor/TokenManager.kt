@@ -69,7 +69,7 @@ class TokenManager internal constructor(
      * 据此判定「同账号重登」还是「换号」，从而决定**是否清空本地缓存**
      * （见 ARCHITECTURE §6.4）。
      *
-     * ⚠️ 为什么不能用 [getUserId]：401 / 登出时 [endSession] 会把整个
+     * ⚠️ 为什么不能用 session 里的 `user_id`：401 / 登出时 [endSession] 会把整个
      * session（含 user_id）清掉。而「Token 过期 → 重登」恰恰是最需要保住本地缓存的场景——
      * 若此时 user_id 已被抹掉，登录侧就只能保守地判定为「身份未知」，
      * 从而**删掉用户的本地缓存与通知审计**。Token 过期并不改变「这台设备上的用户是谁」，
@@ -104,10 +104,6 @@ class TokenManager internal constructor(
             .remove(KEY_SESSION_END_REASON)
             .commit()
     }
-
-    fun getUserId(): Int? = if (prefs.contains(KEY_USER_ID)) prefs.getInt(KEY_USER_ID, -1).takeIf { it >= 0 } else null
-    fun getUsername(): String? = prefs.getString(KEY_USERNAME, null)?.takeIf { it.isNotEmpty() }
-    fun getNickname(): String? = prefs.getString(KEY_NICKNAME, null)?.takeIf { it.isNotEmpty() }
 
     /**
      * 会话结束时的**唯一**入口：清空 token + 当前用户字段，

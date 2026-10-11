@@ -90,7 +90,7 @@ suspend lambda。**测试里跑的是 `DirectRecordWriter`，不提供原子性�
   ——泰语 locale 写出佛历年、阿拉伯语 locale 写出非 ASCII 数字，服务端会拒收。
 - `clientId` = UUID v4，是幂等与撤销的唯一凭据。
 
-**入账路径之间的差异是历史事实，不要顺手统一**（收口只搬运）：批量确认不预测分类不学习；
+**入账路径之间的差异是历史事实，不要顺手统一**（收口只搬运）：
 弹窗直接确认不学习、带备注确认才学；弹窗确认隐私档写死 `false` 而 AI 自动入账读偏好；
 AI 自动入账的 `source_detail` 走云控来源名映射、其余走硬编码；弹窗确认只写 `category_id`、
 通知中心确认冗余写 `category_name/category_icon`；静默入账不刷 widget；
@@ -151,7 +151,6 @@ L4 入库策略：信息完整 → 送服务端确认 → 入账 + 回执（带�
 - **金额分散在任意字段**：`EXTRA_TITLE/TEXT/BIG_TEXT/SUB_TEXT/INFO_TEXT` 都可能含金额，
   必须合并全文再解析，只取 `EXTRA_TEXT` 会解析成 0。
 - **`sourceDetail` 不要存全文**：它会同步到后端，存来源名（"微信支付"），全文可能含私聊内容。
-- **批量确认要跳过无金额记录**：否则生成 0 元账单同步到后端。单条确认有编辑对话框兜底，批量没有。
 - **收支类型不要硬编码**：确认通知的标题/图标按 `type` 显示，收款到账是 income。
 - **通知点击跳转**：`MainActivity` 必须 `launchMode="singleTop"`（否则重建 Activity 丢返回栈）；
   `navigate_to` extra 要一次性消费。

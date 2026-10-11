@@ -43,7 +43,6 @@ class ManualRecordViewModel @Inject constructor(
         val description: String = "",
         val date: String = LocalDate.now().toString(),
         val isSaving: Boolean = false,
-        val isExpanded: Boolean = false,
         val tags: List<String> = emptyList(),
         val availableTags: List<String> = emptyList(),
         /** AI 快捷输入 */
@@ -180,25 +179,6 @@ class ManualRecordViewModel @Inject constructor(
         _uiState.update { it.copy(amountText = newText, amountFen = parsed) }
     }
 
-    /**
-     * 结算当前表达式（把 `12+3` 算成 `15.00`）。
-     *
-     * ⚠️ 当前**没有 UI 调用点**——自绘数字键盘上没有「=」键（改版前也没有）。
-     * 保留是因为 [AmountUtils.parseExpression] 本身支持四则运算，
-     * 将来若在键盘上加运算符就必须接上它。删除前请确认没有外部依赖。
-     */
-    fun onAmountEquals() {
-        val current = _uiState.value.amountText
-        val parsed = AmountUtils.parseExpression(current)
-        if (parsed == null) {
-            // PR #30：解析失败给提示（PR §11.5 反馈底线）
-            viewModelScope.launch { _uiEvent.send(UiEvent.ShowToast("表达式无效")) }
-            return
-        }
-        val yuanStr = AmountUtils.fenToYuan(parsed)
-        _uiState.update { it.copy(amountText = yuanStr, amountFen = parsed) }
-    }
-
     fun onCategorySelected(id: Int) {
         _uiState.update { it.copy(selectedCategoryId = id) }
     }
@@ -261,10 +241,6 @@ class ManualRecordViewModel @Inject constructor(
 
     fun onDateChanged(date: String) {
         _uiState.update { it.copy(date = date) }
-    }
-
-    fun onExpandToggle() {
-        _uiState.update { it.copy(isExpanded = !it.isExpanded) }
     }
 
     /**

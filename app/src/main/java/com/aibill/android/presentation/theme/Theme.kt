@@ -9,7 +9,6 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
@@ -116,14 +115,4 @@ fun AiBillTheme(
             content = content,
         )
     }
-}
-
-/**
- * 取当前主题的明暗（供 Canvas 等拿不到 MaterialTheme 语义色的绘制逻辑使用）。
- */
-@Composable
-@ReadOnlyComposable
-fun currentIsDark(): Boolean {
-    val bg = MaterialTheme.colorScheme.background
-    return (0.299f * bg.red + 0.587f * bg.green + 0.114f * bg.blue) < 0.5f
 }

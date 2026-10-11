@@ -83,27 +83,7 @@ class UpdateManager @Inject constructor(
     }
 
     /**
-     * 获取最新版本（不做版本对比），手动"检查更新"用。
-     *
-     * 优先级：
-     * 1. billserver 自托管更新（可信源，公司可控）
-     *    - hasUpdate=true → 返回该版本
-     *    - hasUpdate=false → 返回"已是最新"（不 fallback GitHub，避免误判）
-     *    - 网络异常 → fallback GitHub
-     * 2. GitHub Release（兜底）
-     *
-     * 注：nullable 版本，无法区分"已是最新"和"获取失败"——
-     * UI 层请用 [fetchLatestResult] 获取三态。
-     */
-    suspend fun fetchLatest(): UpdateInfo? {
-        return when (val r = fetchLatestResult()) {
-            is FetchLatestResult.Success -> r.info
-            else -> null
-        }
-    }
-
-    /**
-     * 手动"检查更新"的三态结果（与 [fetchLatest] 同逻辑，保留语义区分）：
+     * 手动"检查更新"的三态结果：
      * - Success(info)：拿到最新版本（可能比本地新，也可能旧/相同，UI 再做版本对比）
      * - NoUpdate：billserver 可达且报告已是最新（服务端权威，不 fallback GitHub）
      * - Failure(message)：所有源都拿不到（billserver 不可达 且 GitHub 也失败）

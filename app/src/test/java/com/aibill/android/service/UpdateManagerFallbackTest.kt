@@ -26,7 +26,7 @@ class UpdateManagerFallbackTest {
     private val appUpdateApi: AppUpdateApi = mockk(relaxed = true)
 
     private fun manager(): UpdateManager {
-        // Context 没必要 mock（UpdateManager 构造函数 + check/fetchLatest 不调用 Context）
+        // Context 没必要 mock（UpdateManager 构造函数 + 查询方法不调用 Context）
         return UpdateManager(
             context = mockk(relaxed = true),
             githubReleaseApi = githubReleaseApi,
@@ -99,31 +99,6 @@ class UpdateManagerFallbackTest {
         assertNotNull(info)
         assertEquals("99.0.0", info!!.versionName)
         assertEquals(UpdateManager.Source.GITHUB, info.source)
-    }
-
-    @Test
-    fun `fetchLatest does NOT fallback when billserver reachable but hasUpdate=false`() = runTest {
-        // 手动检查：billserver 可达说没新版本 → 直接返回 null（不查 GitHub）
-        coEvery { appUpdateApi.checkUpdate(any(), any()) } returns updateResponse(AppUpdateDto(
-            hasUpdate = false,
-            latestVersion = "1.2.0",
-        ))
-
-        val info = manager().fetchLatest()
-
-        assertNull(info)
-        coVerify(exactly = 0) { githubReleaseApi.getLatestRelease(any(), any()) }
-    }
-
-    @Test
-    fun `fetchLatest falls back to github only when billserver unreachable`() = runTest {
-        coEvery { appUpdateApi.checkUpdate(any(), any()) } throws java.io.IOException("offline")
-        coEvery { githubReleaseApi.getLatestRelease(any(), any()) } returns gitRelease("v1.4.0")
-
-        val info = manager().fetchLatest()
-
-        assertNotNull(info)
-        assertEquals(UpdateManager.Source.GITHUB, info?.source)
     }
 
     // ---------- fetchLatestResult() 三态 (P1-3 新增) ----------
