@@ -311,7 +311,7 @@ sealed class AuthEvent {
                               ↓
                     逐条 POST /api/transactions (幂等)
                               ↓
-                    成功 → "synced" / 401 → 中断等重登 / 其他失败 → "failed"
+                    成功 → "synced" / 401 → 中断等重登（剩余保持 pending）/ 其他失败 → "failed"
 ```
 
 ### 6.2 SyncWorker 要点
@@ -319,9 +319,17 @@ sealed class AuthEvent {
 - `@HiltWorker` + `@AssistedInject`
 - 逐条同步而非批量，避免部分失败导致已成功的被重试
 - `MAX_RETRY_COUNT = 5`，超过标记 `failed` 不再处理
-- 401 → 标 `failed`（`last_error = "Token expired, need re-login"`）+ `Result.failure()` 中断，等待用户重新登录
+- 401 → **中断本轮遍历**（`break`，剩余 pending 保持待同步不再发请求）+ 当前条标
+  `failed`（`last_error = "Token expired, need re-login"`）+ `Result.failure()`，等待用户重新登录
 - 网络异常 → 增加 `retryCount`，让 WorkManager 自动重试
 - 异常返回 `Result.retry()` 由 WorkManager 指数退避（10s 起）
+
+> 401 必须**立即中断**而非只置标志位继续遍历：`AuthInterceptor` 在第一个 401 就清了
+> session，继续发只会把剩余 N−1 条 pending 无差别标成 failed，并对同一原因重复发 N 次请求。
+
+**失败写入必须原子**：标 `failed` 一律走 `PendingTransactionDao.markFailed`（单条 UPDATE 同时写
+`sync_status` / `last_error` / `updated_at`），**不得**用 `updateSyncStatus`（不写 `last_error`）。
+历史上 `SyncWorker.markFailed` 误用了后者，使 `resetFailedMatching` 恒返回 0、401 恢复成为死代码。
 
 **`failed` 是终态**：`getAllPending()` 只捞 `sync_status = 'pending'`，所以 `failed` 记录
 不会被再次同步。因此「401」这种**可恢复**失败必须在用户重新登录时显式重置，
@@ -329,27 +337,35 @@ sealed class AuthEvent {
 
 ### 6.4 登录 / 换号时的本地数据处置（数据安全关键路径）
 
-`login()` 在 `saveSession()` **之前**读取旧 `userId`（`TokenManager.getUserId()`），
+`login()` 在 `saveSession()` **之前**读取旧 `userId`（`TokenManager.getLastKnownUserId()`），
 据此分三条路径：
 
 | 场景 | 判定 | pending 队列 | categories/accounts/notifications |
 |---|---|---|---|
-| **同账号重登**（Token 过期后重登，典型场景） | `oldId != null && oldId == newId` | **保留**；并把 `last_error LIKE '%Token expired%'` 的记录重置回 `pending`（`resetFailedMatching`），再主动排一次同步 | 保留（server 派生缓存，`HomeViewModel.refresh()` 会重新拉；清掉会造成登录后短暂空白） |
+| **同账号重登**（Token 过期或**显式登出后**重登，典型场景） | `oldId != null && oldId == newId` | **保留**；并把 `last_error LIKE '%Token expired%'` 的记录重置回 `pending`（`resetFailedMatching`），再主动排一次同步 | 保留（server 派生缓存，`HomeViewModel.refresh()` 会重新拉；清掉会造成登录后短暂空白） |
 | **换号** | `oldId != null && oldId != newId` | 清空 | 清空 |
 | **首次登录 / 旧版本无 userId** | `oldId == null` | 清空（保守，无法判断是否换号） | 清空 |
 
-> ⚠️ 历史 bug：早期实现**无条件** `clearLocalCache()`。Token 30 天过期（无 refresh
+> ⚠️ 历史 bug（1）：早期实现**无条件** `clearLocalCache()`。Token 30 天过期（无 refresh
 > token）恰恰是离线数据最容易堆积的时刻，用户重登后所有未同步的记账被物理删除。
 > 提交 `bd39a2b` 的原意是「**换号**清缓存」，条件判断漏了。
 > `AuthRepositoryImplTest` 的 `DATA LOSS regression` 用例锁住此不变量。
 
-> 精准重置的理由：若把**全部** `failed` 重置回 `pending`，「业务错误 / 服务端异常 /
-> 超过最大重试」这些**不可恢复**失败会被反复重试成死循环。
+> ⚠️ 历史 bug（2，B6）：`logout()` 曾调 `clearSessionAndIdentity()` 把 `last_known_user_id`
+> 一并删除。于是「登出 → 登回**同一账号**」时 `oldId == null`，退化为「首次登录」路径并
+> `clearLocalCache()`，把用户离线记的账物理删除——而 `ProfileScreen` 的登出确认弹窗向用户
+> 承诺过「本地未同步的数据不会丢失」。现在 `logout()` 只调 `endSession(SIGNED_OUT)`，
+> **保留 `last_known_user_id`**。
+>
+> 保留它**不降低**换号防护：上表第 2 行靠的是 `oldId != newId` 的**比较**，
+> 不靠 `oldId != null`。`AuthRepositoryImplTest` 用 `logout then SAME/DIFFERENT account login`
+> 两个用例同时锁住「同号保留」与「换号仍清空」。
 
 > ⚠️ 同账号判定必须用 `TokenManager.getLastKnownUserId()`，**不能**用 `getUserId()`：
-> 401 时 `AuthInterceptor` 会 `clearSession()` 把 `user_id` 一并清掉，而
-> 「Token 过期 → 重登」正是最需要保住离线队列的场景。因此 `last_known_user_id`
-> 刻意活得比 session 长，只在**显式登出**（`clearSessionAndIdentity()`）时才清。
+> 会话结束时 `endSession()` 会把 `user_id` 一并清掉，而
+> 「Token 过期 → 重登」「显式登出 → 登回」正是最需要保住离线队列的场景。
+> 因此 `last_known_user_id` 刻意活得比 session 长——**任何**会话结束路径都不清除它。
+> 它不是 session 的一部分，而是**本地缓存的归属判据**。
 
 > ⚠️ `SyncWorker` 在**无 token 时直接 `Result.success()` 短路**，不发请求、不碰队列。
 > `NetworkMonitor` 会在 App 启动时排同步（这是预期行为），若不加此守卫，
@@ -397,15 +413,36 @@ sealed class AuthEvent {
 
 ### 7.2 敏感数据：EncryptedSharedPreferences（`TokenManager`）
 
-| Key | 类型 | 说明 |
-|---|---|---|
-| `jwt_token` | String | 用户登录 Token |
-| `user_id` | Int | 当前用户 ID（**换号判定依据**，见 §6.4） |
-| `username` / `nickname` | String | 用户信息 |
+| Key | 类型 | 生命周期 | 说明 |
+|---|---|---|---|
+| `jwt_token` | String | session | 用户登录 Token |
+| `user_id` | Int | session | 当前用户 ID |
+| `username` / `nickname` | String | session | 用户信息 |
+| `last_known_user_id` | Int | **跨 session 持久** | 本地缓存的归属判据（**换号判定依据**，见 §6.4）。任何会话结束路径都不清除 |
+| `session_end_reason` | String | 跨 session | 上次会话结束原因：`token_expired` / `signed_out`；`saveSession()` 成功后清除 |
 
-`saveSession()` 在**同一个 `commit()`** 里原子写入以上 4 项（用 `apply()` 会出现
+`saveSession()` 在**同一个 `commit()`** 里原子写入 token + userId + username + nickname +
+`last_known_user_id`，并**清除** `session_end_reason`（用 `apply()` 会出现
 「token 已写入但 userInfo 还在 DataStore」的不一致窗口，进程被杀即丢 token）。
-登出用 `clearSession()` 一次性清空全部 4 项。
+
+### 7.2.1 会话结束：`endSession(reason)` 是唯一入口
+
+`endSession()` 清 token + userId + username + nickname，写入结束原因，
+**保留 `last_known_user_id`**。
+
+| 调用方 | reason | 冷启动提示 |
+|---|---|---|
+| `AuthInterceptor` 收到**带凭证**的 401 | `TOKEN_EXPIRED` | 「登录已过期，请重新登录」 |
+| `AuthRepositoryImpl.logout()`（显式登出） | `SIGNED_OUT` | **不提示**（预期内） |
+| `AuthInterceptor` 收到**未带凭证**的 401（登录密码错误等） | `SIGNED_OUT` | **不提示**（预期内） |
+
+> ⚠️ 不可用 `lastKnownUserId != null && !hasToken()` 猜测：登出保留 `last_known_user_id` 后
+> （B6 修复的前提），主动登出也会命中该条件，从而把「我自己退出的」误报成「登录已过期」。
+> 故必须用显式、持久化的 `session_end_reason`。
+
+> ⚠️ `AuthInterceptor` 必须按「本次请求是否携带凭证」区分 reason：登录接口密码错误也会返回
+> 401，若一律标 `TOKEN_EXPIRED`，用户输错一次密码后下次冷启动就会看到
+> 「登录已过期」这种风马牛不相及的提示。
 
 ### 7.3 DataStore 存储项（非敏感，`UserPreferences`）
 
@@ -423,6 +460,13 @@ sealed class AuthEvent {
 > fallback**（不删，避免老用户首次启动读到 null）；**所有新写入一律走 `TokenManager`**。
 
 **UserPreferences.kt** 使用 `stateIn(Eagerly)` + `AtomicReference` 暴露热流，避开 Interceptor 同步路径 runBlocking。
+
+> ⚠️ 登出只调 `clearUserInfo()`，**只删 `user_id` / `username` / `nickname` 三项**。
+> 禁止改回 `dataStore.edit { it.clear() }`：那会一并抹掉 `server_url`，
+> 导致 `ServerUrlInterceptor` 读不到地址 → 请求回落到占位地址 `http://localhost:3000/api/`
+> → **登出后无法再登录**，用户必须重新配置服务器。设备级设置（主题 / 通知隐私 / 应用锁 /
+> AI 开关 / 默认账户）不属于用户身份，退登后应继续生效。
+> `UserPreferencesClearUserInfoTest`（真实文件型 DataStore）钉住此不变量。
 
 ---
 
