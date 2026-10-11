@@ -1,6 +1,10 @@
 package com.aibill.android.data.notification
 
+import com.aibill.android.data.remote.dto.response.NotificationRulesDto
+import com.aibill.android.data.remote.dto.response.NlsRulesDto
+import com.aibill.android.service.NotificationRules
 import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.service.NotificationRulesMapping
 import com.aibill.android.util.AppLogger
 import com.aibill.android.util.NotificationSourceMapping
 import io.mockk.every
@@ -48,11 +52,56 @@ class NotificationRuleSourceAdaptersTest {
         assertTrue(snapshot.isMarketing("恭喜您获得优惠券"))
         // 强交易特征豁免：命中营销词但有「尾号」时不算营销
         assertFalse(snapshot.isMarketing("尾号1234支出10.00元，点击领取"))
-        assertTrue(snapshot.isKnownSource("com.vendor.newbank.mobile"))
+        assertTrue(snapshot.isKnownSource("com.vendor.newbank.mobile"), "云控 source_mapping")
+        assertTrue(snapshot.isKnownSource("com.android.mms"), "云控 sms_packages")
         assertTrue(snapshot.isKnownSource("cmb.pb"), "银行包名模式")
         assertFalse(snapshot.isKnownSource("com.unknown.app"))
         assertTrue(NotificationSourceMapping.KNOWN_PACKAGES.all { it in snapshot.knownPackages })
     }
+
+    /**
+     * 「已知来源」判据的回归护栏（收口后它的唯一实现）。
+     *
+     * 原先这条断言打在 `NotificationRulesManager.isKnownOrBankPackage` 上，
+     * 与 `NotificationRuleSnapshot.isKnownSource` 是同一套判据的第二个入口，
+     * 已连同那个入口一起删除；语义（四路来源 + 非已知）原样保留在这里。
+     */
+    @Test
+    @DisplayName("云控规则直接进入已知来源判据：source_mapping / sms_packages / 银行模式 / 非已知")
+    fun `云控规则驱动已知来源判定`() {
+        val snapshot = InMemoryNotificationRuleSource(cloudRules()).snapshot()
+        assertTrue(snapshot.isKnownSource("com.example.wallet"), "云控 source_mapping")
+        assertTrue(snapshot.isKnownSource("com.example.sms"), "云控 sms_packages")
+        assertTrue(snapshot.isKnownSource("com.vendor.newbank.mobile"), "银行包名模式（包含匹配）")
+        assertFalse(snapshot.isKnownSource("com.example.unrelated"))
+    }
+
+    @Test
+    @DisplayName("空银行模式不会匹配所有包名")
+    fun `空银行模式不匹配所有包名`() {
+        val rules = PrefilterTestHarness.rules(bankPackagePatterns = listOf(" ", ""))
+        assertFalse(InMemoryNotificationRuleSource(rules).snapshot().isKnownSource("com.example.unrelated"))
+    }
+
+    /** 走生产映射把云控 DTO 变成规则模型（同 `NotificationRulesMapping`，不重抄一份）。 */
+    private fun cloudRules(): NotificationRules = NotificationRulesMapping.fromDto(
+        NotificationRulesDto(
+            nls = NlsRulesDto(
+                paymentSignalRegex = "¥|支付",
+                wechat = null,
+                alipay = null,
+                bankPackagePatterns = listOf("newbank"),
+                smsPackages = listOf("com.example.sms"),
+                perPackage = null,
+                defaultRule = null,
+            ),
+            a11y = null,
+            smsRules = null,
+            sourceMapping = mapOf("com.example.wallet" to "示例钱包"),
+            processor = null,
+        )
+        // 云控只下发 nls + source_mapping，其余段缺省走兜底（生产同一条映射）
+    ) { PrefilterTestHarness.rules() }
 
     @Test
     @DisplayName("非法 payment_signal_regex 回退到硬编码兜底，且与历史常量逐字相同")

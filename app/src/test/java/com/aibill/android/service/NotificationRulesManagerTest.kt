@@ -229,7 +229,7 @@ class NotificationRulesManagerTest {
     }
 
     @Test
-    @DisplayName("7. 动态 package filter 包含云控映射、短信包和银行模式")
+    @DisplayName("7. fetchRules() 后云控规则进入快照（已知包名判定已迁至 NotificationRuleSnapshot.isKnownSource）")
     fun dynamicPackageFilter_usesCloudRules() = runTest {
         val dto = makeMinimalDto().copy(
             sourceMapping = mapOf("com.example.wallet" to "示例钱包"),
@@ -245,26 +245,17 @@ class NotificationRulesManagerTest {
 
         manager.fetchRules()
 
-        assertTrue(manager.isKnownOrBankPackage("com.example.wallet"))
-        assertTrue(manager.isKnownOrBankPackage("com.example.sms"))
-        assertTrue(manager.isKnownOrBankPackage("com.vendor.newbank.mobile"))
-        assertFalse(manager.isKnownOrBankPackage("com.example.unrelated"))
-        assertEquals(manager.getSnapshot().rules, manager.getRules())
-        assertEquals(manager.getSnapshot().generation, manager.getRulesGeneration())
-    }
+        // 云控下发的三路来源数据真的进了规则模型（判定本身在快照那一侧）
+        val rules = manager.getRules()
+        assertEquals(manager.getSnapshot().rules, rules)
+        assertEquals(mapOf("com.example.wallet" to "示例钱包"), rules.sourceMapping)
+        assertEquals(listOf("com.example.sms"), rules.nls.smsPackages)
+        assertEquals(listOf("newbank"), rules.nls.bankPackagePatterns)
 
-    @Test
-    @DisplayName("空银行模式不会匹配所有包名")
-    fun blankBankPattern_doesNotMatchEverything() = runTest {
-        val dto = makeMinimalDto().copy(
-            nls = makeMinimalDto().nls?.copy(bankPackagePatterns = listOf(" ", "")),
-        )
-        every { prefs.getString(any(), any()) } returns null
-        coEvery { api.getRules(any()) } returns Response.success(
-            NotificationRulesResponse(code = 0, data = NotificationRulesData(version = 4, updatedAt = null, rules = dto)),
-        )
-        manager.fetchRules()
-        assertFalse(manager.isKnownOrBankPackage("com.example.unrelated"))
+        // 「这个包名算不算已知来源」的断言在 NotificationRuleSourceAdaptersTest：
+        // 它的唯一实现是 NotificationRuleSnapshot.isKnownSource，本类曾有的
+        // isKnownOrBankPackage / getAllKnownPackages 是同一判据的第二、三个入口，已删除；
+        // getRulesGeneration 断言的只是「一个 getter 返回另一个 getter」，一并删除。
     }
 
     @Test

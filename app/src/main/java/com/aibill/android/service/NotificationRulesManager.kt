@@ -4,7 +4,6 @@ import android.app.Application
 import com.aibill.android.data.remote.api.NotificationRulesApi
 import com.aibill.android.data.remote.dto.response.NotificationRulesDto
 import com.aibill.android.data.remote.dto.response.NotificationRulesData
-import com.aibill.android.util.NotificationSourceMapping
 import com.squareup.moshi.Moshi
 import timber.log.Timber
 import java.io.IOException
@@ -22,8 +21,12 @@ import javax.inject.Singleton
  *
  * ⚠️ 本类**只管规则数据的存取**，不含任何判据：放行/拦截判定全在
  * [com.aibill.android.domain.notification.NotificationPrefilter]（预筛 module）。
- * 原来的 `isLikelyMarketing` 已随预筛收口删除（收口后零调用点）；
- * 「营销词 + 强交易特征豁免」的判据在 `domain/notification/MarketingCriteria`。
+ * 「营销词 + 强交易特征豁免」的判据在 `domain/notification/MarketingCriteria`，
+ * 「已知来源」判据在 `NotificationRuleSnapshot.isKnownSource`。
+ *
+ * **同一判据不留第二个入口**：`isLikelyMarketing` / `isKnownOrBankPackage` /
+ * `getAllKnownPackages` / `getRulesGeneration` 都曾是把同一判断又开一处的入口
+ * （收口后生产零调用，只剩测试在打），已全部删除；代际与快照只经 [getSnapshot] 读取。
  */
 @Singleton
 class NotificationRulesManager @Inject constructor(
@@ -68,8 +71,6 @@ class NotificationRulesManager @Inject constructor(
             cachedSnapshot ?: loadInitialRules().also { cachedSnapshot = it }
         }
     }
-
-    fun getRulesGeneration(): Int = getSnapshot().generation
 
     /**
      * 从服务器拉取规则。支持 ETag/304，304 不更新。
@@ -155,75 +156,7 @@ class NotificationRulesManager @Inject constructor(
     private fun setCachedRules(rules: NotificationRules) {
         val generation = (cachedSnapshot?.generation ?: 0) + 1
         cachedSnapshot = RulesSnapshot(rules, generation)
-        cachedAllKnownPackages = null
-        cachedAllKnownPackagesGeneration = -1
         Timber.d("NotificationRules: cache updated, generation=$generation")
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // 动态包名过滤器（供 NLS 服务使用）
-    // ═══════════════════════════════════════════════════════════════
-
-    /** 缓存 allKnownPackages + 对应的代际，避免每次通知都重建 Set */
-    @Volatile
-    private var cachedAllKnownPackages: Set<String>? = null
-    @Volatile
-    private var cachedAllKnownPackagesGeneration: Int = -1
-
-    /**
-     * 获取所有已知的支付相关包名（动态，含云控规则）：
-     * - 硬编码 KNOWN_PACKAGES（本地 90+ 包名）
-     * - 云控 sourceMapping 的 keys（服务端可动态新增）
-     * - 云控 nls.smsPackages（短信 App 包名）
-     *
-     * 结果会按代际缓存，避免每次通知都重建集合。
-     *
-     * 注：bankPackagePatterns 是匹配模式（如 "bank"、"cmb"），
-     * 无法预展开为包名集合，需通过 [isKnownOrBankPackage] 做实时匹配。
-     */
-    fun getAllKnownPackages(): Set<String> {
-        val snapshot = getSnapshot()
-        val gen = snapshot.generation
-        val cached = cachedAllKnownPackages
-        if (cached != null && cachedAllKnownPackagesGeneration == gen) {
-            return cached
-        }
-        val rules = snapshot.rules
-        val result = mutableSetOf<String>()
-        result.addAll(NotificationSourceMapping.KNOWN_PACKAGES)
-        result.addAll(rules.sourceMapping.keys)
-        result.addAll(rules.nls.smsPackages)
-        cachedAllKnownPackages = result
-        cachedAllKnownPackagesGeneration = gen
-        Timber.d("NotificationRules: getAllKnownPackages " +
-            "hardcoded=${NotificationSourceMapping.KNOWN_PACKAGES.size} " +
-            "sourceMapping=${rules.sourceMapping.size} " +
-            "smsPackages=${rules.nls.smsPackages.size} " +
-            "total=${result.size} gen=$gen")
-        return result
-    }
-
-    /**
-     * 判断包名是否属于已知支付 App 或匹配银行包名模式。
-     *
-     * 用于 NLS 白名单动态判断，替代静态 [NotificationSourceMapping.KNOWN_PACKAGES]。
-     *
-     * @return true 如果包名在白名单中，或匹配 bankPackagePatterns 中的任一模式
-     */
-    fun isKnownOrBankPackage(packageName: String): Boolean {
-        // 1. 已知包名（硬编码 + 云控 sourceMapping + smsPackages）
-        if (packageName in getAllKnownPackages()) {
-            return true
-        }
-        // 2. 银行包名模式匹配（如 "bank"、"cmb" 等前缀/包含匹配）
-        val rules = getSnapshot().rules
-        for (pattern in rules.nls.bankPackagePatterns) {
-            if (pattern.isNotBlank() && packageName.contains(pattern, ignoreCase = true)) {
-                Timber.d("NotificationRules: package=$packageName matched bank pattern='$pattern'")
-                return true
-            }
-        }
-        return false
     }
 
     /**
