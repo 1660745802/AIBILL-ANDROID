@@ -1,9 +1,19 @@
 package com.aibill.android.service
 
-import com.aibill.android.service.NotificationRulesManager.Companion.isMarketingByWords
-import com.squareup.moshi.JsonAdapter
+import com.aibill.android.data.notification.InMemoryNotificationRuleSource
+import com.aibill.android.data.notification.PrefilterTestHarness
+import com.aibill.android.data.remote.dto.response.NotificationRulesData
+import com.aibill.android.domain.notification.BlockReason
+import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.MarketingCriteria
+import com.aibill.android.domain.notification.NotificationPrefilter
+import com.aibill.android.domain.notification.NotificationTextClassifier
+import com.aibill.android.domain.notification.SourceChannel
+import com.aibill.android.domain.notification.Verdict
 import com.squareup.moshi.Moshi
-import com.squareup.moshi.Types
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
@@ -11,59 +21,74 @@ import org.junit.jupiter.api.Test
 import java.io.File
 
 /**
- * 放行链路的**回归护栏**（2026-10-05）
+ * 放行链路的**回归护栏**（2026-10-05 建，2026-10-10 改为直接打生产判据）。
  *
  * 背景：`nls.default_rule.exclude_content_contains` 是纯黑名单，加词很容易，
  * 但加错的代价是**误杀真实交易**——用户丢账且毫无感知，比漏拦一条广告严重得多。
  * 本测试直接读 `scripts/rules.json`（单一数据源），用两轮真机日志里的真实
  * 交易文案 + 已知广告文案做**双向**断言，任何一侧回归都会红。
  *
- * 复刻 `NotificationMonitorService.isLikelyFinancial` 的 default_rule 分支：
- *   命中营销词 且 无强交易特征 → 拒绝；否则看 payment_signal_regex → 放行
+ * ## 护栏护的是实现，不是拷贝
+ *
+ * 收口前这里的 `passes()` 是「复刻 `NotificationMonitorService.isLikelyFinancial` 的
+ * default_rule 分支」写的一份实现。现在它做的是：
+ * `scripts/rules.json` →（生产 DTO + **生产映射** [NotificationRulesMapping]）
+ * → `InMemoryNotificationRuleSource` → **生产预筛链**。
+ * 也就是说：改词表、改分支顺序、改判据语义，三处都会让这里变红。
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class NotificationFilterRegressionTest {
-
-    private data class Rules(
-        val excludeWords: List<String>,
-        val smsWords: List<String>,
-        val paymentSignalRegex: String,
-    )
 
     /**
      * 直接解析仓库里的 scripts/rules.json —— 单一数据源，改词表即改测试输入。
      * 单元测试的工作目录是 app/，所以从它往上一级找仓库根。
+     *
+     * 解析用生产的 `NotificationRulesData` DTO，映射用生产的
+     * [NotificationRulesMapping]：测试侧不再持有任何「云控字段名 ↔ 判据字段名」的翻译。
      */
-    private val rules: Rules by lazy {
+    private val rulesJson: String by lazy {
         val repoRoot = generateSequence(File(".").absoluteFile) { it.parentFile }
             .firstOrNull { File(it, "scripts/rules.json").exists() }
             ?: error("找不到 scripts/rules.json（工作目录=${File(".").absolutePath}）")
-        val moshi = Moshi.Builder().build()
-        val mapType = Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
-        @Suppress("UNCHECKED_CAST")
-        val adapter = moshi.adapter<Map<String, Any>>(mapType) as JsonAdapter<Map<String, Any>>
-        val root = adapter.fromJson(File(repoRoot, "scripts/rules.json").readText())!!
-        val r = root.getValue("rules").let { it as Map<String, Any> }
-        val nls = r.getValue("nls") as Map<String, Any>
-        val defaultRule = nls.getValue("default_rule") as Map<String, Any>
-        val sms = (r["smsRules"] as? Map<String, Any>).orEmpty()
-        Rules(
-            excludeWords = defaultRule.getValue("exclude_content_contains") as List<String>,
-            smsWords = (sms["spam_keywords"] as? List<String>) ?: emptyList(),
-            paymentSignalRegex = nls.getValue("payment_signal_regex") as String,
-        )
+        File(repoRoot, "scripts/rules.json").readText()
     }
 
-    /** 复刻 default_rule 分支：true = 放行去调 AI */
-    private fun passes(text: String): Boolean {
-        if (isMarketingByWords(text, rules.smsWords + rules.excludeWords)) return false
-        return Regex(rules.paymentSignalRegex).containsMatchIn(text)
+    /** 走生产映射得到的规则模型（in-memory 源喂的就是它）。 */
+    private val productionRules: NotificationRules by lazy {
+        val data = Moshi.Builder().build()
+            .adapter(NotificationRulesData::class.java)
+            .fromJson(rulesJson)
+            ?: error("scripts/rules.json 解析失败")
+        val dto = data.rules ?: error("scripts/rules.json 缺 rules 段")
+        NotificationRulesMapping.fromDto(dto) { error("规则字段齐全，不应回退兜底") }
+    }
+
+    private val prefilter: NotificationPrefilter by lazy {
+        PrefilterTestHarness.newPrefilter(productionRules)
+    }
+
+    private fun excludedWords(): List<String> =
+        productionRules.nls.defaultExcludeContent + productionRules.sms.spamKeywords
+
+    /** 生产判据的结论：true = 放行去调 AI。 */
+    private suspend fun passes(text: String): Boolean {
+        val verdict = prefilter.evaluate(
+            Capture(
+                channel = SourceChannel.NLS,
+                packageName = "com.example.notifier",
+                title = "",
+                fullText = text,
+                receivedAt = 1_000_000L,
+            )
+        )
+        return verdict is Verdict.Pass
     }
 
     // ── 真实交易：必须放行（任何误杀都会让用户丢账）──
 
     @Test
     @DisplayName("真实交易文案全部放行——回归护栏，改词表时必过")
-    fun `真实交易不被误杀`() {
+    fun `真实交易不被误杀`() = runTest {
         val real = listOf(
             "重庆畅通卡 刷卡完成，交易金额：1.80元",
             "招商银行 您账户2415于10月04日14:42在【支付宝-重庆驿满新能源科技有限公司】发生快捷支付扣款，人民币20.00",
@@ -83,7 +108,7 @@ class NotificationFilterRegressionTest {
 
     @Test
     @DisplayName("广告文案全部拦截——含 v9 新增的电商活动词")
-    fun `广告被拦截`() {
+    fun `广告被拦截`() = runTest {
         val ads = listOf(
             "0.01元购的活动 一人仅限一单",                       // v9 修复的真实误判
             "😍1号会员日来啦 🛒12包抽纸0元领千份放量！🔥实付159元再享40元红包返利>",
@@ -98,7 +123,7 @@ class NotificationFilterRegressionTest {
         }
     }
 
-    // ── 词表契约 ──
+    // ── 词表契约（数据侧护栏：词表本身有没有按 v9/v10 的约定加词）──
 
     @Test
     @DisplayName("v9 新增的 11 个电商活动词都在词表里")
@@ -108,7 +133,7 @@ class NotificationFilterRegressionTest {
             "满赠", "折扣", "折后", "特价", "新客价", "免单",
         )
         for (w in required) {
-            assertTrue(w in rules.excludeWords, "v9 新增词缺失：$w")
+            assertTrue(w in excludedWords(), "v9 新增词缺失：$w")
         }
     }
 
@@ -116,18 +141,18 @@ class NotificationFilterRegressionTest {
     @DisplayName("词表不含裸『活动』——过宽会误杀真实通知")
     fun `词表不过宽`() {
         // 「活动」曾被考虑加入，但真实通知里出现频率不低，风险大于收益
-        assertFalse("活动" in rules.excludeWords, "『活动』过于宽泛，不应进排除词表")
+        assertFalse("活动" in excludedWords(), "『活动』过于宽泛，不应进排除词表")
     }
 
     @Test
     @DisplayName("强交易特征豁免仍然生效（营销词 + 真交易不误杀）")
     fun `强交易特征豁免`() {
         assertFalse(
-            isMarketingByWords("你有一笔20.00元的支出，点击领取9个积分", listOf("领取")),
+            MarketingCriteria.isMarketingByWords("你有一笔20.00元的支出，点击领取9个积分", listOf("领取")),
             "含强交易特征时不应判营销",
         )
         assertTrue(
-            isMarketingByWords("点击领取优惠券", listOf("领取")),
+            MarketingCriteria.isMarketingByWords("点击领取优惠券", listOf("领取")),
             "无强交易特征时应判营销",
         )
     }
@@ -138,9 +163,9 @@ class NotificationFilterRegressionTest {
     @DisplayName("记账日报被识别为汇总通知")
     fun `记账日报是汇总通知`() {
         // 实测这两条被误记成单笔支出
-        assertTrue(NlsTextClassifier.isSummaryNotification("【记账日报】昨天共有1笔支出 昨日支出28.90元，共1笔"))
+        assertTrue(NotificationTextClassifier.isSummaryNotification("【记账日报】昨天共有1笔支出 昨日支出28.90元，共1笔"))
         assertTrue(
-            NlsTextClassifier.isSummaryNotification(
+            NotificationTextClassifier.isSummaryNotification(
                 "【记账日报】昨日消费支出比平日高500.77% 昨日支出1868.98元，共2笔"
             )
         )
@@ -154,13 +179,13 @@ class NotificationFilterRegressionTest {
             "话费红包", "名额有限", "燃油费", "膨胀券",
         )
         for (w in required) {
-            assertTrue(w in rules.excludeWords, "v10 新增词缺失：$w")
+            assertTrue(w in excludedWords(), "v10 新增词缺失：$w")
         }
     }
 
     @Test
     @DisplayName("含『共支出N元』的真实账单通知不能被当汇总")
-    fun `真实账单通知不误判为汇总`() {
+    fun `真实账单通知不误判为汇总`() = runTest {
         // 量词是「次」「元」而非「笔」——这是与日报的关键区别
         val real = listOf(
             "您在美团记账成功93.00元 今日消费1次，共支出93.00元",
@@ -168,8 +193,49 @@ class NotificationFilterRegressionTest {
             "您在支付宝记账成功600.00元 今日消费2次，共支出616.80元",
         )
         for (t in real) {
-            assertFalse(NlsTextClassifier.isSummaryNotification(t), "真实账单通知被误判为汇总：$t")
+            assertFalse(NotificationTextClassifier.isSummaryNotification(t), "真实账单通知被误判为汇总：$t")
             assertTrue(passes(t), "真实账单通知被误杀：$t")
         }
+    }
+
+    // ── 收口后的新护栏：判据链不碰云控基础设施 ──
+
+    @Test
+    @DisplayName("整条判据链只依赖注入的规则源——不读 SP、不发网络")
+    fun `判据链只依赖注入的规则源`() {
+        // 规则源是 InMemory 版本：这条用例能跑通本身就是「判据链不碰
+        // SharedPreferences / Retrofit / assets」的证明（生产源才会去碰它们）。
+        val source = InMemoryNotificationRuleSource(productionRules, generation = 7)
+        assertEquals(7, source.snapshot().generation)
+        assertTrue(source.snapshot().paymentSignal.containsMatchIn("支出10.00元"))
+        assertTrue(source.snapshot().isMarketing("恭喜您获得优惠券"))
+        assertFalse(source.snapshot().isMarketing("尾号1234支出10.00元"))
+    }
+
+    @Test
+    @DisplayName("日报与促销文案在生产判据链里按 SUMMARY_REPORT / PROMO_SENTENCE 拦")
+    fun `代码层判据在生产链上生效`() = runTest {
+        assertEquals(
+            BlockReason.SUMMARY_REPORT,
+            blockReasonOf("【记账日报】昨日消费支出比平日高500.77% 昨日支出1868.98元，共2笔"),
+        )
+        assertEquals(
+            BlockReason.PROMO_SENTENCE,
+            blockReasonOf("双11省钱卡花3得29，一笔回本加赠99积分0元兑云音乐月卡"),
+        )
+    }
+
+    private suspend fun blockReasonOf(text: String): BlockReason {
+        val verdict = prefilter.evaluate(
+            Capture(
+                channel = SourceChannel.NLS,
+                packageName = "com.example.notifier",
+                title = "",
+                fullText = text,
+                receivedAt = 1_000_000L,
+            )
+        )
+        assertTrue(verdict is Verdict.Block, "应当被拦截：$text")
+        return (verdict as Verdict.Block).reason
     }
 }

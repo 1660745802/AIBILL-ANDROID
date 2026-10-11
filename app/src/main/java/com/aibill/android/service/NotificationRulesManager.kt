@@ -4,6 +4,7 @@ import android.app.Application
 import com.aibill.android.data.remote.api.NotificationRulesApi
 import com.aibill.android.data.remote.dto.response.NotificationRulesDto
 import com.aibill.android.data.remote.dto.response.NotificationRulesData
+import com.aibill.android.domain.notification.MarketingCriteria
 import com.aibill.android.util.NotificationSourceMapping
 import com.squareup.moshi.Moshi
 import timber.log.Timber
@@ -128,16 +129,19 @@ class NotificationRulesManager @Inject constructor(
     fun getRules(): NotificationRules = getSnapshot().rules
 
     /**
-     * 营销内容判定（NLS/SMS 共用）：命中营销词表（sms.spam_keywords +
-     * default_rule 排除词）且**不含强交易特征**时才判营销。
+     * 营销内容判定：**所有判据都从 [com.aibill.android.domain.notification.NotificationPrefilter]
+     * 走，本方法只是词表的取用入口**（判据本身在 `MarketingCriteria`）。
      *
-     * 设计原则与 isLikelyFinancial 一致：极保守，宁可多放不漏。
+     * 保留它是因为 `NotificationProcessor` 的 `cleanMarketingSuffix` 等处仍按需取词表，
+     * 而「营销判定语义」只有一处实现。
+     *
+     * 设计原则与账务判据一致：极保守，宁可多放不漏。
      * 形似真实交易（尾号/卡号/入账…）的文本即使含"办理/开通/贷款"等词
      * 也交由 AI 判定，避免误杀如"您尾号1234信用卡办理的分期入账3500元"。
      */
     fun isLikelyMarketing(text: String): Boolean {
         val rules = getRules()
-        return isMarketingByWords(text, rules.sms.spamKeywords + rules.nls.defaultExcludeContent)
+        return MarketingCriteria.isMarketingByWords(text, rules.sms.spamKeywords + rules.nls.defaultExcludeContent)
     }
 
     private fun loadInitialRules(): RulesSnapshot {
@@ -234,100 +238,19 @@ class NotificationRulesManager @Inject constructor(
         return false
     }
 
-    private fun mapDtoToRules(dto: NotificationRulesDto): NotificationRules {
-        return NotificationRules(
-            nls = NlsRules(
-                paymentSignalRegex = dto.nls?.paymentSignalRegex ?: defaultRules.nls.paymentSignalRegex,
-                wechat = WechatRules(
-                    packageName = dto.nls?.wechat?.packageName ?: defaultRules.nls.wechat.packageName,
-                    directPassTitles = dto.nls?.wechat?.directPassTitles ?: defaultRules.nls.wechat.directPassTitles,
-                    directPassTitleContains = dto.nls?.wechat?.directPassTitleContains ?: defaultRules.nls.wechat.directPassTitleContains,
-                    messagePrefixes = dto.nls?.wechat?.messagePrefixes ?: defaultRules.nls.wechat.messagePrefixes,
-                    amountSymbols = dto.nls?.wechat?.amountSymbols ?: defaultRules.nls.wechat.amountSymbols,
-                ),
-                alipay = AlipayRules(
-                    packageName = dto.nls?.alipay?.packageName ?: defaultRules.nls.alipay.packageName,
-                    allowedTitleKeywords = dto.nls?.alipay?.allowedTitleKeywords ?: defaultRules.nls.alipay.allowedTitleKeywords,
-                ),
-                bankPackagePatterns = (dto.nls?.bankPackagePatterns ?: defaultRules.nls.bankPackagePatterns)
-                    .map(String::trim)
-                    .filter(String::isNotBlank),
-                smsPackages = (dto.nls?.smsPackages ?: defaultRules.nls.smsPackages)
-                    .map(String::trim)
-                    .filter(String::isNotBlank),
-                perPackage = dto.nls?.perPackage?.map { p ->
-                    PerPackageRule(
-                        packageName = p.packageName,
-                        packagePattern = p.packagePattern,
-                        passAll = p.passAll ?: false,
-                        passTitleExact = p.passTitleExact ?: emptyList(),
-                        passTitleContains = p.passTitleContains ?: emptyList(),
-                        passMsgPrefix = p.passMsgPrefix ?: emptyList(),
-                        requireAmountSymbol = p.requireAmountSymbol ?: false,
-                        excludeTitleContains = p.excludeTitleContains ?: emptyList(),
-                        excludeContentContains = p.excludeContentContains ?: emptyList(),
-                    )
-                } ?: defaultRules.nls.perPackage,
-                defaultExcludeContent = dto.nls?.defaultRule?.excludeContentContains
-                    ?: defaultRules.nls.defaultExcludeContent,
-            ),
-            a11y = A11yRules(
-                embeddedPaymentApps = dto.a11y?.embeddedPaymentApps ?: defaultRules.a11y.embeddedPaymentApps,
-                successKeywords = dto.a11y?.successKeywords ?: defaultRules.a11y.successKeywords,
-                embeddedSuccessKeywords = dto.a11y?.embeddedSuccessKeywords ?: defaultRules.a11y.embeddedSuccessKeywords,
-                commonExcludeKeywords = dto.a11y?.commonExcludeKeywords ?: defaultRules.a11y.commonExcludeKeywords,
-                wechatAlipayExcludeKeywords = dto.a11y?.wechatAlipayExcludeKeywords ?: defaultRules.a11y.wechatAlipayExcludeKeywords,
-                amountRegex = dto.a11y?.amountRegex ?: defaultRules.a11y.amountRegex,
-                cooldownMinutes = dto.a11y?.cooldownMinutes ?: defaultRules.a11y.cooldownMinutes,
-            ),
-            sms = SmsRules(
-                spamKeywords = dto.smsRules?.spamKeywords ?: defaultRules.sms.spamKeywords,
-            ),
-            sourceMapping = dto.sourceMapping ?: defaultRules.sourceMapping,
-            processor = ProcessorRules(
-                scoringWindowSeconds = dto.processor?.scoringWindowSeconds ?: defaultRules.processor.scoringWindowSeconds,
-                dedupWindowSeconds = dto.processor?.dedupWindowSeconds ?: defaultRules.processor.dedupWindowSeconds,
-                marketingSuffixCutoffs = dto.processor?.marketingSuffixCutoffs ?: defaultRules.processor.marketingSuffixCutoffs,
-                marketingCommaKeywords = dto.processor?.marketingCommaKeywords ?: defaultRules.processor.marketingCommaKeywords,
-                maxAmountCents = dto.processor?.maxAmountCents ?: defaultRules.processor.maxAmountCents,
-                minAmountCents = dto.processor?.minAmountCents ?: defaultRules.processor.minAmountCents,
-            ),
-        )
-    }
+    /**
+     * 云控 DTO → 规则模型。映射体见 [NotificationRulesMapping]——
+     * 抽成顶层函数是为了让单测能直接把 `scripts/rules.json` 喂进同一条映射
+     * （复制一份映射 = 回归护栏锁的是拷贝，正是本次收口要消灭的东西）。
+     *
+     * `fallback` 是惰性的：只有云控缺字段时才会读 assets/硬编码兜底。
+     */
+    private fun mapDtoToRules(dto: NotificationRulesDto): NotificationRules =
+        NotificationRulesMapping.fromDto(dto) { defaultRules }
 
     companion object {
         private const val KEY_JSON = "notification_rules_json"
         private const val KEY_ETAG = "notification_rules_etag"
-
-        /**
-         * 按**指定词表**判定是否营销（命中词表 且 不含强交易特征）。
-         *
-         * 与 [isLikelyMarketing] 同语义，区别只是词表由调用方传入。
-         *
-         * 存在原因（2026-10-01 真实漏记）：支付宝走 per_package 分支，
-         * `evaluateByConfig` 的 `exclude_content_contains` 是**无条件一票否决**，
-         * 没有 default_rule 那层强交易特征豁免。于是真实交易
-         * `交易提醒 你有一笔20.00元的支出，点击领取9个支付宝积分`
-         * 因命中 `领取` 被直接拒收——尽管它含 `支出`（强交易特征）。
-         * 两条路径对同一语义给出相反结论，属逻辑不一致而非配置取舍。
-         *
-         * 放在 companion（而非实例方法）是为了让单测直接锁这段真实逻辑，
-         * 而不是在测试文件里复刻一份会漂移的拷贝。
-         */
-        fun isMarketingByWords(text: String, words: List<String>): Boolean {
-            if (words.isEmpty()) return false
-            if (words.none { text.contains(it) }) return false
-            return STRONG_TXN_MARKERS.none { text.contains(it) }
-        }
-
-        /**
-         * 强交易特征词：命中任一即视为"形似真实交易"，营销词不再一票否决，
-         * 交 AI 判定。故意不含"到账/收入"（营销文案爱用"额度已到账"）。
-         */
-        private val STRONG_TXN_MARKERS = listOf(
-            "尾号", "卡号", "账户", "储蓄卡", "信用卡", "入账", "支出", "消费",
-            "扣款", "转账", "汇款", "还款", "余额",
-        )
     }
 
     /**

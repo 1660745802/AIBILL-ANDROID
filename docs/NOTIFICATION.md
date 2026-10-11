@@ -2,7 +2,7 @@
 
 > 项目核心差异化能力。**所有接入通知记账功能的开发者必读**。
 >
-> 三渠道（通知 + 无障碍 + SMS）统一入 `NotificationProcessor` → 评分窗口 → 跨渠道去重 → AI 解析 → 入库。
+> 三渠道（通知 + 无障碍 + SMS）统一经过 **预筛 module（`NotificationPrefilter`）** → `NotificationProcessor` → 评分窗口 → 跨渠道去重 → AI 解析 → 入库。
 
 ## 〇、v4 相对 v3 的变更（先读这段，否则下面 L1-L4 会误导你）
 
@@ -17,6 +17,55 @@
 | 7 | 金额上限 = **10 万元**（10,000,000 分），与云控 `processor.max_amount_cents` 一致 | 旧文档写的「1 万元」是错的 |
 
 > 下文 L1/L3/L4 的描述与现状基本一致；**L2（缓冲去重）已被 v4 的评分窗口取代**。
+
+## 〇·4、架构候选 2：判据链收进预筛 module（2026-10-10）
+
+### 问题：三套口径，且判据漏在 adapter 里
+
+| 渠道 | 收口前的预筛 | 缺什么 |
+|---|---|---|
+| NLS（通知） | 7 步：自身通知 → 内容去重 → 空文本 → 系统摘要 → **日报汇总** → **促销句式** → 营销词 → 账务判据 → 内容记忆 → 熔断 → DB 去重 | — |
+| SMS（短信） | 2 步：支付特征 + 营销词 | 日报汇总、促销句式全绕过——**促销短信会直接送去调 AI** |
+| A11Y（无障碍） | 自带一套防抖/冷却，**一条判据都不查** | 摘要里若有营销词/日报汇总照样入库 |
+
+更严重的是**回归护栏护的是拷贝**：`NotificationFilterLogicTest` / `NotificationFilterRegressionTest` /
+`PerPackageRuleTest` 各自手抄了一份 `isLikelyFinancial` / `evaluateByConfig` 的实现（注释里明写着
+「与生产判据保持同步」）。生产判据改了，测试不会红。
+
+### 收口后的形状
+
+```
+StatusBarNotification ─┐
+SmsMessage[]          ─┼→ Capture（平台翻译）─┐
+AccessibilityNodeInfo ─┘                        ├→ NotificationPrefilter.evaluate()
+                                                 │     判据链 + 每源状态（唯一实现）
+                                                 └→ Verdict.Pass → NotificationProcessor.process()
+```
+
+| 归属 | 文件 | 职责 |
+|---|---|---|
+| interface + 判据词汇 | `domain/notification/NotificationPrefilter.kt`、`NotificationRuleSource.kt`、`NotificationTextClassifier.kt`、`MarketingCriteria.kt` | `Capture` / `Verdict` / `BlockReason`、判据快照、日报与促销句式、强交易特征豁免 |
+| 实现 | `data/notification/NotificationPrefilterImpl.kt` | 判定链顺序、内容记忆、去重窗口、熔断作用域、全部日志 |
+| 规则数据源 | `data/notification/NotificationRuleSourceAdapters.kt` | `CloudNotificationRuleSource`（生产：云控 + ETag + 代际缓存）/ `InMemoryNotificationRuleSource`（单测：固定规则，零 IO） |
+| 装配 | `di/NotificationPrefilterModule.kt` | 生产绑定指向 `CloudNotificationRuleSource` |
+
+**adapter 只剩翻译**：NLS 取 extras + 清洗 + 拼全文；SMS 拼多段报文；A11Y 保留树上的三重条件与
+防抖/冷却（那是 `AccessibilityNodeInfo` 的平台事实）。三者的产物都是同一个 `Capture`。
+
+### 没变的（刻意）
+
+- 放行策略本身：云控词表 + `payment_signal_regex` + 强交易特征豁免，一个字未改；
+- `NotificationRulesManager` 的代际缓存与 ETag 语义（只是多了一个「代际变了就重派生快照」的 adapter）；
+- `NotificationProcessor` 的评分窗口、跨渠道金额去重、AI 校验、`auth_pending` 重放；
+- A11Y 的节点树采集与三重条件。
+
+### 唯一刻意保留的渠道差异：AI 熔断只对 NLS 生效
+
+熔断状态由 **AI 调用结果** 驱动（连续 3 次失败 → 静音 5min），而失败的补偿在下游：
+SMS 的 401 会由 `NotificationProcessor.enqueueAuthPending` 落库、同号重登后重放——
+**若 SMS 也被熔断拦在预筛，第 4 条起的银行短信既不入队也不入库，等于凭空造出「交易静默消失」**；
+A11Y 的包名多为已知支付 App，熔断命中同样是直接丢真交易。在「误杀 > 多调一次 AI」的取舍下，
+预筛保留 NLS-only 熔断，其余状态闸（内容去重 5s / 内容记忆 5min / DB 去重 1s）三渠道一致。
 
 ## 〇·3、2026-10-09 真机日志：金额佐证收紧 + A11Y 日志隐私修复
 
@@ -117,49 +166,53 @@
 | 10 | **A11Y 判定顺序倒置 + 隐私泄露**：原本先全树采集并把 20 条原文**落库**，再判断排除词；微信主界面/聊天列表反复刷屏，且聊天内容进了可导出的 `app_logs` | ① 命中成功词后才落库页面文本，普通页只记一行汇总 ② 排除词/历史日期/商家上下文复用同一份 `allTexts`，**全树遍历从最多 4 次降到 1 次** | 同上，与云控无关 |
 | 11 | **A11Y STATE 路径零去重**：一次 Activity 切换连发 STATE + CONTENT，原 `contentChangeThrottle` 只管 CONTENT，导致同页扫描+落库两次 | 新增 `scanThrottle` 1.5s，STATE+CONTENT 统一节流；延迟重试绕过节流（否则渐进渲染的金额会被吃掉） | 同上 |
 
-**熔断的作用域**：`isAiMuted` 只由「不在白名单」的包名查询（见 `NotificationMonitorService`），**银行/微信/支付宝永不被熔断**，避免网络抖动导致真实账单被误杀。
+**熔断的作用域**：`isAiMuted` 只由「不在白名单」的包名查询，且只对 NLS 生效（查询已搬进预筛 module，见〇·4），**银行/微信/支付宝永不被熔断**，避免网络抖动导致真实账单被误杀。
 
-**内存去重的位置修正**：`recentNotificationKeys` 的 5s 去重原先排在「正在运行」/空文本等早退分支**之后**，对它们完全失效（MIUI 会把同一条分组摘要以完全相同文本 post 数十次）。现已前移到所有早退分支之前。
+**内存去重的位置修正**：`recentContentKeys` 的 5s 去重原先排在「正在运行」/空文本等早退分支**之后**，对它们完全失效（MIUI 会把同一条分组摘要以完全相同文本 post 数十次）。现已前移到所有早退分支之前（收口后由 `NotificationPrefilterImpl` 持有）。
 
 **未修复（有意保留）**：`scoringPool` 以 `amount` 为单键、`isRootForEvent` 要求 windowId 严格相等（`PaymentAccessibilityRecognitionTest` 有用例显式锁定）。二者在理论上会漏掉「同额两笔真实交易」和「支付结果页为独立 window」的场景，但本次日志中**没有观测到真实发生**，改动需先确定预期行为，故留待后续。
 
-## 一、数据流总览（L1-L4 分层）
+## 一、数据流总览（L1-L4 分层，2026-10-10 按预筛收口后的现状重写）
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│  信号源                                                       │
-│  NotificationListenerService / SmsReceiverService / AccessibilityService │
+│  信号源 + 平台翻译（adapter，三份代码只做这一件事）              │
+│  NLS: StatusBarNotification.extras → 清洗/拼全文 → Capture      │
+│  SMS: SmsMessage[] 拼接 → Capture                              │
+│  A11Y: 节点树三重条件 + 8s 防抖 + 金额|商家|页面 冷却 → Capture │
 └───────────────────────────┬───────────────────────────────────┘
                             ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ L1: 排除层 (isLikelyFinancial)                                │
-│   微信：title=="微信支付" 或 全文含 PAYMENT_SIGNAL → 放行        │
-│   支付宝：title 含支付/账单/花呗/余额/到账 → 放行               │
-│   银行/短信 App：全部放行                                      │
-│   效果：微信聊天/订阅号/广告 100% 过滤                          │
+│ L1: 预筛（NotificationPrefilter，三渠道同一套判据链）           │
+│   0 自身通知  1 内存内容去重(5s)  2 空文本  3 系统分组摘要      │
+│   4 日报汇总  5 促销句式  6 营销词  7 账务判据                  │
+│   8 长窗内容记忆(5min)  9 单包 AI 熔断(仅 NLS)  10 DB 去重(1s) │
+│   L1-4 是代码层判据（词表拦不住的两类漏记）；                    │
+│   L1-7 的词表与正则全部来自云控快照，见 NotificationRuleSource   │
+│   效果：微信聊天/订阅号/广告 100% 过滤                           │
 └───────────────────────────┬───────────────────────────────────┘
                             ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ L2: 缓冲去重 (NotificationBuffer, 60s 窗口)                   │
-│   60s 或满 5 条时 flush                                        │
-│   跨包名 + 同金额 + 60s 内 → 合并（保留信息最丰富的）           │
-│   效果：微信+银行+短信同一笔 → 只保留 1 条给 AI                │
+│ L2: 评分窗口 + 跨渠道去重（NotificationProcessor，60s 窗口）    │
+│   10s 窗口内同金额择优；同渠道同包名同金额 = 两笔真交易          │
+│   跨渠道 + 同金额 + 60s 内 → 只保留 1 条入库                    │
+│   ★ v3 的 NotificationBuffer 已删除（长文本合出 800 字打挂后端） │
 └───────────────────────────┬───────────────────────────────────┘
                             ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ L3: 解析（学习引擎 > AI > 正则降级）                           │
-│   ① CategoryLearningEngine 命中 → 秒出结果，跳过 AI（0 成本）  │
+│ L3: 解析（学习引擎 > AI > 校验降级）                           │
+│   ① CategoryLearningEngine 命中 → 直接给分类                    │
 │   ② AI /api/ai/parse → 返回金额/类型/分类/商家                 │
-│   ③ AI 失败/超时 → 丢弃（正则不面对用户）                       │
-│   AI 成功后自动触发 learnFromCorrection(merchant→category)    │
+│   ③ AiResultValidator 校验（金额佐证/分类/范围…）→ 不过则待审    │
+│   ④ 401 → 落库 auth_pending，等同号重登后重放                   │
 └───────────────────────────┬───────────────────────────────────┘
                             ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ L4: 入库策略                                                   │
-│   AI 结果 + 信息完整 → 入库 + 轻通知（无按钮 5s 消失）         │
-│   AI 结果 + 缺关键信息 → 待审池 + 发确认通知                   │
-│   AI 返回空 / 失败 → 丢弃                                      │
-│   ★ 正则永远不面对用户，仅用于去重层提取金额比较                │
+│ L4: 入库策略（入账走 RecordIntake，见 §2.3 架构文档）           │
+│   AI 结果 + 信息完整 → 直接入账 + 回执（带撤销）                 │
+│   AI 结果 + 缺关键信息 → 待审池 + 发确认通知                    │
+│   AI 返回空 / 失败 → 丢弃                                       │
+│   ★ 正则永远不面对用户，仅用于去重层提取金额比较                 │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -223,6 +276,10 @@ val fullText = listOf(title, text, bigText, subText, infoText)
 ### 7.2 AI 兜底调用要"双重拦截"
 
 正则命中优先，正则失败才走 AI。但 AI 调用有成本 + 隐私风险（会把通知全文发给后端），微信/短信白名单会捕获大量普通聊天，必须预筛：
+
+> ⚠️ 下面是**原理示意**。生产实现是 `NotificationPrefilter`（收口后三渠道共用），
+> 判据比这段多得多（日报汇总、促销句式、强交易特征豁免…）。**别照抄这段去做新预筛**，
+> 改判据请改 `NotificationPrefilterImpl` 并跑 `PrefilterChannelParityTest`。
 
 ```kotlin
 val hasDigit = text.any { it.isDigit() }

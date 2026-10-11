@@ -1,12 +1,15 @@
 package com.aibill.android.service
 
+import com.aibill.android.domain.notification.NotificationTextClassifier
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 
 /**
- * [NlsTextClassifier] 促销句式拦截。
+ * [NotificationTextClassifier] 促销句式拦截。
+ *
+ * （收口后它不再只属于 NLS：SMS/A11Y 现在也跑这两道判据，见 `PrefilterChannelParityTest`。）
  *
  * 背景（2026-10-09 21:04 真实日志，com.netease.yanxuan）：
  * ```
@@ -30,14 +33,14 @@ class NlsPromoPatternTest {
     @DisplayName("真实事故原文：双11省钱卡促销 → 判为促销")
     fun realWorldPromo_detected() {
         val text = "🧧双11省钱卡已开抢！ 双11省钱卡花3得29，一笔回本🔥加赠99积分0元兑云音乐月卡👉"
-        assertTrue(NlsTextClassifier.isPromoNotification(text))
+        assertTrue(NotificationTextClassifier.isPromoNotification(text))
     }
 
     @Test
     @DisplayName("「花N得M」促销结构被拦")
     fun spendGetPattern() {
-        assertTrue(NlsTextClassifier.isPromoNotification("周年庆花100得200"))
-        assertTrue(NlsTextClassifier.isPromoNotification("充值花10得15"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("周年庆花100得200"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("充值花10得15"))
     }
 
     @Test
@@ -46,16 +49,16 @@ class NlsPromoPatternTest {
         // kiro code review 发现的绕过：「花3元得29元」既不匹配严格句式，
         // 而 AI 把 3 当金额时「3元」自带货币单位 → 校验 5 也认它有佐证 →
         // 两层同时失效，自动入账。
-        assertTrue(NlsTextClassifier.isPromoNotification("花3元得29元"))
-        assertTrue(NlsTextClassifier.isPromoNotification("花3得券29"))
-        assertTrue(NlsTextClassifier.isPromoNotification("双11 花10元 得 88元"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("花3元得29元"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("花3得券29"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("双11 花10元 得 88元"))
     }
 
     @Test
     @DisplayName("「0元兑/领/购」零元兑换被拦")
     fun zeroYuanExchangePattern() {
-        assertTrue(NlsTextClassifier.isPromoNotification("0元兑云音乐月卡"))
-        assertTrue(NlsTextClassifier.isPromoNotification("0元领纸巾"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("0元兑云音乐月卡"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("0元领纸巾"))
         // 注：「一分钱领」「免费领」已由 default_rule.exclude_content_contains 覆盖，
         // 不在本层重复（词表能覆盖的就不进代码层）
     }
@@ -63,7 +66,7 @@ class NlsPromoPatternTest {
     @Test
     @DisplayName("「加赠N」赠品被拦")
     fun bonusPattern() {
-        assertTrue(NlsTextClassifier.isPromoNotification("消费满88加赠20积分"))
+        assertTrue(NotificationTextClassifier.isPromoNotification("消费满88加赠20积分"))
     }
 
     // ===== 不误伤：真实交易不能被判成促销 =====
@@ -82,7 +85,7 @@ class NlsPromoPatternTest {
     fun bankSavingsCardPayment_notBlocked() {
         val text = "您尾号1234的招行省钱卡支付成功，消费50.00元"
         assertFalse(
-            NlsTextClassifier.isPromoNotification(text),
+            NotificationTextClassifier.isPromoNotification(text),
             "「省钱卡」是招行/中信的真实支付方式，拦它会丢真实交易",
         )
     }
@@ -91,63 +94,63 @@ class NlsPromoPatternTest {
     @DisplayName("含「开抢/回本/神券」但有真实交易结构的通知 → 不拦")
     fun marketingWordsWithRealTxn_notBlocked() {
         // 营销词与交易信号共存时，客户端不预判，交给服务端「正向信号优先」判定
-        assertFalse(NlsTextClassifier.isPromoNotification("您尾号5678信用卡消费88.00元，活动开抢期间享神券"))
-        assertFalse(NlsTextClassifier.isPromoNotification("支付成功 20.00元，本月已回本"))
+        assertFalse(NotificationTextClassifier.isPromoNotification("您尾号5678信用卡消费88.00元，活动开抢期间享神券"))
+        assertFalse(NotificationTextClassifier.isPromoNotification("支付成功 20.00元，本月已回本"))
     }
 
     @Test
     @DisplayName("带边界的 0 元：不应误伤正常金额「3.90元」")
     fun zeroYuan_hasNumericBoundary() {
         // 无边界写 \d+元[兑送…] 会把「3.90元」的「0元」当零元兑换
-        assertFalse(NlsTextClassifier.isPromoNotification("您尾号1234消费3.90元"))
-        assertFalse(NlsTextClassifier.isPromoNotification("实付10.00元"))
+        assertFalse(NotificationTextClassifier.isPromoNotification("您尾号1234消费3.90元"))
+        assertFalse(NotificationTextClassifier.isPromoNotification("实付10.00元"))
     }
 
     @Test
     @DisplayName("银行真实扣款不被拦")
     fun bankTransaction_notBlocked() {
-        assertFalse(NlsTextClassifier.isPromoNotification("您尾号1234的招行信用卡消费50.00元"))
+        assertFalse(NotificationTextClassifier.isPromoNotification("您尾号1234的招行信用卡消费50.00元"))
     }
 
     @Test
     @DisplayName("支付宝交易提醒不被拦")
     fun alipayTransaction_notBlocked() {
         assertFalse(
-            NlsTextClassifier.isPromoNotification("交易提醒 你有一笔20.00元的支出，点击领取9个支付宝积分")
+            NotificationTextClassifier.isPromoNotification("交易提醒 你有一笔20.00元的支出，点击领取9个支付宝积分")
         )
     }
 
     @Test
     @DisplayName("「花30元买了杯咖啡」不是促销句式")
     fun spentAtStore_notBlocked() {
-        assertFalse(NlsTextClassifier.isPromoNotification("花30元在星巴克买了杯咖啡"))
+        assertFalse(NotificationTextClassifier.isPromoNotification("花30元在星巴克买了杯咖啡"))
     }
 
     @Test
     @DisplayName("「美团外卖 支付成功 ¥32.00」不被拦")
     fun normalExpense_notBlocked() {
-        assertFalse(NlsTextClassifier.isPromoNotification("美团外卖 支付成功 ¥32.00"))
+        assertFalse(NotificationTextClassifier.isPromoNotification("美团外卖 支付成功 ¥32.00"))
     }
 
     @Test
     @DisplayName("台球类真实交易（金额紧邻【】但无货币单位）不被拦")
     fun merchantAmount_notBlocked() {
         val text = "订单已消费 您的订单【小铁台球】39.9两小时中八（周末、节假日通用）已成功消费。"
-        assertFalse(NlsTextClassifier.isPromoNotification(text))
+        assertFalse(NotificationTextClassifier.isPromoNotification(text))
     }
 
     @Test
     @DisplayName("日报汇总与促销句式互不干扰")
     fun summaryVsPromo_independent() {
         val daily = "【记账日报】昨天共有2笔支出 昨日支出220.00元，共2笔"
-        assertTrue(NlsTextClassifier.isSummaryNotification(daily))
-        assertFalse(NlsTextClassifier.isPromoNotification(daily))
+        assertTrue(NotificationTextClassifier.isSummaryNotification(daily))
+        assertFalse(NotificationTextClassifier.isPromoNotification(daily))
     }
 
     @Test
     @DisplayName("空文本不崩")
     fun blankText_safe() {
-        assertFalse(NlsTextClassifier.isPromoNotification(""))
-        assertFalse(NlsTextClassifier.isSummaryNotification(""))
+        assertFalse(NotificationTextClassifier.isPromoNotification(""))
+        assertFalse(NotificationTextClassifier.isSummaryNotification(""))
     }
 }

@@ -22,9 +22,10 @@
 
 | 术语 | 含义 | 代码位置 |
 |---|---|---|
-| **来源渠道** | 通知入账的三个平台入口：通知监听（NLS）、无障碍（A11Y）、短信（SMS） | `NotificationProcessor.Channel` |
+| **来源渠道** | 通知入账的三个平台入口：通知监听（NLS）、无障碍（A11Y）、短信（SMS）。adapter 只做平台翻译，产出同一个 `Capture` | `SourceChannel` |
 | **入队项** | 一个渠道交给入账流程的一条候选：`Item`（包名 / 标题 / 全文 / 渠道 / 到达时间） | `NotificationProcessor.Item` |
-| **预筛** | 调 AI 之前「这条通知值不值得当账」的判定链（自身通知、汇总日报、促销句式、营销词、支付特征……） | NLS 7 步 / SMS 2 步 / A11Y 自有一套 |
+| **预筛** | 调 AI 之前「这条通知值不值得当账」的判定链（自身通知、日报汇总、促销句式、营销词、账务判据、去重与记忆窗口……）。**三渠道同一套** | `NotificationPrefilter`（预筛 module，见 [架构文档 §2.4](docs/ARCHITECTURE.md#24-预筛notificationprefilter)） |
+| **判据快照** | 一代规则的不可变投影（词表 + 已编译正则 + 代际），预筛只认它不认云控 | `NotificationRuleSnapshot` / `NotificationRuleSource` |
 | **AI 解析结果校验** | AI 返回金额/分类后的佐证校验，防止金额幻觉 | `AiResultValidator` |
 | **评分窗口** | 同金额的 AI 结果在 10s 内择优，跨渠道同一笔交易只保留最优视图 | `NotificationProcessor` scoringPool |
 | **跨渠道去重** | 同金额 + 时间窗内，判为同一笔交易的第二个视图 | 内存级 + DB 兜底两级 |

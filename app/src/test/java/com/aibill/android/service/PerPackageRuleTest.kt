@@ -1,28 +1,41 @@
 package com.aibill.android.service
 
-import org.junit.jupiter.api.Assertions.*
+import com.aibill.android.data.notification.PrefilterTestHarness
+import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.MarketingCriteria
+import com.aibill.android.domain.notification.PerPackageCriteria
+import com.aibill.android.domain.notification.SourceChannel
+import com.aibill.android.domain.notification.Verdict
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
  * per_package 规则驱动的通知识别测试。
  *
- * 复现 evaluateByConfig 的逻辑（与 NotificationMonitorService 保持一致），
- * 验证新规则驱动判断 + 向后兼容 fallback。
+ * ## 本文件不再有任何判据拷贝
+ *
+ * 收口前这里有一个私有的 `evaluateByConfig(cfg, title, fullText)`，它是生产判据的一份
+ * 手抄（注释里明写着与生产判据保持同步）。
+ * 现在它只提供**规则配置**（云控 `nls.per_package` 的一行），判定统一调生产预筛链。
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class PerPackageRuleTest {
 
     // === matches 匹配 ===
 
     @Test
     fun `精确包名匹配`() {
-        val rule = PerPackageRule(packageName = "com.tencent.mm")
+        val rule = PerPackageCriteria(packageName = "com.tencent.mm")
         assertTrue(rule.matches("com.tencent.mm"))
         assertFalse(rule.matches("com.eg.android.AlipayGphone"))
     }
 
     @Test
     fun `包名模式匹配（contains）`() {
-        val rule = PerPackageRule(packagePattern = "bank")
+        val rule = PerPackageCriteria(packagePattern = "bank")
         assertTrue(rule.matches("com.icbc.bank"))
         assertTrue(rule.matches("bankofchina.app"))
         assertFalse(rule.matches("com.tencent.mm"))
@@ -30,26 +43,44 @@ class PerPackageRuleTest {
 
     @Test
     fun `无匹配条件返回false`() {
-        val rule = PerPackageRule()
+        val rule = PerPackageCriteria()
         assertFalse(rule.matches("any.package"))
     }
 
-    // === evaluateByConfig 逻辑（复现） ===
+    /** 云控 DTO 映射过来的行与领域判据是同一个形状——映射本身零逻辑。 */
+    @Test
+    fun `云控 PerPackageRule 映射后匹配行为不变`() {
+        val dtoRule = PerPackageRule(
+            packageName = "com.tencent.mm",
+            passTitleExact = listOf("微信支付"),
+            excludeContentContains = listOf("秒杀"),
+        )
+        val source = com.aibill.android.data.notification.InMemoryNotificationRuleSource(
+            PrefilterTestHarness.rules(perPackage = listOf(dtoRule))
+        )
+        val criteria = source.snapshot().perPackage.single()
+        assertTrue(criteria.matches("com.tencent.mm"))
+        assertTrue(criteria.passTitleExact.contains("微信支付"))
+        assertTrue(criteria.excludeContentContains.contains("秒杀"))
+    }
 
-    private fun evaluateByConfig(cfg: PerPackageRule, title: String, fullText: String): Boolean {
-        if (cfg.excludeTitleContains.any { title.contains(it) }) return false
-        // 与 NotificationMonitorService.evaluateByConfig 保持一致：
-        // 排除词命中时走强交易特征豁免（直接调真实实现，不复刻一份拷贝）
-        if (NotificationRulesManager.isMarketingByWords(fullText, cfg.excludeContentContains)) return false
-        if (cfg.passAll) return true
-        if (cfg.passTitleExact.any { title == it }) return true
-        if (cfg.passTitleContains.any { title.contains(it) }) return true
-        val textAfterTitle = fullText.substringAfter(title).trim()
-        if (cfg.passMsgPrefix.any { textAfterTitle.startsWith(it) }) return true
-        if (cfg.requireAmountSymbol) {
-            return fullText.contains("¥") || fullText.contains("￥")
-        }
-        return false
+    // === evaluateByConfig 判定（直接打生产预筛） ===
+
+    /** 把一条 per_package 规则装进生产判据链，返回是否放行。 */
+    private suspend fun passes(rule: PerPackageRule, title: String, fullText: String): Boolean {
+        val prefilter = PrefilterTestHarness.newPrefilter(
+            PrefilterTestHarness.rules(perPackage = listOf(rule))
+        )
+        val verdict = prefilter.evaluate(
+            Capture(
+                channel = SourceChannel.NLS,
+                packageName = rule.packageName ?: "com.example.bank.app",
+                title = title,
+                fullText = fullText,
+                receivedAt = 1_000_000L,
+            )
+        )
+        return verdict is Verdict.Pass
     }
 
     // === 微信配置 ===
@@ -64,29 +95,29 @@ class PerPackageRuleTest {
     )
 
     @Test
-    fun `微信支付放行`() {
-        assertTrue(evaluateByConfig(wechatRule, "微信支付", "微信支付 已支付¥24.00"))
+    fun `微信支付放行`() = runTest {
+        assertTrue(passes(wechatRule, "微信支付", "微信支付 已支付¥24.00"))
     }
 
     @Test
-    fun `微信转账前缀放行`() {
-        assertTrue(evaluateByConfig(wechatRule, "张三", "张三 [转账]收到转账"))
+    fun `微信转账前缀放行`() = runTest {
+        assertTrue(passes(wechatRule, "张三", "张三 [转账]收到转账"))
     }
 
     @Test
-    fun `微信含金额符号放行`() {
-        assertTrue(evaluateByConfig(wechatRule, "服务号", "服务号 ¥32.00"))
+    fun `微信含金额符号放行`() = runTest {
+        assertTrue(passes(wechatRule, "服务号", "服务号 ¥32.00"))
     }
 
     @Test
-    fun `微信营销红包被排除`() {
+    fun `微信营销红包被排除`() = runTest {
         // 即使含金额符号，因命中排除词"礼包"直接拒绝
-        assertFalse(evaluateByConfig(wechatRule, "活动", "活动 领取¥5礼包"))
+        assertFalse(passes(wechatRule, "活动", "活动 领取¥5礼包"))
     }
 
     @Test
-    fun `微信普通聊天不放行`() {
-        assertFalse(evaluateByConfig(wechatRule, "张三", "张三 明天吃饭"))
+    fun `微信普通聊天不放行`() = runTest {
+        assertFalse(passes(wechatRule, "张三", "张三 明天吃饭"))
     }
 
     // === 支付宝配置 ===
@@ -105,19 +136,19 @@ class PerPackageRuleTest {
     )
 
     @Test
-    fun `支付宝交易提醒放行`() {
-        assertTrue(evaluateByConfig(alipayRule, "交易提醒", "交易提醒 你有一笔30元支出"))
+    fun `支付宝交易提醒放行`() = runTest {
+        assertTrue(passes(alipayRule, "交易提醒", "交易提醒 你有一笔30元支出"))
     }
 
     @Test
-    fun `支付宝卡包营销被title排除`() {
+    fun `支付宝卡包营销被title排除`() = runTest {
         // 案例：支付宝卡包 你有天天秒杀13.50元红包今晚失效
-        assertFalse(evaluateByConfig(alipayRule, "支付宝卡包", "支付宝卡包 你有天天秒杀13.50元红包今晚失效"))
+        assertFalse(passes(alipayRule, "支付宝卡包", "支付宝卡包 你有天天秒杀13.50元红包今晚失效"))
     }
 
     @Test
-    fun `支付宝失效红包被content排除`() {
-        assertFalse(evaluateByConfig(alipayRule, "交易提醒", "交易提醒 红包即将失效"))
+    fun `支付宝失效红包被content排除`() = runTest {
+        assertFalse(passes(alipayRule, "交易提醒", "交易提醒 红包即将失效"))
     }
 
     // === 银行配置 ===
@@ -129,58 +160,58 @@ class PerPackageRuleTest {
     )
 
     @Test
-    fun `银行交易全放行`() {
-        assertTrue(evaluateByConfig(bankRule, "招商银行", "尾号1234消费30元"))
+    fun `银行交易全放行`() = runTest {
+        assertTrue(passes(bankRule, "招商银行", "尾号1234消费30元"))
     }
 
     @Test
-    fun `银行贷款营销被排除`() {
-        assertFalse(evaluateByConfig(bankRule, "招商银行", "您可申请30万贷款额度"))
+    fun `银行贷款营销被排除`() = runTest {
+        assertFalse(passes(bankRule, "招商银行", "您可申请30万贷款额度"))
     }
 
     // === 排除优先级 ===
 
     @Test
-    fun `排除词优先于放行`() {
+    fun `排除词优先于放行`() = runTest {
         val rule = PerPackageRule(
-            packageName = "test",
+            packageName = "com.example.test",
             passAll = true,
             excludeContentContains = listOf("广告"),
         )
         // passAll=true 但命中排除词 → 拒绝
-        assertFalse(evaluateByConfig(rule, "标题", "这是广告内容"))
+        assertFalse(passes(rule, "标题", "这是广告内容"))
     }
 
     // ===== B1：排除词 + 强交易特征不应误杀（2026-10-01 真实漏记）=====
 
     @Test
-    fun `B1 回归：交易提醒含支出+领取 → 不应被排除词误杀`() {
+    fun `B1 回归：交易提醒含支出+领取 → 不应被排除词误杀`() = runTest {
         // 真实事故原文：因命中「领取」被直接拒收，导致 ¥20.00 真实交易漏记
         val real = "交易提醒 你有一笔20.00元的支出，点击领取9个支付宝积分。"
         assertTrue(
-            evaluateByConfig(alipayRule, "交易提醒", real),
+            passes(alipayRule, "交易提醒", real),
             "含强交易特征「支出」时不应被排除词一票否决",
         )
     }
 
     @Test
-    fun `B1 回归：纯营销仍被拦截（豁免不放松整体口径）`() {
+    fun `B1 回归：纯营销仍被拦截（豁免不放松整体口径）`() = runTest {
         // 无强交易特征的营销文案仍应被拒
         val ad = "领券中心 立即领取50元满减券，下单立减10元"
-        assertFalse(evaluateByConfig(alipayRule, "领券中心", ad))
+        assertFalse(passes(alipayRule, "领券中心", ad))
     }
 
     @Test
-    fun `B1 回归：卡包类仍被 title 排除词拦截`() {
-        assertFalse(evaluateByConfig(alipayRule, "卡包", "你有 3 张优惠券待使用"))
+    fun `B1 回归：卡包类仍被 title 排除词拦截`() = runTest {
+        assertFalse(passes(alipayRule, "卡包", "你有 3 张优惠券待使用"))
     }
 
     @Test
     fun `强交易特征豁免语义：命中词表且有特征 → 不判营销`() {
         val words = listOf("领取", "优惠")
-        assertFalse(NotificationRulesManager.isMarketingByWords("你有一笔20.00元的支出，点击领取积分", words))
-        assertTrue(NotificationRulesManager.isMarketingByWords("点击领取优惠券", words))
-        assertFalse(NotificationRulesManager.isMarketingByWords("不含任何词", words))
-        assertFalse(NotificationRulesManager.isMarketingByWords("含词", emptyList()))
+        assertFalse(MarketingCriteria.isMarketingByWords("你有一笔20.00元的支出，点击领取积分", words))
+        assertTrue(MarketingCriteria.isMarketingByWords("点击领取优惠券", words))
+        assertFalse(MarketingCriteria.isMarketingByWords("不含任何词", words))
+        assertFalse(MarketingCriteria.isMarketingByWords("含词", emptyList()))
     }
 }

@@ -5,7 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
 import com.aibill.android.di.ApplicationScope
-import com.aibill.android.util.NotificationParser
+import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.NotificationPrefilter
+import com.aibill.android.domain.notification.SourceChannel
+import com.aibill.android.domain.notification.Verdict
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -13,26 +16,23 @@ import timber.log.Timber
 import javax.inject.Inject
 
 /**
- * SMS 短信接收器 (v4)
+ * SMS 短信接收器——**平台翻译 adapter**。
  *
- * 监听银行短信（RECEIVE_SMS），交给 NotificationProcessor 统一处理。
- * 不再走 NotificationBuffer 合并池——v4 各渠道独立调 AI，按金额后置去重。
+ * 收口前它只跑自己的 2 步预筛（支付特征 + 营销词）：同一段促销/日报文案从短信进来
+ * 会直接送去调 AI，而从通知进来会被 `NotificationTextClassifier` 拦下。现在走
+ * [NotificationPrefilter]，与 NLS/A11Y 同一套判据。
+ *
+ * 不再走 NotificationBuffer 合并池——各渠道独立调 AI，按金额后置去重。
  */
 @AndroidEntryPoint
 class SmsReceiverService : BroadcastReceiver() {
 
     @Inject lateinit var notificationProcessor: NotificationProcessor
-    @Inject lateinit var notificationParser: NotificationParser
+    @Inject lateinit var prefilter: NotificationPrefilter
     @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
-    @Inject lateinit var rulesManager: NotificationRulesManager
 
     // PR 修复：注入进程级 ApplicationScope，避免每次 SMS 接收都泄漏一个 SupervisorJob。
     @Inject @ApplicationScope lateinit var scope: CoroutineScope
-
-    /** 缓存的支付特征 Regex + 对应的规则代际，避免每次 SMS 都重新编译 */
-    @Volatile
-    private var cachedPaymentRegex: Regex = NotificationMonitorService.PAYMENT_SIGNAL
-    private var cachedPaymentRegexGeneration: Int = -1
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
@@ -62,39 +62,30 @@ class SmsReceiverService : BroadcastReceiver() {
     }
 
     private suspend fun handleSms(sender: String, text: String) {
-        // 支付特征预筛：缓存 Regex，仅在规则代际变化时重新编译
-        val currentGen = rulesManager.getRulesGeneration()
-        if (currentGen != cachedPaymentRegexGeneration) {
-            cachedPaymentRegex = try {
-                Regex(rulesManager.getRules().nls.paymentSignalRegex)
-            } catch (e: Exception) {
-                Timber.w(e, "SMS: invalid paymentSignalRegex, using PAYMENT_SIGNAL fallback")
-                NotificationMonitorService.PAYMENT_SIGNAL
-            }
-            cachedPaymentRegexGeneration = currentGen
-        }
-
-        if (!cachedPaymentRegex.containsMatchIn(text)) {
-            appLogger.debug("SMS", "预筛不通过: sender=$sender text=${text.take(40)}")
-            return
-        }
-
-        // 营销短信拦截（sms.spam_keywords + default_rule 排除词，含强交易特征
-        // 如尾号/卡号/入账的交 AI 判定，与 NLS 渠道 isLikelySpamSms 同源）
-        if (rulesManager.isLikelyMarketing(text)) {
-            appLogger.debug("SMS", "营销短信拦截: sender=$sender text=${text.take(40)}")
-            return
-        }
-
-        appLogger.info("SMS", "预筛通过,交给Processor: sender=$sender len=${text.length}")
-
-        // 直接交给 Processor（AI + 后置按金额去重）
-        notificationProcessor.process(
-            NotificationProcessor.Item(
+        val verdict = prefilter.evaluate(
+            Capture(
+                channel = SourceChannel.SMS,
+                // 与审计记录同口径：短信用 `sms:<发件号码>` 当来源，不与 NLS 的包名混在一起
                 packageName = "sms:$sender",
                 title = sender,
                 fullText = text,
+                receivedAt = System.currentTimeMillis(),
+            )
+        )
+
+        if (verdict !is Verdict.Pass) return
+        val passed = verdict.capture
+
+        appLogger.info("SMS", "预筛通过,交给Processor: sender=$sender len=${passed.fullText.length}")
+
+        // 直接交给 Processor（AI + 评分窗口 + 跨渠道金额去重）
+        notificationProcessor.process(
+            NotificationProcessor.Item(
+                packageName = passed.packageName,
+                title = passed.title,
+                fullText = passed.fullText,
                 channel = NotificationProcessor.Channel.SMS,
+                receivedAt = passed.receivedAt,
             )
         )
     }

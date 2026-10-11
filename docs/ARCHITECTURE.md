@@ -67,6 +67,7 @@ app/src/main/java/com/aibill/android/
 ├── domain/
 │   ├── model/                   # Transaction / User / Result / CategoryAndAccount
 │   ├── record/                  # RecordIntake：入账 interface + 意图（见 §2.3）
+│   ├── notification/            # NotificationPrefilter：预筛 interface + 判据词汇（见 §2.4）
 │   ├── repository/              # 10 个接口（Auth/Transaction/Category/Account/Ai/BudgetAndStats/...）
 │   └── usecase/                 # CategoryLearningEngine / StreakTracker
 ├── data/
@@ -76,6 +77,7 @@ app/src/main/java/com/aibill/android/
 │   │   ├── dao/                 # 9 个 DAO
 │   │   └── datastore/           # UserPreferences + SyncLock
 │   ├── record/                  # 入账实现 + RecordClock + RecordWriter（两个 adapter）
+│   ├── notification/            # 预筛实现 + NotificationRuleSource（两个 adapter）
 │   └── remote/
 │       ├── api/                 # 10 个 Retrofit API（含 AppUpdateApi + GithubReleaseApi）
 │       ├── dto/request|response/
@@ -166,6 +168,38 @@ FAB 快速记账在 4 个主 Tab 都可见。
 | 静默入账与手工落离线**不刷 widget** | 保持 |
 | 静默入账的 `client_created_at` 是**无时区**本地串，其余路径是 `Instant`（UTC） | 保持 |
 | 排调度失败只记日志、不回滚、不抛出 | 原先只有落离线这样做，现由入账 module 统一承担 |
+
+### 2.4 预筛（NotificationPrefilter）
+
+「这条通知值不值得当账」曾经散在三个平台 adapter 里，而且**三套口径**：NLS 跑 7 步预筛、
+SMS 只跑 2 步（日报汇总与促销句式两道代码层判据全绕过）、A11Y 自带一套防抖且一条判据都不查。
+更糟的是两个回归测试把判据**抄进了测试源码**（注释里明写着「与生产判据保持同步」）——
+生产判据改了测试不会红。现在判据链与每源状态收在一个 module 后面：
+
+| 归属 | 文件 | 职责 |
+|---|---|---|
+| interface + 词汇 | `domain/notification/NotificationPrefilter.kt` | `Capture`（adapter 的翻译产物）/ `Verdict` / `BlockReason` |
+| 判据快照 | `domain/notification/NotificationRuleSource.kt` | `NotificationRuleSnapshot`、`PerPackageCriteria`、旧硬编码兜底词表 |
+| 纯判据 | `NotificationTextClassifier.kt` / `MarketingCriteria.kt` | 日报汇总、促销句式；营销词 + 强交易特征豁免 |
+| 实现 | `data/notification/NotificationPrefilterImpl.kt` | 判定链顺序、内容记忆（5s 去重 / 5min AI 记忆 / DB 1s）、熔断作用域、全部日志 |
+| 规则数据源 | `data/notification/NotificationRuleSourceAdapters.kt` | `CloudNotificationRuleSource`（生产：云控 + ETag + 代际缓存）/ `InMemoryNotificationRuleSource`（单测：固定规则，零 IO） |
+| 装配 | `di/NotificationPrefilterModule.kt` | 生产绑定指向 `CloudNotificationRuleSource` |
+
+**判定顺序本身是行为**（不要随手调）：自身通知 → 内存内容去重(5s) → 空文本 → 系统分组摘要
+→ 日报汇总 → 促销句式 → 营销词 → 账务判据 → 长窗内容记忆(5min) → AI 熔断 → DB 1s 去重。
+日报/促销两道必须早于营销词：它们含「支出」会触发强交易特征豁免，靠词表拦不住。
+
+**adapter 只做平台翻译**：NLS 取 extras + 清洗拼全文；SMS 拼多段报文；A11Y 保留树上的三重条件与
+8s 防抖 + 金额|商家|页面 冷却（那是 `AccessibilityNodeInfo` 的平台事实），产出的摘要走同一条判据链。
+
+**判据的数据源必须可替换**：这是「interface + 两个 adapter 换回可测性」的第二次应用（第一次是
+`RecordWriter`）。测试因此能在**不碰 SharedPreferences / 网络 / assets** 的前提下直接调用生产判据，
+`NotificationFilterRegressionTest` 也得以把 `scripts/rules.json` 喂进生产映射 + 生产判据——
+回归护栏护的是实现，不再是拷贝。
+
+**刻意保留的渠道差异**：AI 熔断只对 NLS 生效。熔断由 AI 失败驱动，而 SMS 的 401 会落
+`auth_pending` 等同号重登后重放——若 SMS 也被熔断拦在预筛，就是凭空丢交易；A11Y 的包名多为
+已知支付 App，同理。其余状态闸三渠道一致。详见 `docs/NOTIFICATION.md` 的「〇·4」。
 
 ---
 
@@ -652,3 +686,10 @@ sealed class AuthEvent {
 - `AutoRecordActionReceiverUndoTest` 的约束断言（禁「上传/服务器/流水页」）未覆盖 `MSG_NOT_FOUND` 分支；现状文案合规，等值双写断言兜底。
 - `RecordIntakeTest` 直接构造 `RecordIntakeImpl` + `DirectRecordWriter`（不 mock 入账入口），
   因此「入账时界面不崩」这点仍依赖 Hilt 图的编译期正确性，无运行时测试。
+- **adapter 本身仍不可测**（同一道 Hilt 门禁）：`NotificationMonitorService` / `SmsReceiverService` /
+  `PaymentAccessibilityService` 里的「平台翻译」（extras 取文本、报文拼接、节点树三重条件）无法进单测。
+  预筛收口（见 [§2.4](#24-预筛notificationprefilter)）把**判据**从 adapter 挪进了可测的 module，
+  剩下的纯平台代码靠 review 把守——这也正是收口的目的：可测的部分不该藏在 Service 里。
+- 预筛的**云控 adapter** 只在 mock `NotificationRulesManager` 下被测过（`NotificationRuleSourceAdaptersTest`
+  锁「代际变了就重派生」）；「真实云控 → SP → assets 兜底」这条链由 `NotificationRulesManagerTest` 守着，
+  两段之间没有端到端用例——与 §11.3 第一条的跨表事务一样，属需要新基建才能补齐的部分。

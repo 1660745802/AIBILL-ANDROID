@@ -5,6 +5,10 @@ import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.NotificationPrefilter
+import com.aibill.android.domain.notification.SourceChannel
+import com.aibill.android.domain.notification.Verdict
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -110,7 +114,7 @@ internal object PaymentAccessibilityRecognition {
 }
 
 /**
- * 支付页面无障碍识别服务（v4）
+ * 支付页面无障碍识别服务——**平台翻译 adapter**。
  *
  * v3 → v4 改进：
  * 1. 同时监听 TYPE_WINDOW_STATE_CHANGED + TYPE_WINDOW_CONTENT_CHANGED
@@ -119,6 +123,13 @@ internal object PaymentAccessibilityRecognition {
  * 2. 延迟重试：首次有成功关键词但无金额时，500ms 后再试一次（解决渐进渲染）
  * 3. cooldown 去重改为"金额+商家"组合键（避免同金额不同商家被误杀）
  * 4. isRecentPayment 只检查金额节点附近的日期文本（避免页面无关文本触发误杀）
+ *
+ * ## 收口后本类只剩树上的平台事实（架构候选 2）
+ *
+ * 三重条件（命中支付成功词 / 排除词 / 金额文本 / 非历史账单）、
+ * 8s 内容防抖、金额|商家|页面 冷却、扫描节流、延迟重试**全部留在 adapter**——
+ * 它们依赖的是 `AccessibilityNodeInfo` 与事件时序，不是「这条通知值不值得当账」。
+ * 识别成功后产出的摘要交给 [NotificationPrefilter]（与 NLS/SMS 同一套判据）再入库。
  */
 class PaymentAccessibilityService : AccessibilityService() {
 
@@ -126,6 +137,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     @InstallIn(SingletonComponent::class)
     interface A11yEntryPoint {
         fun notificationProcessor(): NotificationProcessor
+        fun prefilter(): NotificationPrefilter
         fun appLogger(): com.aibill.android.util.AppLogger
         fun rulesManager(): NotificationRulesManager
         @com.aibill.android.di.ApplicationScope
@@ -133,6 +145,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     }
 
     private lateinit var notificationProcessor: NotificationProcessor
+    private lateinit var prefilter: NotificationPrefilter
     private lateinit var appLogger: com.aibill.android.util.AppLogger
     private lateinit var rulesManager: NotificationRulesManager
 
@@ -186,6 +199,9 @@ class PaymentAccessibilityService : AccessibilityService() {
         private const val PACKAGE_WECHAT = "com.tencent.mm"
         private const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
 
+        /** 无障碍渠道产出的摘要标题：与页面上「支付成功」一致，也是判据链的 title 输入。 */
+        private const val A11Y_ITEM_TITLE = "支付成功"
+
         /**
          * 服务是否已成功连接到无障碍框架。
          *
@@ -209,6 +225,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         isServiceConnected = true
         val entryPoint = EntryPointAccessors.fromApplication(applicationContext, A11yEntryPoint::class.java)
         notificationProcessor = entryPoint.notificationProcessor()
+        prefilter = entryPoint.prefilter()
         appLogger = entryPoint.appLogger()
         rulesManager = entryPoint.rulesManager()
         serviceScope = entryPoint.applicationScope()
@@ -487,10 +504,10 @@ class PaymentAccessibilityService : AccessibilityService() {
             // ===== 三重条件全部满足 → 构建摘要 =====
             val merchant = findMerchant(rootNode)
             val summary = if (merchant != null) {
-                "支付成功 $amountText $merchant"
+                "$A11Y_ITEM_TITLE $amountText $merchant"
             } else {
                 val context = collectNearbyText(allTexts, amountText)
-                "支付成功 $amountText $context"
+                "$A11Y_ITEM_TITLE $amountText $context"
             }
 
             // 防抖：同内容 8s 内不重复
@@ -522,14 +539,29 @@ class PaymentAccessibilityService : AccessibilityService() {
                 "✓识别支付页: $summary pkg=$packageName keyword=$matchedKeyword tree=${buildNodeTree(rootNode, maxDepth = 5)}",
             )
 
-            // 交给 Processor（和通知渠道统一处理）
+            // 交给预筛（与通知/短信同一套判据）；放行后才进 Processor
             serviceScope.launch {
+                val verdict = prefilter.evaluate(
+                    Capture(
+                        channel = SourceChannel.A11Y,
+                        packageName = packageName,
+                        title = A11Y_ITEM_TITLE,
+                        fullText = summary,
+                        receivedAt = now,
+                    )
+                )
+                if (verdict is Verdict.Block) {
+                    appLogger.debug("A11Y_SKIP", "预筛拦截(${verdict.reason}): pkg=$packageName")
+                    return@launch
+                }
+                val passed = (verdict as Verdict.Pass).capture
                 notificationProcessor.process(
                     NotificationProcessor.Item(
-                        packageName = packageName,
-                        title = "支付成功",
-                        fullText = summary,
+                        packageName = passed.packageName,
+                        title = passed.title,
+                        fullText = passed.fullText,
                         channel = NotificationProcessor.Channel.A11Y,
+                        receivedAt = passed.receivedAt,
                     )
                 )
             }

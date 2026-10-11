@@ -1,0 +1,332 @@
+package com.aibill.android.data.notification
+
+import android.content.Context
+import com.aibill.android.data.local.dao.NotificationRecordDao
+import com.aibill.android.domain.notification.BlockReason
+import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.MarketingCriteria
+import com.aibill.android.domain.notification.NotificationRuleSnapshot
+import com.aibill.android.domain.notification.NotificationPrefilter
+import com.aibill.android.domain.notification.NotificationRuleSource
+import com.aibill.android.domain.notification.NotificationTextClassifier
+import com.aibill.android.domain.notification.PerPackageCriteria
+import com.aibill.android.domain.notification.SourceChannel
+import com.aibill.android.domain.notification.Verdict
+import com.aibill.android.service.NotificationProcessor
+import com.aibill.android.util.AppLogger
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.ConcurrentHashMap
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * 预筛 module 的实现：判据链 + 每源状态。
+ *
+ * 独占：全部文本判据（自身通知 / 空文本 / 系统摘要 / 日报汇总 / 促销句式 / 营销词 /
+ * 账务判据）、去重与记忆状态（内存 5s 内容去重、长窗 5min AI 内容记忆、DB 1s 去重）、
+ * 单包 AI 熔断的查询、以及全部相关日志。
+ * 三个 adapter 只负责把平台对象翻译成 [Capture] 并在放行时调用 `process`。
+ *
+ * ## 判定顺序（顺序本身是行为，不要随手调）
+ *
+ * ```
+ * 0 自身通知   → 1 内存内容去重(5s) → 2 空文本 → 3 系统分组摘要
+ * → 4 日报汇总 → 5 促销句式 → 6 营销词 → 7 账务判据
+ * → 8 长窗 AI 内容记忆(5min) → 9 单包 AI 熔断 → 10 DB 1s 去重
+ * ```
+ *
+ * - **1 必须排在所有早退分支之前**：系统「正在运行」分组摘要会以完全相同的文本
+ *   post 数十次（实测单秒 10 条），原先排在分支之后对它们完全失效；
+ * - **4/5 必须早于 6**：日报含「支出」会触发营销词表的强交易特征豁免，靠词表拦不住
+ *   （实测 1403 条 AI 日志里被误记 2 次）；促销句式同理（2026-10-09 双11漏记）；
+ * - **7 的「宁可不漏」优先于「拦得干净」**：强交易特征豁免是这条链的核心取舍。
+ *
+ * ## 熔断为什么只对 NLS 生效（刻意的差异，不要顺手统一）
+ *
+ * 熔断状态由 **AI 调用结果** 驱动（连续 3 次失败 → 静音 5min），而失败的处置在下游：
+ * - NLS：被拦的只是重复调用，AI 侧没有别的补偿路径；
+ * - SMS：401 失败会由 `NotificationProcessor.enqueueAuthPending` 落库，
+ *   等同号重登后重放——**熔断拦在预筛就会让第 4 条起的银行短信既不入队也不入库**，
+ *   等于凭空造出「交易静默消失」；
+ * - A11Y：包名多为已知支付 App/内嵌支付 App，熔断命中就是直接丢真交易。
+ *
+ * 放行口径不变的前提下，统一熔断的代价是不对称的（丢真交易 vs 多调几次 AI），
+ * 因此本 module 保留 NLS-only。其余状态闸（内容去重 / 内容记忆 / DB 去重）三渠道一致：
+ * 它们压制的是「同一条内容被反复投递」，不产生新的丢账场景。
+ */
+@Singleton
+class NotificationPrefilterImpl @Inject constructor(
+    @ApplicationContext context: Context,
+    private val ruleSource: NotificationRuleSource,
+    private val notificationRecordDao: NotificationRecordDao,
+    private val appLogger: AppLogger,
+    private val processor: NotificationProcessor,
+) : NotificationPrefilter {
+
+    private val ownPackageName: String = context.packageName
+
+    /** 内存级内容去重：防系统短时间内对同一内容多次投递。key = `包名:内容hash`。 */
+    private val recentContentKeys = ConcurrentHashMap<String, Long>()
+
+    /**
+     * 已送 AI 的内容指纹（长窗）。放在过滤层之后：只挡「同一条内容被反复 post」
+     * 导致的重复 AI 调用，不会影响不同内容的正常交易通知。
+     */
+    private val aiCalledContentKeys = ConcurrentHashMap<String, Long>()
+
+    /** 去重日志采样：同一包名的去重命中日志最小间隔 */
+    private val lastDedupLoggedAt = ConcurrentHashMap<String, Long>()
+
+    override suspend fun evaluate(capture: Capture): Verdict {
+        val packageName = capture.packageName
+        val fullText = capture.fullText
+        val now = capture.receivedAt
+        val tag = capture.channel.logTag
+
+        // 0. 自身通知必须丢弃（2026-10-01 日志回归）。
+        // 本 App 自己会发两类通知：自动入库的「已记账 · …」和待审的
+        // 「💰 检测到一笔支出 …」。它们会被自己的监听当成新账务再解析一遍，
+        // 实测 16 次 AI 调用里 3 次是自激，产生的第二个候选靠
+        // 60s 金额去重侥幸挡下（AI 稍慢就会真的记两笔）。
+        // 手动记账 / 小组件 / 外部 Intent 走 AutoRecordActionReceiver 直写 DB，
+        // 不经过本链路，所以这里丢弃自身通知零副作用。
+        if (packageName == ownPackageName) {
+            return block(capture, BlockReason.SELF_NOTIFICATION, "自身通知，跳过: pkg=$packageName")
+        }
+
+        val rules = ruleSource.snapshot()
+
+        // 1. 内存级去重（用内容 hash，防系统重复触发 + 协程竞态）。
+        val contentKey = "$packageName:${fullText.hashCode()}"
+        val lastSeen = recentContentKeys.put(contentKey, now)
+        if (lastSeen != null && (now - lastSeen) < CONTENT_DEDUP_WINDOW_MS) {
+            // 去重是常态（微信视频通话、系统服务会刷出大量重复通知），
+            // 每次都写日志会瞬间冲掉账务结果行（曾出现单秒 6 条）→ 采样。
+            if (now - (lastDedupLoggedAt[packageName] ?: 0L) > DEDUP_LOG_SAMPLE_MS) {
+                lastDedupLoggedAt[packageName] = now
+                appLogger.debug(tag, "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName")
+            }
+            return Verdict.Block(
+                BlockReason.DUPLICATE_CONTENT,
+                "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName",
+            )
+        }
+        // 每次清理过期 key（>10s），防泄漏
+        recentContentKeys.entries.removeIf { now - it.value > 10_000L }
+
+        // 2. 空文本
+        if (fullText.isBlank()) {
+            return block(capture, BlockReason.BLANK_TEXT, "空文本: pkg=$packageName")
+        }
+
+        // 3. 排除系统运行通知和通知分组摘要（无意义）。
+        // 注：分组摘要在 MIUI 上表现为 title 就是「"短信"正在运行」的
+        // 独立通知（text 为空），不是靠类名匹配，所以只判正文。
+        if (fullText.contains(SYSTEM_GROUP_MARKER)) {
+            return block(
+                capture,
+                BlockReason.SYSTEM_GROUP_SUMMARY,
+                "系统/分组摘要: pkg=$packageName title=${capture.title}",
+            )
+        }
+
+        // 4. 排除「记账日报」等统计汇总通知：金额是区间总计而非单笔交易。
+        // 必须早于营销词表判断——日报含「支出」会触发强交易特征豁免，靠词表拦不住。
+        if (NotificationTextClassifier.isSummaryNotification(fullText)) {
+            return block(
+                capture,
+                BlockReason.SUMMARY_REPORT,
+                "汇总/日报通知（非单笔交易）: pkg=$packageName text=${fullText.take(50)}",
+            )
+        }
+
+        // 5. 排除「促销句式」推送：花3得29 / 0元兑 / 加赠99积分 这类结构，
+        // 看着有数字有「元」但不是真实付款（会从促销句式里幻觉出金额）。
+        // 必须排在调 AI 之前——排后面就只是把噪音从待审池挪到记账失败。
+        if (NotificationTextClassifier.isPromoNotification(fullText)) {
+            return block(
+                capture,
+                BlockReason.PROMO_SENTENCE,
+                "促销推送拦截: pkg=$packageName text=${fullText.take(50)}",
+            )
+        }
+
+        // 6. 排除营销/广告/优惠券推送（含金额关键词但不是真实账务）——所有渠道生效
+        if (rules.isMarketing(fullText)) {
+            return block(
+                capture,
+                BlockReason.MARKETING,
+                "营销推送拦截: pkg=$packageName text=${fullText.take(50)}",
+            )
+        }
+
+        // 7. 账务判据：per_package → default_rule → 旧硬编码兜底
+        if (!isLikelyFinancial(rules, packageName, capture.title, fullText)) {
+            return block(
+                capture,
+                BlockReason.NOT_FINANCIAL,
+                "排除(非账务): pkg=$packageName title=${capture.title.take(30)} text=${fullText.take(50)}",
+            )
+        }
+
+        // v6 default_rule 的设计承诺："新增 App 默认自动生效，无需配置"。
+        // 白名单不再一票否决，仅用于日志观测（区分已知/未知来源）。
+        val knownSource = rules.isKnownSource(packageName)
+        if (!knownSource) {
+            appLogger.debug(tag, "包名不在白名单，走 default_rule 兜底: pkg=$packageName")
+        }
+        appLogger.info(
+            tag,
+            "✓通过过滤: pkg=$packageName title=${capture.title.take(30)} fullText=${fullText.take(80)}"
+        )
+
+        // 8. 长窗内容记忆：同一条内容 5 分钟内不重复调 AI。
+        //    资讯类 App 会把同一条推送反复 post（实测 6 次调 AI / 5 次 5001），
+        //    5s 短窗拦不住，长窗把重复调用压到 1 次。
+        aiCalledContentKeys.entries.removeIf { now - it.value > AI_CONTENT_MEMORY_MS }
+        val lastAiCall = aiCalledContentKeys[contentKey]
+        if (lastAiCall != null && (now - lastAiCall) < AI_CONTENT_MEMORY_MS) {
+            return block(
+                capture,
+                BlockReason.AI_MEMORY,
+                "长窗内容记忆(${AI_CONTENT_MEMORY_MS / 60_000}min)，跳过重复调AI: pkg=$packageName",
+            )
+        }
+
+        // 9. 单包 AI 熔断：非支付类包名连续 AI 失败 N 次后静音一段时间。
+        //    只对「不在白名单」的包生效，银行/微信/支付宝永不被熔断，
+        //    避免真交易因网络抖动被误杀。作用域见类 KDoc。
+        if (capture.channel == SourceChannel.NLS && !knownSource && processor.isAiMuted(packageName, now)) {
+            return block(capture, BlockReason.AI_MUTED, "AI 熔断中（该包连续失败），跳过: pkg=$packageName")
+        }
+        aiCalledContentKeys[contentKey] = now
+
+        // 10. DB 1s 内容去重（防同一条通知被系统多次分发）
+        val duplicate = notificationRecordDao.findDuplicate(packageName, fullText, now - DB_DEDUP_WINDOW_MS)
+        if (duplicate != null) {
+            return block(capture, BlockReason.DB_DUPLICATE, "DB去重(1s): pkg=$packageName")
+        }
+
+        return Verdict.Pass(capture)
+    }
+
+    /**
+     * 排除层：判断通知是否"可能是账务"。
+     * 返回 false = 100% 不是账务，直接丢弃。
+     * 返回 true = 不确定，交给 AI 判断。
+     * 设计原则：极保守，宁可多放不漏。
+     */
+    private fun isLikelyFinancial(
+        rules: NotificationRuleSnapshot,
+        packageName: String,
+        title: String,
+        fullText: String,
+    ): Boolean {
+        // 优先1：per_package 精确配置（格式特殊的App，如微信/支付宝）
+        val cfg = rules.perPackage.firstOrNull { it.matches(packageName) }
+        if (cfg != null) return evaluateByConfig(rules, cfg, title, fullText)
+        // 优先2：default_rule（大多数App走这套：营销排除 + payment_signal 放行）
+        if (rules.defaultExcludeContent.isNotEmpty()) {
+            // 营销词命中但含强交易特征（尾号/卡号/入账…）时交 AI 判定（宁可多放不漏）
+            if (rules.isMarketing(fullText)) return false
+            return rules.paymentSignal.containsMatchIn(fullText)
+        }
+        // 回退：旧硬编码逻辑（default_rule 也为空时，向后兼容）
+        return legacyIsLikelyFinancial(rules, packageName, title, fullText)
+    }
+
+    /**
+     * 规则驱动的通用判断（per_package 配置）。
+     * 顺序：排除词（title/content）→ pass_all → title/前缀/金额符号放行。
+     */
+    private fun evaluateByConfig(
+        rules: NotificationRuleSnapshot,
+        cfg: PerPackageCriteria,
+        title: String,
+        fullText: String,
+    ): Boolean {
+        // 1. 排除词优先（命中直接拒绝）
+        if (cfg.excludeTitleContains.any { title.contains(it) }) return false
+        // 正文排除词命中时，与 default_rule 分支保持**同一语义**：含强交易特征
+        // （尾号/卡号/入账/支出…）时不否决，交给后续放行条件 / AI 判定。
+        // 否则会出现「营销词 + 真交易」被误杀（详见 MarketingCriteria）。
+        if (MarketingCriteria.isMarketingByWords(fullText, cfg.excludeContentContains)) return false
+        // 2. 全放行
+        if (cfg.passAll) return true
+        // 3. title 精确/包含放行
+        if (cfg.passTitleExact.any { title == it }) return true
+        if (cfg.passTitleContains.any { title.contains(it) }) return true
+        // 4. 正文前缀放行
+        val textAfterTitle = fullText.substringAfter(title).trim()
+        if (cfg.passMsgPrefix.any { textAfterTitle.startsWith(it) }) return true
+        // 5. 金额符号放行
+        if (cfg.requireAmountSymbol) {
+            return rules.legacy.wechatAmountSymbols.any { textAfterTitle.contains(it) } ||
+                fullText.contains("¥") || fullText.contains("￥")
+        }
+        return false
+    }
+
+    /** 旧硬编码逻辑，保证向后兼容（云控 per_package 与 default_rule 都落空时才会走到）。 */
+    private fun legacyIsLikelyFinancial(
+        rules: NotificationRuleSnapshot,
+        packageName: String,
+        title: String,
+        fullText: String,
+    ): Boolean {
+        val legacy = rules.legacy
+        return when (packageName) {
+            PACKAGE_WECHAT -> {
+                if (legacy.wechatDirectPassTitles.any { title == it }) return true
+                if (legacy.wechatDirectPassTitleContains.any { title.contains(it) }) return true
+                val textAfterTitle = fullText.substringAfter(title).trim()
+                if (legacy.wechatMessagePrefixes.any { textAfterTitle.startsWith(it) }) return true
+                legacy.wechatAmountSymbols.any { textAfterTitle.contains(it) }
+            }
+            PACKAGE_ALIPAY -> legacy.alipayAllowedTitleKeywords.any { title.contains(it) }
+            else -> {
+                if (rules.bankPackagePatterns.any { packageName.contains(it) || packageName.startsWith(it) }) {
+                    return true
+                }
+                rules.paymentSignal.containsMatchIn(fullText)
+            }
+        }
+    }
+
+    /** 拦截统一从这里走：日志只在这里打一次，避免三个 adapter 各写一份口径。 */
+    private fun block(capture: Capture, reason: BlockReason, message: String): Verdict.Block {
+        appLogger.debug(capture.channel.logTag, message)
+        return Verdict.Block(reason, message)
+    }
+
+    private companion object {
+        const val DB_DEDUP_WINDOW_MS = 1_000L
+
+        /** 内部内容去重窗口：同内容 hash 在此窗口内只处理一次 */
+        const val CONTENT_DEDUP_WINDOW_MS = 5_000L
+
+        /**
+         * 已送 AI 的内容记忆窗口。
+         *
+         * 5s 短窗挡不住系统对同一通知的反复 post（实测资讯类推送间隔
+         * 6s / 12s / 5min / 25min），导致同一条新闻标题重复烧 AI 且连续
+         * 5001。长窗命中只跳过「调 AI」，DB 记录与去重逻辑不受影响。
+         */
+        const val AI_CONTENT_MEMORY_MS = 5 * 60_000L
+
+        /** 去重日志采样间隔：同一包名的去重命中最多每分钟记一条 */
+        const val DEDUP_LOG_SAMPLE_MS = 60_000L
+
+        /** MIUI 的分组摘要标记（只判正文，title 上没有） */
+        const val SYSTEM_GROUP_MARKER = "正在运行"
+
+        /**
+         * 旧硬编码分支按**字面量**匹配包名，与云控 `wechat.package_name` 无关。
+         *
+         * 保持字面量是刻意不动：改成读云控会让「云控漏字段」时的兜底行为变化，
+         * 那属于放行策略变更，不在本次收口范围内。
+         */
+        const val PACKAGE_WECHAT = "com.tencent.mm"
+        const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
+    }
+}
