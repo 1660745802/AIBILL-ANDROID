@@ -1,18 +1,29 @@
 package com.aibill.android.service
 
+import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.PendingTransactionEntity
-import com.aibill.android.domain.model.Result
-import com.aibill.android.domain.repository.TransactionRepository
+import com.aibill.android.data.record.DirectRecordWriter
+import com.aibill.android.data.record.RecordClock
+import com.aibill.android.data.record.RecordIntakeImpl
+import com.aibill.android.data.record.RecordMoment
+import com.aibill.android.domain.record.RecordIntake
+import com.aibill.android.domain.usecase.CategoryLearningEngine
+import com.aibill.android.domain.usecase.StreakTracker
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import android.content.Context
 
 /**
  * `ExternalActionReceiver.handleAutoConfirmRecord`（静默入账本体）的不变量测试。
@@ -27,13 +38,21 @@ import org.junit.jupiter.api.Test
  * 故 `handleAutoConfirmRecord` 被提为 `internal`（与 `AutoRecordActionReceiver.handleUndo`
  * 同款先例），测试直接调它，绕开 Hilt/goAsync，也因此**不需要 Robolectric**。
  *
+ * ## 架构候选 1 之后的变化（不是行为变化）
+ *
+ * 写入路径已收进 [RecordIntake] module，本类改为组装**真实的** [RecordIntakeImpl]
+ * （落库走 `DirectRecordWriter`，只把 Room 事务换成直写），因此断言仍打在
+ * 真实的入账实现上，而不是 mock 掉入账入口。
+ * 排同步不再经 `TransactionRepository.syncPending()`（它内部做的就是调
+ * `SyncScheduler.scheduleSyncIfNeeded` + 捕异常），改为直接断言 `SyncScheduler`；
+ * 这也让「入队抛异常」这条原先不可测的分支变成了可测分支。
+ *
  * ## 锁什么
  *
- * 1. 写库后**必须**排一次同步，且顺序是 insert → syncPending。
+ * 1. 写库后**必须**排一次同步，且顺序是 insert → schedule。
  *    历史缺口：这里只写库，排同步全靠网络跳变 / 启动 / 用户手动点，
  *    WiFi 常连时这条 pending 会一直躺着。
- * 2. `syncPending` 返回 `Result.Error` 时**不抛**，且记账**不受影响**
- *    （账已落库，不能回滚 = 不能丢用户数据）。
+ * 2. 排调度抛异常时**不抛**，且记账**不受影响**（账已落库，不能回滚 = 不能丢用户数据）。
  *
  * ## ⚠️ 覆盖缺口（诚实声明，不要夸大）
  *
@@ -45,33 +64,46 @@ import org.junit.jupiter.api.Test
  *
  * 也不要以为本类验证了权限安全——它完全没碰 `checkPermission`。
  *
- * ## 为什么不测「syncPending 抛异常」
- *
- * 生产实现 `TransactionRepositoryImpl.syncPending()` 内部已 `catch (Exception)`
- * 并返回 `Result.Error`，所以真实的 `syncPending` **不会抛**。
- * 本函数因此没有再加一层 try/catch（那会把「编程错误」也静默掉）。
- * mock 抛异常属于**测试构造出来的伪场景**，不构成需要锁的契约，故跳过该用例。
- *
  * ## Success = 已入队，不是已同步
  *
- * `syncPending` 只是把 `SyncWorker` 入队（`NetworkType.CONNECTED` + unique work 串行），
+ * `scheduleSyncIfNeeded` 只是把 `SyncWorker` 入队（`NetworkType.CONNECTED` + unique work 串行），
  * 真实上传结果由队列状态与横幅呈现。不得据此在生产代码里改成「已同步 / 已上传」类文案。
  */
 class ExternalActionReceiverTest {
 
     private lateinit var pendingDao: PendingTransactionDao
-    private lateinit var transactionRepository: TransactionRepository
+    private lateinit var recordIntake: RecordIntake
     private lateinit var receiver: ExternalActionReceiver
 
     @BeforeEach
     fun setUp() {
         pendingDao = mockk(relaxed = true)
-        transactionRepository = mockk(relaxed = true)
-        coEvery { transactionRepository.syncPending() } returns Result.Success(Unit)
+        val notificationRecordDao: NotificationRecordDao = mockk(relaxed = true)
+        val context: Context = mockk(relaxed = true)
+        val rulesManager: NotificationRulesManager = mockk(relaxed = true)
+
+        mockkObject(SyncScheduler)
+        every { SyncScheduler.scheduleSyncIfNeeded(any()) } returns Unit
+
+        recordIntake = RecordIntakeImpl(
+            context = context,
+            recordWriter = DirectRecordWriter(pendingDao, notificationRecordDao),
+            recordClock = object : RecordClock {
+                override fun now(): RecordMoment = RecordMoment.system()
+            },
+            userPreferences = mockk(relaxed = true),
+            categoryLearningEngine = mockk<CategoryLearningEngine>(relaxed = true),
+            streakTracker = mockk<StreakTracker>(relaxed = true),
+            rulesManager = rulesManager,
+        )
 
         receiver = ExternalActionReceiver()
-        receiver.pendingTransactionDao = pendingDao
-        receiver.transactionRepository = transactionRepository
+        receiver.recordIntake = recordIntake
+    }
+
+    @AfterEach
+    fun tearDown() {
+        unmockkObject(SyncScheduler)
     }
 
     /**
@@ -88,18 +120,18 @@ class ExternalActionReceiverTest {
 
         coVerifyOrder {
             pendingDao.insert(any())
-            transactionRepository.syncPending()
+            SyncScheduler.scheduleSyncIfNeeded(any())
         }
     }
 
     /**
-     * 同步入队失败：**不抛**（`goAsync` 的 `finish()` 由 `finally` 保证，不受影响；
+     * 排同步抛异常：**不抛**（`goAsync` 的 `finish()` 由 `finally` 保证，不受影响；
      * 真正的风险是异常逃出 `ApplicationScope` 后**崩进程**——本工程无全局
      * `CoroutineExceptionHandler`），且记账已落库不受影响——insert 仍恰好 1 次。
      */
     @Test
     fun `scheduling failure - does not throw and leaves the stored transaction alone`() = runTest {
-        coEvery { transactionRepository.syncPending() } returns Result.Error(5001, "WM down")
+        every { SyncScheduler.scheduleSyncIfNeeded(any()) } throws RuntimeException("WM down")
 
         // 不抛即通过；下面两条断言把「不影响记账」钉死
         receiver.handleAutoConfirmRecord(
@@ -109,7 +141,7 @@ class ExternalActionReceiverTest {
         )
 
         coVerify(exactly = 1) { pendingDao.insert(any()) }
-        coVerify(exactly = 1) { transactionRepository.syncPending() }
+        coVerify(exactly = 1) { SyncScheduler.scheduleSyncIfNeeded(any()) }
     }
 
     /** 写入内容本身：静默入账的来源标记与金额不能被同步逻辑改动。 */

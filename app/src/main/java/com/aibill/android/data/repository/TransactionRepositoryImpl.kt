@@ -2,7 +2,6 @@ package com.aibill.android.data.repository
 
 import android.content.Context
 import com.aibill.android.data.local.dao.PendingTransactionDao
-import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
 import com.aibill.android.data.remote.dto.request.TransactionItemRequest
@@ -13,13 +12,14 @@ import com.aibill.android.domain.model.SyncQueueStatus
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.domain.record.RecordIntent
+import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.repository.TransactionPage
 import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.service.SyncScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
-import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,6 +27,7 @@ import javax.inject.Singleton
 class TransactionRepositoryImpl @Inject constructor(
     private val transactionApi: TransactionApi,
     private val pendingTransactionDao: PendingTransactionDao,
+    private val recordIntake: RecordIntake,
     @ApplicationContext private val context: Context,
 ) : TransactionRepository {
 
@@ -48,6 +49,11 @@ class TransactionRepositoryImpl @Inject constructor(
      * 跳变、App 启动那一次、以及用户手动点同步。WiFi 常连时的瞬时失败记账会一直躺着，
      * 直到下一次跳变——而 `README.md` 与 Home 待同步横幅都在承诺「联网后会自动补传」。
      * 既然写库的那一刻就知道「这笔需要上传」，就该在这一刻排。
+     *
+     * 本函数现在只做一件事：把 `Transaction` 翻译成
+     * [RecordIntent.ManualOffline] 交给入账 module。实体装配、跨表写入、排调度与
+     * 排同步失败的处置（只记日志、不回滚、不抛出，理由见 `RecordIntakeImpl` 的类 KDoc）
+     * 都已下沉到那里；下面四条契约**行为保持不变**，只是换了实现位置。
      *
      * ## 语义边界：Success 只代表「已入队」
      *
@@ -75,34 +81,8 @@ class TransactionRepositoryImpl @Inject constructor(
      * 当前唯一调用者：`ManualRecordViewModel`（仅网络错误分支）。
      */
     override suspend fun createTransactionOffline(transaction: Transaction) {
-        val entity = PendingTransactionEntity(
-            clientId = transaction.clientId,
-            type = transaction.type.value,
-            amount = transaction.amount,
-            categoryId = transaction.categoryId,
-            // PR #43：冗余存 name/icon，未同步期间列表展示不需 join 分类表
-            categoryName = transaction.categoryName,
-            categoryIcon = transaction.categoryIcon,
-            accountId = transaction.accountId,
-            accountName = transaction.accountName,
-            targetAccountId = transaction.targetAccountId,
-            description = transaction.description,
-            date = transaction.date,
-            time = transaction.time,
-            tags = transaction.tags?.joinToString(","),
-            source = transaction.source.value,
-            clientCreatedAt = java.time.Instant.now().toString(),
-            syncStatus = "pending",
-        )
-        pendingTransactionDao.insert(entity)
-        // 顺序不变量：**先写库、后排调度**。反过来可能让 worker 早于本行提交
-        // 就跑到空队列（白跑一轮，还要等下一次跳变才补传）。
-        // ⚠️ 这只是**入队**，不代表已上传。
-        try {
-            SyncScheduler.scheduleSyncIfNeeded(context)
-        } catch (e: Exception) {
-            Timber.w(e, "离线入库成功，但排同步失败 clientId=%s", entity.clientId)
-        }
+        // 顺序不变量「先写库、后排调度」由入账 module 保证。
+        recordIntake.intake(RecordIntent.ManualOffline(transaction))
     }
 
     override suspend fun getTransactions(query: TransactionQuery): Result<TransactionPage> {

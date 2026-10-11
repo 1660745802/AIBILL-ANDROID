@@ -44,6 +44,7 @@ class TransactionRepositorySyncPendingTest {
         val repo = TransactionRepositoryImpl(
             transactionApi = transactionApi,
             pendingTransactionDao = pendingTransactionDao,
+            recordIntake = recordIntake(),
             context = context,
         )
 
@@ -60,6 +61,7 @@ class TransactionRepositorySyncPendingTest {
         val repo = TransactionRepositoryImpl(
             transactionApi = transactionApi,
             pendingTransactionDao = pendingTransactionDao,
+            recordIntake = recordIntake(),
             context = context,
         )
 
@@ -68,4 +70,24 @@ class TransactionRepositorySyncPendingTest {
         assertTrue(result is com.aibill.android.domain.model.Result.Error)
         assertTrue((result as com.aibill.android.domain.model.Result.Error).code == -2)
     }
+
+    /**
+     * 本类只测 [TransactionRepositoryImpl.syncPending]，它不碰入账；
+     * 但构造器需要入账入口，给一个只带 mock 依赖的真实实现即可（不会被调用）。
+     */
+    private fun recordIntake(): com.aibill.android.domain.record.RecordIntake =
+        com.aibill.android.data.record.RecordIntakeImpl(
+            context = context,
+            recordWriter = com.aibill.android.data.record.DirectRecordWriter(
+                pendingTransactionDao,
+                mockk(relaxed = true),
+            ),
+            recordClock = object : com.aibill.android.data.record.RecordClock {
+                override fun now() = com.aibill.android.data.record.RecordMoment.system()
+            },
+            userPreferences = mockk(relaxed = true),
+            categoryLearningEngine = mockk(relaxed = true),
+            streakTracker = mockk(relaxed = true),
+            rulesManager = mockk(relaxed = true),
+        )
 }

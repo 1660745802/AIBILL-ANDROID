@@ -4,18 +4,15 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.entity.NotificationRecordEntity
-import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
-import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.domain.record.RecordIntent
+import com.aibill.android.domain.record.RecordIntake
+import com.aibill.android.domain.record.SyncScheduling
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.NotificationRecordRepository
-import com.aibill.android.domain.repository.PendingTransactionRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.domain.usecase.CategoryLearningEngine
-import com.aibill.android.service.SyncScheduler
-import com.aibill.android.service.WidgetDataUpdater
-import com.aibill.android.util.NotificationSourceMapping
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.channels.Channel
@@ -27,10 +24,6 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.UUID
 import javax.inject.Inject
 
 /**
@@ -40,7 +33,7 @@ import javax.inject.Inject
 @HiltViewModel
 class NotificationCenterViewModel @Inject constructor(
     private val notificationRepository: NotificationRecordRepository,
-    private val pendingTransactionRepository: PendingTransactionRepository,
+    private val recordIntake: RecordIntake,
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
     private val categoryLearningEngine: CategoryLearningEngine,
@@ -173,6 +166,12 @@ class NotificationCenterViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 把一条通知翻译成入账意图。写库、排同步、刷 widget 都在入账 module 里。
+     *
+     * @param scheduling 批量确认传 [SyncScheduling.DEFERRED]：循环结束后才统一排一次同步
+     *   （历史行为——每笔一次排调度会把 1 次 WorkManager 入队变成 N 次）。
+     */
     private suspend fun insertTransaction(
         recordId: Long,
         type: String,
@@ -181,42 +180,26 @@ class NotificationCenterViewModel @Inject constructor(
         packageName: String,
         categoryId: Int? = null,
         tags: List<String> = emptyList(),
+        scheduling: SyncScheduling = SyncScheduling.IMMEDIATE,
     ) {
-        val clientId = UUID.randomUUID().toString()
-        val now = Date()
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-
         val typeKey = if (type == "income") "income" else "expense"
         val category = categoryId?.let { id ->
             _categoriesByType.value[typeKey]?.firstOrNull { it.id == id }
         }
 
-        val pendingTransaction = PendingTransactionEntity(
-            clientId = clientId,
-            type = type,
-            amount = amountCents,
-            categoryId = categoryId,
-            categoryName = category?.name,
-            categoryIcon = category?.icon,
-            description = description,
-            date = dateFormat.format(now),
-            time = timeFormat.format(now),
-            tags = if (tags.isNotEmpty()) tags.joinToString(",") else null,
-            source = "app_notification",
-            sourceDetail = NotificationSourceMapping.friendlyName(packageName),
-            clientCreatedAt = now.toInstant().toString(),
-        )
-
-        pendingTransactionRepository.insert(pendingTransaction)
-        notificationRepository.updateStatus(recordId, "confirmed", clientId)
-
-        SyncScheduler.scheduleSyncIfNeeded(appContext)
-        WidgetDataUpdater.notifyTransactionAdded(
-            context = appContext,
-            type = TransactionType.fromValue(type) ?: TransactionType.EXPENSE,
-            amountCents = amountCents,
-            date = pendingTransaction.date,
+        recordIntake.intake(
+            RecordIntent.NotificationCenterConfirm(
+                recordId = recordId,
+                packageName = packageName,
+                amount = amountCents,
+                type = type,
+                description = description,
+                categoryId = categoryId,
+                categoryName = category?.name,
+                categoryIcon = category?.icon,
+                tags = tags,
+                scheduling = scheduling,
+            )
         )
     }
 
@@ -244,35 +227,19 @@ class NotificationCenterViewModel @Inject constructor(
                         return@forEach
                     }
 
-                    val clientId = UUID.randomUUID().toString()
-                    val now = Date()
-                    val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                    val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-
-                    val pendingTransaction = PendingTransactionEntity(
-                        clientId = clientId,
+                    // 逐条入账；排调度统一推迟到循环结束（历史行为，见 insertTransaction）
+                    insertTransaction(
+                        recordId = item.id,
                         type = record.parsedType ?: "expense",
-                        amount = amount,
-                        description = record.parsedDescription,
-                        date = dateFormat.format(now),
-                        time = timeFormat.format(now),
-                        source = "app_notification",
-                        sourceDetail = NotificationSourceMapping.friendlyName(record.packageName),
-                        clientCreatedAt = now.toInstant().toString(),
-                    )
-
-                    pendingTransactionRepository.insert(pendingTransaction)
-                    notificationRepository.updateStatus(item.id, "confirmed", clientId)
-                    WidgetDataUpdater.notifyTransactionAdded(
-                        context = appContext,
-                        type = TransactionType.fromValue(record.parsedType ?: "expense") ?: TransactionType.EXPENSE,
                         amountCents = amount,
-                        date = pendingTransaction.date,
+                        description = record.parsedDescription,
+                        packageName = record.packageName,
+                        scheduling = SyncScheduling.DEFERRED,
                     )
                     confirmed++
                 }
 
-                SyncScheduler.scheduleSyncIfNeeded(appContext)
+                recordIntake.scheduleBatchSync()
 
                 val msg = when {
                     confirmed == 0 && skipped > 0 -> "无可自动确认的记录，$skipped 条需手动填写金额"

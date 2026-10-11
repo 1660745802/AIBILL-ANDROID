@@ -5,6 +5,12 @@ import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
+import com.aibill.android.data.record.DirectRecordWriter
+import com.aibill.android.data.record.RecordClock
+import com.aibill.android.data.record.RecordIntakeImpl
+import com.aibill.android.data.record.RecordMoment
+import com.aibill.android.data.record.RecordWriter
+import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.data.remote.api.AiApi
 import com.aibill.android.data.remote.dto.response.AiParseResponseDto
 import com.aibill.android.data.remote.dto.response.AiParsedItemDto
@@ -93,14 +99,35 @@ class NotificationProcessorTest {
             aiApi = aiApi,
             aiResultValidator = aiResultValidator,
             notificationRecordDao = notificationRecordDao,
-            pendingTransactionDao = pendingTransactionDao,
+            recordIntake = intake(),
             userPreferences = userPreferences,
             categoryLearningEngine = categoryLearningEngine,
             appLogger = appLogger,
             rulesManager = rulesManager,
-            streakTracker = streakTracker,
         )
         processor.testDispatcher = testDispatcher
+    }
+
+    /**
+     * 组装真实的入账 module，只把落库换成 [DirectRecordWriter]（不包 Room 事务）。
+     *
+     * 这样本类仍然是在**真实的入账实现**上断言「写了几行队列表 / 写了什么字段」，
+     * 而不是 mock 掉入账入口。日期用系统时钟——入账字段本身由 RecordIntakeTest 钉。
+     */
+    private fun intake(): RecordIntake {
+        val writer: RecordWriter = DirectRecordWriter(pendingTransactionDao, notificationRecordDao)
+        val clock = object : RecordClock {
+            override fun now(): RecordMoment = RecordMoment.system()
+        }
+        return RecordIntakeImpl(
+            context = context,
+            recordWriter = writer,
+            recordClock = clock,
+            userPreferences = userPreferences,
+            categoryLearningEngine = categoryLearningEngine,
+            streakTracker = streakTracker,
+            rulesManager = rulesManager,
+        )
     }
 
     @AfterEach

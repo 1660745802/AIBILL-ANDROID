@@ -1,7 +1,13 @@
 package com.aibill.android.service
 
 import com.aibill.android.data.local.dao.NotificationRecordDao
+import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.NotificationRecordEntity
+import com.aibill.android.data.record.DirectRecordWriter
+import com.aibill.android.data.record.RecordClock
+import com.aibill.android.data.record.RecordIntakeImpl
+import com.aibill.android.data.record.RecordMoment
+import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.data.remote.dto.response.AiParseResponseDto
 import com.aibill.android.data.remote.dto.response.AiParsedItemDto
 import com.aibill.android.data.remote.dto.response.ApiResponse
@@ -39,19 +45,31 @@ class NotificationLoopGuardTest {
         dao: NotificationRecordDao = mockk(relaxed = true),
     ): NotificationProcessor {
         val context = mockk<android.content.Context>(relaxed = true)
+        val pendingDao: PendingTransactionDao = mockk(relaxed = true)
+        val rulesManager = mockk<NotificationRulesManager>(relaxed = true)
+        val intake: RecordIntake = RecordIntakeImpl(
+            context = context,
+            recordWriter = DirectRecordWriter(pendingDao, dao),
+            recordClock = object : RecordClock {
+                override fun now(): RecordMoment = RecordMoment.system()
+            },
+            userPreferences = mockk(relaxed = true),
+            categoryLearningEngine = mockk(relaxed = true),
+            streakTracker = mockk(relaxed = true),
+            rulesManager = rulesManager,
+        )
         return NotificationProcessor(
             context = context,
             aiApi = aiApi,
             aiResultValidator = AiResultValidator(mockk(relaxed = true)),
             notificationRecordDao = dao,
-            pendingTransactionDao = mockk(relaxed = true),
+            recordIntake = intake,
             userPreferences = mockk(relaxed = true) {
                 coEvery { aiParseEnabled } returns kotlinx.coroutines.flow.flowOf(true)
             },
             categoryLearningEngine = mockk(relaxed = true),
-            streakTracker = mockk(relaxed = true),
             appLogger = com.aibill.android.util.AppLogger(mockk(relaxed = true)),
-            rulesManager = mockk(relaxed = true),
+            rulesManager = rulesManager,
         )
     }
 

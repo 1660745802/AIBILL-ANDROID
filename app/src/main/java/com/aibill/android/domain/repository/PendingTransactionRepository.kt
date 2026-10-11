@@ -32,7 +32,14 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
  * 也不要反过来把本接口改成 pending-only。两者回答不同问题，各自正确。
  */
 interface PendingTransactionRepository {
-    /** 插入单条待同步交易 */
+    /**
+     * 插入单条待同步交易。
+     *
+     * ⚠️ **已无生产调用点，保留仅为兼容**：「记一笔」的唯一入口现在是
+     * [com.aibill.android.domain.record.RecordIntake]（架构候选 1 收口），它会
+     * 把跨表写入包在 Room 事务里，并负责排同步与 widget。从这里直插会绕过这些，
+     * 也不会回填 `notification_records`，因此**新增记账路径不得再用本方法**。
+     */
     suspend fun insert(entity: PendingTransactionEntity)
 
     /**

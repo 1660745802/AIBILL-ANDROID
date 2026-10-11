@@ -2,13 +2,13 @@ package com.aibill.android.service
 
 import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
-import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
-import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.remote.api.AiApi
 import com.aibill.android.data.remote.dto.response.AiParsedItemDto
-import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.domain.record.CapturedNotification
+import com.aibill.android.domain.record.RecordIntent
+import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.util.AiResultValidator
 import com.aibill.android.util.AppLogger
@@ -24,11 +24,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import retrofit2.HttpException
 import timber.log.Timber
-import java.time.Instant
-import java.time.LocalDate
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -52,10 +47,9 @@ class NotificationProcessor @Inject constructor(
     private val aiApi: AiApi,
     private val aiResultValidator: AiResultValidator,
     private val notificationRecordDao: NotificationRecordDao,
-    private val pendingTransactionDao: PendingTransactionDao,
+    private val recordIntake: RecordIntake,
     private val userPreferences: UserPreferences,
     private val categoryLearningEngine: CategoryLearningEngine,
-    private val streakTracker: com.aibill.android.domain.usecase.StreakTracker,
     private val appLogger: AppLogger,
     private val rulesManager: NotificationRulesManager,
 ) {
@@ -483,11 +477,8 @@ class NotificationProcessor @Inject constructor(
                     description = candidate.description,
                 )
                 appLogger.info("NLS", "✓入库: ¥${"%.2f".format(candidate.amount/100.0)} ${candidate.description} type=${candidate.type} score=${candidate.score} channel=${candidate.item.channel}")
-                // 触发学习
-                val learnKey = candidate.description?.trim()
-                if (!learnKey.isNullOrBlank() && candidate.categoryId != null) {
-                    categoryLearningEngine.learnFromCorrection(learnKey, candidate.categoryId)
-                }
+                // 分类学习已下沉到入账 module（RecordIntent.NotificationAuto 的学习步骤）：
+                // 学习必须在「写库成功之后」才发生，而写库成败只有 module 内部知道。
             } else {
                 appLogger.info("NLS", "→待审: amount=${candidate.amount} type=${candidate.type} cat=${candidate.categoryName} score=${candidate.score}")
                 insertPendingReview(candidate.item, candidate.amount, candidate.type, candidate.categoryName, candidate.description)
@@ -558,6 +549,10 @@ class NotificationProcessor @Inject constructor(
 
     /**
      * 信息完整，直接入库 + 发轻通知
+     *
+     * 本函数只剩「把 AI 候选项翻译成入账意图」：clientId 生成、entity 装配、跨表事务、
+     * 排同步、刷 streak / widget、隐私档与回执、分类学习全部由 [RecordIntake] 承担
+     * （架构候选 1 收口）。想看入账行为请看 `data/record/RecordIntakeImpl`。
      */
     private suspend fun directInsert(
         item: Item,
@@ -568,64 +563,21 @@ class NotificationProcessor @Inject constructor(
         categoryIcon: String? = null,
         description: String?,
     ) {
-        val clientId = UUID.randomUUID().toString()
-        val now = LocalDate.now().toString()
-        val time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
-
-        val recordId = notificationRecordDao.insert(
-            NotificationRecordEntity(
-                packageName = item.packageName,
-                title = item.title.ifBlank { null },
-                content = item.fullText,
-                parsedAmount = amount,
-                parsedType = type,
-                parsedDescription = description,
-                status = "confirmed",
-                receivedAt = item.receivedAt,
+        recordIntake.intake(
+            RecordIntent.NotificationAuto(
+                captured = CapturedNotification(
+                    packageName = item.packageName,
+                    title = item.title,
+                    content = item.fullText,
+                    receivedAt = item.receivedAt,
+                ),
+                amount = amount,
+                type = type,
+                categoryId = categoryId,
+                categoryName = categoryName,
+                categoryIcon = categoryIcon,
+                description = description,
             )
-        )
-
-        val pending = PendingTransactionEntity(
-            clientId = clientId,
-            amount = amount,
-            categoryId = categoryId,
-            categoryName = categoryName,
-            categoryIcon = categoryIcon,
-            description = description,
-            date = now,
-            time = time,
-            type = type,
-            source = "app_notification",
-            sourceDetail = NotificationSourceMapping.friendlyName(item.packageName, rulesManager),
-            syncStatus = "pending",
-            clientCreatedAt = Instant.now().toString(),
-        )
-        // NOTE: P1 跨表一致性——上面三步应包在 Room 事务里（同 NotificationActionReceiver.handleConfirm）。
-        // 当前未包事务：mockk 1.13.13 不支持自定义 answer 函数（无 coAnswers/answers/coAndThen 接受 suspend lambda），
-        // 无法 mock 事务包装使 lambda 执行——退无事务写法保留现有 13 个 test 走通。
-        // 等 mockk 升级到 5+ / Robolectric 集成测试后补事务包裹 + 事务回滚 test。
-        pendingTransactionDao.insert(pending)
-        notificationRecordDao.updateStatus(recordId, "confirmed", clientId)
-
-        SyncScheduler.scheduleSyncIfNeeded(context)
-        streakTracker.onTransactionRecorded()
-
-        WidgetDataUpdater.notifyTransactionAdded(
-            context = context,
-            type = TransactionType.fromValue(type) ?: TransactionType.EXPENSE,
-            amountCents = amount,
-            date = now,
-        )
-
-        val privacyMode = userPreferences.notificationPrivacy.first()
-        NotificationHelper.showAutoRecordedNotification(
-            context = context,
-            recordId = recordId,
-            amount = amount,
-            description = description,
-            source = NotificationSourceMapping.friendlyName(item.packageName, rulesManager),
-            privacyMode = privacyMode,
-            clientId = clientId,
         )
     }
 

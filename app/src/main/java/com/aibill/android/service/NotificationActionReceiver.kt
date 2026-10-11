@@ -5,18 +5,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.aibill.android.data.local.dao.NotificationRecordDao
-import com.aibill.android.data.local.dao.PendingTransactionDao
-import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.di.ApplicationScope
-import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.domain.record.RecordIntent
+import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.util.NotificationHelper
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.UUID
 import javax.inject.Inject
 
 /**
@@ -27,8 +22,13 @@ import javax.inject.Inject
 class NotificationActionReceiver : BroadcastReceiver() {
 
     @Inject lateinit var notificationRecordDao: NotificationRecordDao
-    @Inject lateinit var pendingTransactionDao: PendingTransactionDao
-    @Inject lateinit var categoryLearningEngine: com.aibill.android.domain.usecase.CategoryLearningEngine
+
+    /**
+     * 入账（记一笔）唯一入口。clientId 生成、跨表事务、排调度、widget、回执、学习全在里面，
+     * 本类只负责「读审计记录 → 翻译成入账意图」与「忽略」动作
+     * （架构候选 1 收口，见 `domain/record/RecordIntake`）。
+     */
+    @Inject lateinit var recordIntake: RecordIntake
 
     // PR 修复：使用 Hilt 注入的进程级 ApplicationScope，
     // 替代之前"每次实例化 new SupervisorJob+IO"的内存泄漏。
@@ -55,7 +55,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         when (intent.action) {
             ACTION_CONFIRM -> receiverScope.launch {
                 try {
-                    handleConfirm(context, recordId)
+                    handleConfirm(recordId)
                 } finally {
                     pendingResult.finish()
                 }
@@ -65,7 +65,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     val note = androidx.core.app.RemoteInput.getResultsFromIntent(intent)
                         ?.getCharSequence(com.aibill.android.util.NotificationHelper.REMOTE_INPUT_KEY)
                         ?.toString()
-                    handleConfirmWithNote(context, recordId, note)
+                    handleConfirmWithNote(recordId, note)
                 } finally {
                     pendingResult.finish()
                 }
@@ -89,59 +89,20 @@ class NotificationActionReceiver : BroadcastReceiver() {
         NotificationHelper.cancelPendingAutoCancel(notificationId)
     }
 
-    private suspend fun handleConfirm(context: Context, recordId: Long) {
+    private suspend fun handleConfirm(recordId: Long) {
         val record = notificationRecordDao.findById(recordId) ?: return
 
-        val clientId = UUID.randomUUID().toString()
-        val now = Date()
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-
-        // 自动填分类：用描述作为关键词尝试匹配学习过的分类
-        val description = record.parsedDescription
-        val predictedCategoryId = if (!description.isNullOrBlank()) {
-            categoryLearningEngine.matchCategory(description)
-        } else null
-
-        val pendingTransaction = PendingTransactionEntity(
-            clientId = clientId,
-            amount = record.parsedAmount ?: 0,
-            type = record.parsedType ?: "expense",
-            categoryId = predictedCategoryId,
-            description = description,
-            date = dateFormat.format(now),
-            time = timeFormat.format(now),
-            source = "app_notification",
-            sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
-            clientCreatedAt = now.toInstant().toString()
-        )
-
-        // NOTE: P1 跨表一致性——以下两步应包在 Room 事务里（同 NotificationProcessor.directInsert）。
-        // 当前未包事务：mockk 1.13.13 不支持自定义 answer 函数（无 coAnswers/answers/coAndThen 接受 suspend lambda），
-        // 无法 mock 事务包装使 lambda 执行——退无事务写法保留现有 13 个 test 走通。
-        // 等 mockk 升级到 5+ / Robolectric 集成测试后补事务包裹 + 事务回滚 test。
-        pendingTransactionDao.insert(pendingTransaction)
-        notificationRecordDao.updateStatus(recordId, "confirmed", clientId)
-
-        // 触发后台同步
-        SyncScheduler.scheduleSyncIfNeeded(context)
-
-        // 通知 Widget 刷新：原子累加本月收支
-        WidgetDataUpdater.notifyTransactionAdded(
-            context = context,
-            type = com.aibill.android.domain.model.TransactionType.fromValue(record.parsedType ?: "expense") ?: TransactionType.EXPENSE,
-            amountCents = record.parsedAmount ?: 0,
-            date = pendingTransaction.date,
-        )
-
-        // 轻量反馈通知：'✓ 已记录'，3秒后自动消失
-        NotificationHelper.showAutoRecordedNotification(
-            context = context,
-            recordId = recordId + 100000, // 使用不同 id 避免与原确认通知冲突
-            amount = record.parsedAmount ?: 0,
-            description = record.parsedDescription,
-            source = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
-            privacyMode = false,
+        // 弹窗直接确认：learn = false。带备注确认见 handleConfirmWithNote（learn = true）。
+        // 两者「一个学一个不学」是历史差异，收口只搬运不统一。
+        recordIntake.intake(
+            RecordIntent.NotificationConfirm(
+                recordId = recordId,
+                packageName = record.packageName,
+                amount = record.parsedAmount ?: 0,
+                type = record.parsedType ?: "expense",
+                description = record.parsedDescription,
+                learn = false,
+            )
         )
     }
 
@@ -153,56 +114,20 @@ class NotificationActionReceiver : BroadcastReceiver() {
      * 用户通过 RemoteInput 输入备注后确认记账。
      * 流程与 handleConfirm 相同，但用用户输入的 note 覆盖 parsedDescription。
      */
-    private suspend fun handleConfirmWithNote(context: Context, recordId: Long, note: String?) {
+    private suspend fun handleConfirmWithNote(recordId: Long, note: String?) {
         val record = notificationRecordDao.findById(recordId) ?: return
 
-        val clientId = UUID.randomUUID().toString()
-        val now = Date()
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-
         val description = note?.takeIf { it.isNotBlank() } ?: record.parsedDescription
-        val predictedCategoryId = if (!description.isNullOrBlank()) {
-            categoryLearningEngine.matchCategory(description)
-        } else null
 
-        val pendingTransaction = PendingTransactionEntity(
-            clientId = clientId,
-            type = record.parsedType ?: "expense",
-            amount = record.parsedAmount ?: 0,
-            categoryId = predictedCategoryId,
-            description = description,
-            date = dateFormat.format(now),
-            time = timeFormat.format(now),
-            source = "app_notification",
-            sourceDetail = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
-            clientCreatedAt = now.toInstant().toString()
-        )
-
-        // 跨表原子写入（理由同 handleConfirm）：
-        pendingTransactionDao.insert(pendingTransaction)
-        notificationRecordDao.updateStatus(recordId, "confirmed", clientId)
-        SyncScheduler.scheduleSyncIfNeeded(context)
-
-        WidgetDataUpdater.notifyTransactionAdded(
-            context = context,
-            type = TransactionType.fromValue(record.parsedType ?: "expense") ?: TransactionType.EXPENSE,
-            amountCents = record.parsedAmount ?: 0,
-            date = pendingTransaction.date,
-        )
-
-        // 学习分类映射
-        if (predictedCategoryId != null && !description.isNullOrBlank()) {
-            categoryLearningEngine.learnFromCorrection(description.trim(), predictedCategoryId)
-        }
-
-        // 轻反馈通知
-        NotificationHelper.showAutoRecordedNotification(
-            context = context,
-            recordId = recordId + 100000,
-            amount = record.parsedAmount ?: 0,
-            description = description,
-            source = com.aibill.android.util.NotificationSourceMapping.friendlyName(record.packageName),
+        recordIntake.intake(
+            RecordIntent.NotificationConfirm(
+                recordId = recordId,
+                packageName = record.packageName,
+                amount = record.parsedAmount ?: 0,
+                type = record.parsedType ?: "expense",
+                description = description,
+                learn = true,
+            )
         )
     }
 }

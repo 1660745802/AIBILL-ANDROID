@@ -1,11 +1,20 @@
 package com.aibill.android.data.repository
 
 import android.content.Context
+import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.PendingTransactionEntity
+import com.aibill.android.data.record.DirectRecordWriter
+import com.aibill.android.data.record.RecordClock
+import com.aibill.android.data.record.RecordIntakeImpl
+import com.aibill.android.data.record.RecordMoment
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.domain.record.RecordIntake
+import com.aibill.android.domain.usecase.CategoryLearningEngine
+import com.aibill.android.domain.usecase.StreakTracker
+import com.aibill.android.service.NotificationRulesManager
 import com.aibill.android.service.SyncScheduler
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -35,6 +44,12 @@ import org.junit.jupiter.api.Test
  * 而不是 `mockkStatic`——基建直接照抄 `TransactionRepositorySyncPendingTest`。
  * 不需要真实 WorkManager，也就不碰 Robolectric/WorkManager 测试驱动。
  *
+ * ## 架构候选 1 之后的变化（不是行为变化）
+ *
+ * `createTransactionOffline` 现在只把 `Transaction` 翻译成入账意图交给
+ * [com.aibill.android.domain.record.RecordIntake]，本类组装**真实的**入账实现
+ * （落库走 `DirectRecordWriter`，只把 Room 事务换成直写），断言仍打在真实实现上。
+ *
  * ## Success = 已入队，不是已同步
  *
  * 本类任何文案/断言都**不得**出现「已同步 / 已上传」：`scheduleSyncIfNeeded` 只是
@@ -46,6 +61,7 @@ class TransactionRepositoryCreateOfflineTest {
     private val context: Context = mockk(relaxed = true)
     private val transactionApi: TransactionApi = mockk()
     private val pendingDao: PendingTransactionDao = mockk(relaxed = true)
+    private val notificationRecordDao: NotificationRecordDao = mockk(relaxed = true)
 
     @BeforeEach
     fun setUp() {
@@ -61,7 +77,24 @@ class TransactionRepositoryCreateOfflineTest {
     private fun repo() = TransactionRepositoryImpl(
         transactionApi = transactionApi,
         pendingTransactionDao = pendingDao,
+        recordIntake = intake(),
         context = context,
+    )
+
+    /**
+     * 真实的入账 module，只把落库换成 [DirectRecordWriter]（不包 Room 事务）——
+     * 于是断言仍然打在真实的入账实现上，而不是 mock 掉入账入口。
+     */
+    private fun intake(): RecordIntake = RecordIntakeImpl(
+        context = context,
+        recordWriter = DirectRecordWriter(pendingDao, notificationRecordDao),
+        recordClock = object : RecordClock {
+            override fun now(): RecordMoment = RecordMoment.system()
+        },
+        userPreferences = mockk(relaxed = true),
+        categoryLearningEngine = mockk<CategoryLearningEngine>(relaxed = true),
+        streakTracker = mockk<StreakTracker>(relaxed = true),
+        rulesManager = mockk<NotificationRulesManager>(relaxed = true),
     )
 
     private fun transaction(clientId: String = "C-offline-1") = Transaction(

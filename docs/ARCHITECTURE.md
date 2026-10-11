@@ -66,6 +66,7 @@ app/src/main/java/com/aibill/android/
 ├── di/                          # Hilt 模块（5 个：Network/Database/Repository/Work/CoroutineScope）
 ├── domain/
 │   ├── model/                   # Transaction / User / Result / CategoryAndAccount
+│   ├── record/                  # RecordIntake：入账 interface + 意图（见 §2.3）
 │   ├── repository/              # 10 个接口（Auth/Transaction/Category/Account/Ai/BudgetAndStats/...）
 │   └── usecase/                 # CategoryLearningEngine / StreakTracker
 ├── data/
@@ -74,6 +75,7 @@ app/src/main/java/com/aibill/android/
 │   │   ├── entity/              # 9 个 Entity
 │   │   ├── dao/                 # 9 个 DAO
 │   │   └── datastore/           # UserPreferences + SyncLock
+│   ├── record/                  # 入账实现 + RecordClock + RecordWriter（两个 adapter）
 │   └── remote/
 │       ├── api/                 # 10 个 Retrofit API（含 AppUpdateApi + GithubReleaseApi）
 │       ├── dto/request|response/
@@ -99,6 +101,71 @@ app/src/main/java/com/aibill/android/
 | 独立页面 | `ManualRecord` / `TransactionDetail` / `NotificationCenter` / `Settings` / `PermissionGuide` / `CategoryManage` / `AccountManage` / `Trash` |
 
 FAB 快速记账在 4 个主 Tab 都可见。
+
+### 2.3 入账（RecordIntake）
+
+「让一笔账成为本地事实」是全 App 唯一一件**到处都在发生**的事：通知自动识别、通知弹窗确认、
+通知中心单条/批量确认、外部 Intent 静默入账、手工记账落离线。历史上这 6 条路径各写一份
+`PendingTransactionEntity`，各排一次同步、各刷一次 widget、各发一次回执——
+任何一条不变量的改动都要改 6 处，于是漏过一次（见下方「日期口径」）。
+
+现在它们共用一个入口。**interface 与实现归属**如下：
+
+| 归属 | 文件 | 职责 |
+|---|---|---|
+| interface + 意图 | `domain/record/RecordIntake.kt` | 外部只表达**意图**，不拼字段清单 |
+| 实现 | `data/record/RecordIntakeImpl.kt`（`@Singleton`） | clientId 生成、时钟、entity 装配、分类预测/学习、排同步调度、widget 累加、回执/轻通知、隐私档读取 |
+| 跨表写入 | `data/record/RecordWriter.kt` | `RoomRecordWriter`（生产，Room 真事务）/ `DirectRecordWriter`（单测，直写） |
+| 时钟 | `data/record/RecordClock.kt` | `RecordMoment` 一次取 `date`/`time`/`client_created_at`，三者同源 |
+| 装配 | `di/RecordIntakeModule.kt` | 生产绑定指向 `RoomRecordWriter` |
+
+**意图 = 一条历史写入路径的全部差异**（拆 subtype 而非布尔开关，
+就是为了让「统一这些差异」变成一个显眼的动作）：
+
+| 意图 | 语义 | 回执 | 预测分类 | 学习 | 排调度 |
+|---|---|---|---|---|---|
+| `NotificationAuto` | AI 结果完整，直接入账 | auto（带撤销/查看，读隐私档） | 否（上游已算） | 是 | 每笔 |
+| `NotificationConfirm` | 通知弹窗确认 / 带备注确认 | confirm-receipt（隐私写死 false） | 是 | `learn` 传入 | 每笔 |
+| `NotificationCenterConfirm` | 通知中心单条 / 批量确认 | 无 | 否 | 否 | `SyncScheduling` |
+| `ExternalQuickRecord` | 外部 Intent 静默入账 | 无 | 否 | 否 | 每笔 |
+| `ManualOffline` | 手工记账网络失败落离线 | 无 | 否 | 否 | 每笔 |
+
+**顺序不变量：先写库、后排调度**（反过来可能让 SyncWorker 早于本行提交就跑到空队列）。
+**排调度失败只记日志、绝不回滚、绝不抛出**——账已落库，回滚等于丢用户数据；
+抛出去则会让异常逃出调用方协程（本工程无全局 `CoroutineExceptionHandler`）= 崩进程。
+
+#### 跨表原子写入为什么要两个 adapter
+
+一笔通知入账要写两张表（`pending_transactions` + 回填 `notification_records`），
+必须原子，否则会出现「队列里有账、审计记录还停在 `parsed`」→ 用户再点一次确认就变成重复账。
+生产走 `RoomRecordWriter`（`RoomDatabase.withTransaction`），
+单测走 `DirectRecordWriter`——因为 **mockk 1.13.13 跑不动 `withTransaction` 的 suspend lambda**
+（没有接受 suspend lambda 的自定义 answer），这正是历史实现把事务注释掉并留下 `// NOTE: P1` 的原因。
+用两个 adapter 换回可测性，比继续注释「等 mockk 升级」靠谱。
+
+#### 日期口径（本次修的缺陷）
+
+落库 `date` 必须是 ISO `YYYY-MM-DD`（服务端契约，见 §3.4），一律用 `java.time`。
+此前 4 条路径用 `SimpleDateFormat(pattern, Locale.getDefault())` 落 `date`/`time`：
+泰语 locale 下写进库的是佛历年 `2569-07-10`、阿拉伯语 locale 下是 `٢٠٢٦-٠٧-١٠`。
+`RecordIntakeTest` 把 `Locale.setDefault()` 切到 `th-TH` / `ar-EG` 后断言仍是 ISO 年份，
+这条不变由测试钉死（把实现改回 `SimpleDateFormat` 会立刻变红）。
+
+#### 刻意保留的历史差异（不要"顺手统一"）
+
+收口只搬运，不统一。以下差异都是既有事实，不是 bug：
+
+| 差异 | 现状 |
+|---|---|
+| 通知中心批量确认不预测分类、不学习 | 保持 |
+| 弹窗直接确认不学习，带备注确认才学习 | 保持（意图参数 `learn`） |
+| 弹窗确认隐私档写死 `false`，AI 自动入账读偏好 | 保持 |
+| AI 自动入账的 `source_detail` 走**云控**来源名映射，其余走**硬编码** | 保持 |
+| 弹窗确认只写 `category_id`；落离线冗余写 `category_name`/`category_icon` | 保持 |
+| 批量确认**循环结束后才排一次同步** | 保持（`RecordIntake.scheduleBatchSync()`；每笔一次会把 1 次 WorkManager 入队变成 N 次） |
+| 静默入账与手工落离线**不刷 widget** | 保持 |
+| 静默入账的 `client_created_at` 是**无时区**本地串，其余路径是 `Instant`（UTC） | 保持 |
+| 排调度失败只记日志、不回滚、不抛出 | 原先只有落离线这样做，现由入账 module 统一承担 |
 
 ---
 
@@ -318,8 +385,8 @@ sealed class AuthEvent {
 > 记账请求因网络失败而落离线时，本进程的网络**并未发生跳变**，此时若只靠
 > `NetworkMonitor` 的跳变监听，这笔账会一直躺在队列里，直到用户手动点同步或进程重启
 > ——而 README 与 Home 待同步横幅都在承诺「联网后会自动补传」。
-> 其余触发点（网络跳变、App 启动、通知入账、通知中心确认、401 后同账号重登）
-> 是**兜底**，用于覆盖进程被杀期间的积压。完整取舍见 `createTransactionOffline` 的 KDoc。
+> 其余触发点（网络跳变、启动、401 后同账号重登）是**兜底**，用于覆盖进程被杀期间的积压。
+> 完整取舍见 `createTransactionOffline` 与 `RecordIntakeImpl` 的 KDoc，入账侧的排调度收口见 [§2.3](#23-入账recordintake)。
 
 ### 6.2 SyncWorker 要点
 
@@ -370,7 +437,7 @@ sealed class AuthEvent {
 
 | Worker | 类型 | 调度 | 触发时机 |
 |---|---|---|---|
-| SyncWorker | **OneTime** | NetworkType.CONNECTED + APPEND_OR_REPLACE | **① 落离线时即刻排**（`createTransactionOffline` / `ExternalActionReceiver.handleAutoConfirmRecord` 写完 pending 后）；② `NetworkMonitor` 监听「离线→在线」跳变；③ App 启动（`AiBillApp.scheduleWorkers`）；④ 通知自动记账（`NotificationProcessor`）；⑤ 通知中心确认（`NotificationCenterViewModel`）；⑥ `NotificationActionReceiver` 处理待确认通知；⑦ 用户手动点同步（`TransactionRepository.syncPending`）；⑧ 同账号重新登录后（`onSameAccountRelogin` 重置 401 记录并主动排） |
+| SyncWorker | **OneTime** | NetworkType.CONNECTED + APPEND_OR_REPLACE | **① 落库时即刻排**（`RecordIntake`：手工落离线 / 外部 Intent 静默入账 / 通知自动入账 / 弹窗确认 / 通知中心单条确认写完 pending 后；通知中心批量确认在循环结束排一次）；② `NetworkMonitor` 监听「离线→在线」跳变；③ App 启动（`AiBillApp.scheduleWorkers`）；④ 用户手动点同步（`TransactionRepository.syncPending`）；⑤ 同账号重新登录后（`onSameAccountRelogin` 重置 401 记录并主动排） |
 | RulesSyncWorker | Periodic | NetworkType.CONNECTED | 拉取云端规则（ETag/304） |
 | UpdateCheckWorker | Periodic | NetworkType.CONNECTED | GitHub Release 检查 |
 | NlsHealthCheckWorker | Periodic | 通知监听断连恢复 |
@@ -574,8 +641,14 @@ sealed class AuthEvent {
 
 ### 11.3 测试基建的技术债
 
+- **跨表写入的事务回滚未覆盖**：生产用 `RoomRecordWriter`（Room 真事务），单测用 `DirectRecordWriter`（直写），
+  因为 mockk 1.13.13 跑不动 `RoomDatabase.withTransaction { }` 的 suspend lambda。
+  因此「三步写在一个事务里、中途失败不留下半行」这条**没有自动化测试**（见 [§2.3](#23-入账recordintake)）。
+  根治需引入 `hilt-android-testing` + Room 集成测试（Robolectric 或 androidTest），属新增依赖，需单独立项。
 - `PendingTransactionDao.cleanSyncedBefore` 等三个「清理」方法定义未调用（存储无上限，见 §6.2）。
 - `HomeViewModelTest` 用 5 个非 relaxed mock 打桩 `init` 的四路 `refresh()`；`init` 再新增任何调用都会让全部用例因 `no answer found` 变红（红因与被测行为无关）。
 - **Hilt 门禁挡住 receiver/service 的可测性**：`Hilt_*` 生成类在 `onReceive` / `goAsync()` 均 `inject()`，而本工程 Robolectric 给不出 `@HiltAndroidApp` 的 `Application`（`Application::class` 抛 Hilt 前置条件；`AiBillApp::class` 抛 `AndroidKeyStore not found`）。为此 `ExternalActionReceiver` 把 autoConfirm 块提取为 `internal suspend fun` 才能测（先例：`AutoRecordActionReceiver.handleUndo`）。根治需引入 `hilt-android-testing` + `HiltTestApplication`（新增依赖，需单独立项）。
+- `ExternalActionReceiver` 的「权限被拒」与「autoConfirm=false」两条「不排同步」分支仍不可测（入账收口未改动 `onReceive`，靠 review 把守）。
 - `AutoRecordActionReceiverUndoTest` 的约束断言（禁「上传/服务器/流水页」）未覆盖 `MSG_NOT_FOUND` 分支；现状文案合规，等值双写断言兜底。
-- `ExternalActionReceiver` 的「权限被拒」与「autoConfirm=false」两条「不排同步」分支仍不可测（本切片未改动，靠 review 把守）。
+- `RecordIntakeTest` 直接构造 `RecordIntakeImpl` + `DirectRecordWriter`（不 mock 入账入口），
+  因此「入账时界面不崩」这点仍依赖 Hilt 图的编译期正确性，无运行时测试。
