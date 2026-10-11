@@ -450,18 +450,34 @@ class NotificationProcessor @Inject constructor(
     /**
      * 10s 到期，执行去重 + 入库/待审。统一路径。
      *
-     * ⚠️ 这一步现在**含一次网络往返**（[directInsert] 要先拿到服务端确认）：
-     * [insertMutex] 的持有时长从「一条 SQL」变成「一条 SQL + 一次 POST（超时 15s）」。
-     * 代价是同一时刻的其它通知要排队等；换来的是「本地有行 ⇒ 服务端必有账」
-     * 这条不变量不必靠后台补传来维持。
+     * ## 两段式：去重判定在锁内，写库（含一次网络往返）在锁外
+     *
+     * [insertMutex] 只保护**判定段**——去重查询 + 认领必须原子，否则同一笔交易的跨渠道
+     * 视图会被放行两次（两笔重复账）。
+     *
+     * 写库必须挪到锁外：[directInsert] 要先拿服务端确认，一次 POST 最长 15s。
+     * 若把它关在锁里，这段时间内**所有**其它通知的判定都只能排队——而通知入账是每天
+     * 几十次的核心循环，一条慢请求不该让整条流水线停摆。
+     *
+     * ## 为什么把 markProcessed 也放进判定段
+     *
+     * 标记就是「这一笔已被认领」。放在 POST **之后**会出现这样的窗口：
+     * 第一笔的 POST 还在飞、DB 里还没有 confirmed 行，此时同一笔的另一个渠道视图进来，
+     * 内存与 DB 都查不到它 → 两笔重复账。放进判定段，跨渠道视图在这段窗口内依然被拦下。
+     *
+     * ⚠️ 同渠道同包名同金额**不是**重复（两杯咖啡）：判定段会同时放行两条，
+     * 它们各有自己的 `clientId`，各自 POST 互不影响。这条边界由
+     * `NotificationProcessorTest` 的「网络期间不阻塞另一条通知」钉住。
      */
     private suspend fun commitBest(candidate: ScoredCandidate) {
         appLogger.debug("NLS", "commitBest: amount=${candidate.amount} score=${candidate.score} isComplete=${candidate.isComplete}")
-        insertMutex.withLock {
+
+        // ── 判定段（锁内）：去重 + 认领，必须原子 ──
+        val admitted = insertMutex.withLock {
             // 跨渠道去重（内存）
             if (isDuplicateAcrossChannels(candidate.amount, candidate.item.channel, candidate.item.packageName, candidate.receivedAt)) {
                 appLogger.debug("NLS", "去重(内存): channel=${candidate.item.channel} amount=${candidate.amount}")
-                return@withLock
+                return@withLock false
             }
             // 跨渠道去重（DB 兜底）
             val dbDuplicate = notificationRecordDao.findRecentConfirmedFromOtherChannel(
@@ -469,35 +485,37 @@ class NotificationProcessor @Inject constructor(
             )
             if (dbDuplicate != null) {
                 appLogger.debug("NLS", "去重(DB): amount=${candidate.amount}")
-                return@withLock
-            }
-
-            // 入库或待审
-            if (candidate.isComplete && directInsert(
-                    item = candidate.item,
-                    amount = candidate.amount,
-                    type = candidate.type,
-                    categoryId = candidate.categoryId,
-                    categoryName = candidate.categoryName,
-                    categoryIcon = candidate.categoryIcon,
-                    description = candidate.description,
-                )
-            ) {
-                appLogger.info("NLS", "✓入库: ¥${"%.2f".format(candidate.amount/100.0)} ${candidate.description} type=${candidate.type} score=${candidate.score} channel=${candidate.item.channel}")
-                // 分类学习已下沉到入账 module（RecordIntent.NotificationAuto 的学习步骤）：
-                // 学习必须在「服务端确认之后」才发生，而成败只有 module 内部知道。
-            } else {
-                // 信息不完整 → 待审；**信息完整但服务端没确认**（没网 / 业务错误 / 鉴权）
-                // 也走同一条路：一个字节都没落库，通知原文还在，用户在通知中心看得见、
-                // 能手动确认，信息不丢（ADR 的失败降级路径）。
-                if (candidate.isComplete) {
-                    appLogger.warn("NLS", "→服务端未确认，降级待审: amount=${candidate.amount} score=${candidate.score}")
-                } else {
-                    appLogger.info("NLS", "→待审: amount=${candidate.amount} type=${candidate.type} cat=${candidate.categoryName} score=${candidate.score}")
-                }
-                insertPendingReview(candidate.item, candidate.amount, candidate.type, candidate.categoryName, candidate.description)
+                return@withLock false
             }
             markProcessed(candidate.amount, candidate.item.channel, candidate.item.packageName)
+            true
+        }
+        if (!admitted) return
+
+        // ── 写入段（锁外）：含一次网络往返，不能占着锁 ──
+        if (candidate.isComplete && directInsert(
+                item = candidate.item,
+                amount = candidate.amount,
+                type = candidate.type,
+                categoryId = candidate.categoryId,
+                categoryName = candidate.categoryName,
+                categoryIcon = candidate.categoryIcon,
+                description = candidate.description,
+            )
+        ) {
+            appLogger.info("NLS", "✓入库: ¥${"%.2f".format(candidate.amount/100.0)} ${candidate.description} type=${candidate.type} score=${candidate.score} channel=${candidate.item.channel}")
+            // 分类学习已下沉到入账 module（RecordIntent.NotificationAuto 的学习步骤）：
+            // 学习必须在「服务端确认之后」才发生，而成败只有 module 内部知道。
+        } else {
+            // 信息不完整 → 待审；**信息完整但服务端没确认**（没网 / 业务错误 / 鉴权）
+            // 也走同一条路：一个字节都没落库，通知原文还在，用户在通知中心看得见、
+            // 能手动确认，信息不丢。
+            if (candidate.isComplete) {
+                appLogger.warn("NLS", "→服务端未确认，降级待审: amount=${candidate.amount} score=${candidate.score}")
+            } else {
+                appLogger.info("NLS", "→待审: amount=${candidate.amount} type=${candidate.type} cat=${candidate.categoryName} score=${candidate.score}")
+            }
+            insertPendingReview(candidate.item, candidate.amount, candidate.type, candidate.categoryName, candidate.description)
         }
     }
 

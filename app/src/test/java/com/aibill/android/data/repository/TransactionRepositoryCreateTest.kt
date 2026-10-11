@@ -3,9 +3,11 @@ package com.aibill.android.data.repository
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.confirmingApiResponse
 import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
+import com.aibill.android.data.remote.dto.request.TransactionItemRequest
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.data.remote.dto.response.CreateTransactionResponse
 import com.aibill.android.data.remote.dto.response.TransactionDto
+import com.aibill.android.data.remote.duplicatesApiResponse
 import com.aibill.android.data.remote.unconfirmedApiResponse
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
@@ -29,8 +31,10 @@ import java.io.IOException
  * 少任何一条都是 [Result.Error]，而这条路**根本不写本地**（本类没有任何 DAO 可注入），
  * 所以「报错」与「本地没留下东西」是同一件事的两面。
  *
- * `duplicates[]` 不算确认：服务端只说「这个 client_id 已经存在」，
- * 于是调用方按失败处理（宁可多问一次，也不把别人的回执当自己的成功）。
+ * `duplicates[]` **也算确认**：服务端说「这个 client_id 已经存在」，也就是这笔账确实
+ * 在服务端。`RetryInterceptor` 对 IOException 会重发同一个 body，首次请求其实已落库、
+ * 只是响应丢了，重发拿到的正是 `duplicates[]`——判成失败就会「服务端已有这笔，
+ * 却告诉用户没记上」，用户重记就是重复账。只有两个列表都没匹配到自己才算失败。
  *
  * ## 这里曾经有什么
  *
@@ -80,36 +84,37 @@ class TransactionRepositoryCreateTest {
     }
 
     @Test
-    fun `duplicates do not count as confirmation`() = runTest {
-        // 重试请求（RetryInterceptor 重发同一个 body）时服务端会把它放进 duplicates[]。
-        // 按成功判据的字面口径，这条不算「返回 created」，因此如实报失败。
-        val dto = TransactionDto(
-            id = 9,
-            clientId = "C-C",
-            type = "expense",
-            amount = 3200,
-            categoryId = null,
-            categoryName = null,
-            categoryIcon = null,
-            accountId = null,
-            accountName = null,
-            targetAccountId = null,
-            targetAccountName = null,
-            description = null,
-            date = "2026-07-05",
-            time = null,
-            createdAt = null,
-            updatedAt = null,
-        )
-        coEvery { transactionApi.createTransactions(any()) } returns ApiResponse(
-            code = 0,
-            data = CreateTransactionResponse(created = emptyList(), duplicates = listOf(dto)),
-            message = "ok",
-        )
+    fun `duplicates count as confirmation`() = runTest {
+        // 重试请求（RetryInterceptor 重发同一个 body）时服务端会把它放进 duplicates[]：
+        // 这笔账确实在服务端，判失败会诱使用户重记 = 重复账。
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            duplicatesApiResponse(firstArg())
+        }
 
         val result = repository.createTransactions(listOf(tx("C-C")))
 
-        assertTrue(result is Result.Error)
+        assertTrue(result is Result.Success, "服务端已有这笔 = 记上了")
+        assertEquals(listOf("C-C"), (result as Result.Success).data.map { it.clientId })
+    }
+
+    @Test
+    fun `one created and one duplicate in the same batch are both confirmations`() = runTest {
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            val request = firstArg<CreateTransactionRequest>()
+            ApiResponse(
+                code = 0,
+                data = CreateTransactionResponse(
+                    created = listOf(dtoFor(request.items[0])),
+                    duplicates = listOf(dtoFor(request.items[1])),
+                ),
+                message = "ok",
+            )
+        }
+
+        val result = repository.createTransactions(listOf(tx("A"), tx("B")))
+
+        assertTrue(result is Result.Success, "逐条判定，不能被整批的「有 created」遮住")
+        assertEquals(listOf("A", "B"), (result as Result.Success).data.map { it.clientId })
     }
 
     @Test
@@ -123,6 +128,25 @@ class TransactionRepositoryCreateTest {
         assertEquals(422, (result as Result.Error).code)
         assertEquals("金额必须大于 0", result.message)
     }
+
+    private fun dtoFor(item: TransactionItemRequest) = TransactionDto(
+        id = 7,
+        clientId = item.clientId,
+        type = item.type,
+        amount = item.amount,
+        categoryId = item.categoryId,
+        categoryName = null,
+        categoryIcon = null,
+        accountId = item.accountId,
+        accountName = null,
+        targetAccountId = item.targetAccountId,
+        targetAccountName = null,
+        description = item.description,
+        date = item.date,
+        time = item.time,
+        createdAt = null,
+        updatedAt = null,
+    )
 
     @Test
     fun `io failure becomes the network error code so the ui can say there is no network`() = runTest {

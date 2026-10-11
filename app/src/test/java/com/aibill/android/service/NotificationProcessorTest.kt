@@ -13,6 +13,7 @@ import com.aibill.android.data.record.RecordWriter
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.data.remote.api.AiApi
 import com.aibill.android.data.remote.api.TransactionApi
+import com.aibill.android.data.remote.confirmingApiResponse
 import com.aibill.android.data.remote.confirmingTransactionApi
 import com.aibill.android.data.remote.unconfirmedApiResponse
 import com.aibill.android.data.remote.dto.response.AiParseResponseDto
@@ -25,6 +26,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
@@ -299,6 +301,52 @@ class NotificationProcessorTest {
                 any(), any(), any(), any(), any(), any(), any(), any(),
             )
         }
+    }
+
+    @Test
+    @DisplayName("3c. 服务端确认在锁外：一条通知在等网络时不阻塞另一条通知的入库")
+    fun slowServerRoundTrip_doesNotBlockOtherNotifications() = runTest(testDispatcher) {
+        val gate = CompletableDeferred<Unit>()
+        var firstCall = true
+        // 第一条请求卡在网络上（gate 未放行），第二条照常返回
+        coEvery { transactionApi.createTransactions(any()) } coAnswers {
+            if (firstCall) {
+                firstCall = false
+                gate.await()
+            }
+            confirmingApiResponse(firstArg())
+        }
+        coEvery { aiApi.parse(any()) } coAnswers {
+            val input = firstArg<Map<String, String>>()["input"].orEmpty()
+            if (input.contains("1.00")) {
+                makeApiResponse(makeAiItem(amount = 100, description = "第一笔"))
+            } else {
+                makeApiResponse(makeAiItem(amount = 200, description = "第二笔"))
+            }
+        }
+        setupValidatorValid()
+        coEvery { notificationRecordDao.insert(any()) } returns 5L
+        coEvery { notificationRecordDao.findRecentConfirmedFromOtherChannel(any(), any(), any()) } returns null
+
+        processor.process(makeItem(fullText = "支付成功 ¥1.00"))
+        testDispatcher.scheduler.runCurrent()
+        advanceTimeBy(11_000)
+        testDispatcher.scheduler.runCurrent()
+        // 第一条已进 commitBest 并卡在服务端确认上，一行都还没写
+        coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
+
+        processor.process(makeItem(fullText = "支付成功 ¥2.00"))
+        testDispatcher.scheduler.runCurrent()
+        advanceTimeBy(11_000)
+        testDispatcher.scheduler.runCurrent()
+
+        // 第二条已经落库：确认请求没有占着 insertMutex，否则它会一直等到 gate 放行
+        coVerify(exactly = 1) { pendingTransactionDao.insert(any()) }
+
+        gate.complete(Unit)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        coVerify(exactly = 2) { pendingTransactionDao.insert(any()) }
     }
 
     @Test

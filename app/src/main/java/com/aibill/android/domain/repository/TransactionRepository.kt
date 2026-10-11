@@ -6,19 +6,20 @@ import com.aibill.android.domain.model.Transaction
 /**
  * **服务端那侧**的账。
  *
- * 「记一笔」的唯一成功判据是服务端 `POST /transactions` 返回 `created` 且按
- * `client_id` 匹配到 id —— [createTransactions] 因此在 `code==0` 之外还要核对回执，
- * 少一条就当没记上。本地缓存不在这里写：入账 module 只在服务端确认之后才落库
- * （`data/record/RecordIntakeImpl`），手工记账这条路则只打服务端。
+ * 「记一笔」的唯一成功判据是服务端 `POST /transactions` 的回执（`created[]` 或
+ * `duplicates[]`）里按 `client_id` 匹配到 id —— [createTransactions] 因此在 `code==0`
+ * 之外还要逐条核对回执，少一条就当没记上。本地缓存不在这里写：入账 module 只在服务端
+ * 确认之后才落库（`data/record/RecordIntakeImpl`），手工记账这条路则只打服务端。
  */
 interface TransactionRepository {
 
     /**
      * 送服务端建一笔 / 一批。
      *
-     * @return **只有**服务端把全部入参都回执成 `created`（按 `client_id` 找得到、带 id）
-     *   才是 [Result.Success]；否则 [Result.Error]，且此时本地**一个字节都没写**——
-     *   调用方据此报错给用户、保留表单输入，不存在「先记上、回头再传」的中间态。
+     * @return **只有**服务端把全部入参都回了执（`created[]` 或 `duplicates[]` 里按
+     *   `client_id` 找得到、带 id）才是 [Result.Success]；否则 [Result.Error]，
+     *   且此时本地**一个字节都没写**——调用方据此报错给用户、保留表单输入，
+     *   不存在「先记上、回头再传」的中间态。
      */
     suspend fun createTransactions(items: List<Transaction>): Result<List<Transaction>>
 

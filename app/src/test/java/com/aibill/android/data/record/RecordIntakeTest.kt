@@ -8,6 +8,7 @@ import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.data.remote.dto.response.CreateTransactionResponse
+import com.aibill.android.data.remote.duplicatesApiResponse
 import com.aibill.android.data.remote.dto.response.TransactionDto
 import com.aibill.android.domain.record.CapturedNotification
 import com.aibill.android.domain.record.RecordIntent
@@ -530,6 +531,38 @@ class RecordIntakeTest {
         assertTrue(insertedRows.isEmpty())
         assertFalse(calls.contains("write"))
         assertFalse(calls.contains("widget"))
+    }
+
+    @Test
+    @DisplayName("服务端把这一笔回在 duplicates[] 里也算确认：落缓存、不发失败回执")
+    fun `duplicates count as server confirmation`() = runTest {
+        // RetryInterceptor 对 IOException 会重发同一个 body：首次请求其实已落库、
+        // 只是响应丢了，重发拿到的就是 duplicates[]。判成失败 = 谎报「没记上」，
+        // 用户重记（新 clientId）= 重复账。
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            calls += "submit"
+            duplicatesApiResponse(firstArg())
+        }
+
+        val outcome = intake.intake(
+            RecordIntent.NotificationConfirm(
+                recordId = 42L,
+                packageName = "com.tencent.mm",
+                amount = 2500,
+                type = "expense",
+                description = "午饭",
+                learn = false,
+            )
+        )
+
+        assertTrue(outcome.recorded, "服务端已有这笔 = 记上了")
+        assertNull(outcome.failure)
+        val row = onlyRow()
+        assertEquals("synced", row.syncStatus)
+        assertEquals(SERVER_ID, row.serverTransactionId)
+        // 确认路径照常：写库 + 审计行回填 + 刷 widget + 轻回执
+        assertTrue(calls.contains("write"))
+        assertTrue(calls.contains("receipt"))
     }
 
     @Test

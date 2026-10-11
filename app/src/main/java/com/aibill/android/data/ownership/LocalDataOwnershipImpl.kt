@@ -4,14 +4,11 @@ import com.aibill.android.data.local.dao.AccountDao
 import com.aibill.android.data.local.dao.CategoryDao
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
-import com.aibill.android.data.local.datastore.SyncLock
-import com.aibill.android.data.local.work.WorkManagerProvider
 import com.aibill.android.data.remote.interceptor.TokenManager
 import com.aibill.android.domain.ownership.DisposalIntent
 import com.aibill.android.domain.ownership.DisposalOutcome
 import com.aibill.android.domain.ownership.LocalDataOwnership
 import com.aibill.android.domain.ownership.LocalOwnership
-import kotlinx.coroutines.delay
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,9 +16,9 @@ import javax.inject.Singleton
 /**
  * 本地数据归属 module 的实现（架构候选 4）。
  *
- * 它是这 4 张表的**唯一**业务处置方，也是 `SyncLock` 握手与 `WorkManagerProvider`
- * 的唯一调用方。收口前 `AuthRepositoryImpl` 与 `ServerConfigViewModel` 各手列一遍
- * 同一份清单，靠 KDoc 互保（两边必须同步改、两边各钉一套测试）。
+ * 它是这 4 张表的**唯一**业务处置方。收口前 `AuthRepositoryImpl` 与
+ * `ServerConfigViewModel` 各手列一遍同一份清单，靠 KDoc 互保（两边必须同步改、
+ * 两边各钉一套测试）。
  *
  * ## 属于「本地用户数据」的 4 张表 —— 全仓唯一清单
  *
@@ -56,8 +53,6 @@ class LocalDataOwnershipImpl @Inject constructor(
     private val categoryDao: CategoryDao,
     private val accountDao: AccountDao,
     private val notificationRecordDao: NotificationRecordDao,
-    private val syncLock: SyncLock,
-    private val workManagerProvider: WorkManagerProvider,
 ) : LocalDataOwnership {
 
     override fun currentOwnership(): LocalOwnership =
@@ -86,7 +81,7 @@ class LocalDataOwnershipImpl @Inject constructor(
     /**
      * 清空归属切走后不再属于当前用户的本地数据 —— **4 张表的清单只在这里**。
      *
-     * 顺序沿用收口前 `AuthRepositoryImpl.clearLocalCache()` 的写法：先队列后派生缓存。
+     * 顺序沿用收口前 `AuthRepositoryImpl.clearLocalCache()` 的写法：先本地缓存后服务端派生缓存。
      * 顺序本身不承载不变量（4 张表互不引用），但「新表加在末尾」比「插在中间」好读。
      */
     private suspend fun clearOwnedTables(intent: DisposalIntent): DisposalOutcome.Cleared {
@@ -96,27 +91,5 @@ class LocalDataOwnershipImpl @Inject constructor(
         notificationRecordDao.deleteAll()
         Timber.i("Ownership: 已清空本地数据（$intent，4 张表）")
         return DisposalOutcome.Cleared
-    }
-
-    /**
-     * PR C1：清缓存 / 换 token 之前先取消在飞的后台任务并等 `SyncLock` 释放，
-     * 避免循环进行到一半时 user A 的交易用 user B 的 token 写到 user B 的服务端。
-     *
-     * 记账已经没有在飞的后台任务，取消这一步因此是空操作；**顺序仍要保住**——
-     * 「先静默、再等锁、后处置」是这条路径的不变量，别因为某一步暂时无害就摘掉。
-     * 等锁有上限（[MAX_WAIT_MS]）：锁迟迟不放时宁可直接处置，也不能把登录卡死。
-     */
-    override suspend fun awaitSyncQuiescence() {
-        workManagerProvider.cancelSyncWorker()
-        val deadline = System.currentTimeMillis() + MAX_WAIT_MS
-        while (syncLock.isActive() && System.currentTimeMillis() < deadline) {
-            delay(WAIT_INTERVAL_MS)
-        }
-    }
-
-    private companion object {
-        /** PR C1：等 `SyncLock` 释放的最长时限 */
-        private const val MAX_WAIT_MS = 3_000L
-        private const val WAIT_INTERVAL_MS = 50L
     }
 }

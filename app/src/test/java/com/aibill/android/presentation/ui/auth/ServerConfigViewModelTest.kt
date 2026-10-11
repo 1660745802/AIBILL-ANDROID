@@ -52,8 +52,8 @@ import org.junit.jupiter.api.Test
  * ## 不测什么
  *
  * - 不测 `onTestConnection()`——它会构造真实 OkHttpClient 发真实网络请求。
- * - 不测「换服务器不做 SyncLock 握手」——那是归属 module 的事，
- *   由 `LocalDataOwnershipImplTest` 钉住。
+ * - 不测「换服务器清哪几张表」——那是归属 module 的事，
+ *   由 `LocalDataOwnershipImplTest` 用真实 Room 钉住。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ServerConfigViewModelTest {

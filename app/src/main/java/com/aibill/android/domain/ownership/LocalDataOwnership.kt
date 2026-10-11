@@ -9,14 +9,11 @@ package com.aibill.android.domain.ownership
  * 「把本地数据清掉」这件事原本写了两遍，靠两段 KDoc 互相声明「表集合必须一致，改一处
  * 必须改另一处」：
  *
- * - `AuthRepositoryImpl.clearLocalCache()`（登录路径：取消在飞任务 → 等 SyncLock
- *   → 清 4 张表）；
- * - `ServerConfigViewModel.onSave(clearLocalCache = true)`（同一个 4 张表清单，
- *   **没有** SyncLock 握手）。
+ * - `AuthRepositoryImpl.clearLocalCache()`（登录路径：先问归属 → 清 4 张表）；
+ * - `ServerConfigViewModel.onSave(clearLocalCache = true)`（同一个 4 张表清单）。
  *
  * 表是同一批、归属是同一个问题，却分属两个 module 各手列一遍。现在归属判据、
- * 表清单、SyncLock 握手、`last_known_user_id` 的存活期都住在这里，
- * 两个调用点各只剩**一句意图**。
+ * 表清单、`last_known_user_id` 的存活期都住在这里，两个调用点各只剩**一句意图**。
  *
  * ## 归属是什么（这是本 module 的不变量）
  *
@@ -74,16 +71,6 @@ interface LocalDataOwnership {
      * 调用方就不必把归属判定重算一遍——两处判定打架正是本 module 收口前的老毛病。
      */
     suspend fun dispose(intent: DisposalIntent): DisposalOutcome
-
-    /**
-     * SyncLock 握手：取消在飞的后台任务，并等 `SyncLock` 释放（最长 3s）。
-     *
-     * 为什么必须在处置之前：清缓存 / 换 token 时若后台循环跑到一半，
-     * user A 的交易会用 user B 的 token 写到 user B 的服务端。
-     *
-     * 换服务器路径**不**调它（与收口前一致，`ServerConfig` 仅登录页可达、此时无有效会话）。
-     */
-    suspend fun awaitSyncQuiescence()
 }
 
 /**

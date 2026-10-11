@@ -281,9 +281,14 @@ class RecordIntakeImpl @Inject constructor(
      *
      * ## 成功判据
      *
-     * `code == 0` **且** `created[]` 里按 `client_id` 找得到这条、且它带 `id`。
-     * 少任何一条都算没确认：`duplicates[]` 不算（服务端没说「这是新建的」），
-     * 没匹配上 `client_id` 也不算（服务端漏字段 / 转换异常时的僵尸行）。
+     * `code == 0`，**且** `created[]` 或 `duplicates[]` 里按 `client_id` 找得到这条
+     * （`TransactionDto.id` 非空，匹配到即等于拿回了 id）。
+     *
+     * `duplicates` 必须算确认：`RetryInterceptor` 对 IOException 会重发同一个 body，
+     * 首次请求其实已落库、只是响应丢了，重发拿到的就是它——判成失败等于对用户
+     * 谎报「没记上」，用户重记就是重复账。
+     *
+     * 两个列表都没匹配到自己才算没确认（服务端漏字段 / 转换异常时的僵尸行）。
      *
      * ## 为什么「写缓存」和「写审计行」必须同生共死
      *
@@ -316,18 +321,30 @@ class RecordIntakeImpl @Inject constructor(
         return CacheResult(recordId = recordId, failure = null)
     }
 
-    /** `POST /transactions` 单条，按 `client_id` 回认服务端 id。 */
+    /**
+     * `POST /transactions` 单条，按 `client_id` 回认服务端 id。
+     *
+     * ## 成功判据：`created[]` **或** `duplicates[]` 里按 `client_id` 匹配到 id
+     *
+     * `duplicates` 必须算确认，否则会同时犯两个错：`RetryInterceptor` 对 IOException 会
+     * **重发同一个 body**，首次请求其实已落库、只是响应丢了，重发拿到的是 `duplicates[]` ——
+     * 判成失败就会「服务端已有这笔，却告诉用户没记上」，而用户重试（手工每次生成新
+     * `clientId`）就是**重复账**。
+     *
+     * 只有「两个列表都没匹配到自己」才算失败：那说明服务端漏字段 / 转换异常，
+     * 当成记上了反而会在本地多一行服务端没有的账。
+     */
     private suspend fun submit(entity: PendingTransactionEntity): Submit = try {
         val response = transactionApi.createTransactions(
             CreateTransactionRequest(items = listOf(entity.toItemRequest())),
         )
-        val matched = response.data?.created?.firstOrNull { it.clientId == entity.clientId }?.id
+        val data = response.data
+        val matched = (data?.created?.firstOrNull { it.clientId == entity.clientId }
+            ?: data?.duplicates?.firstOrNull { it.clientId == entity.clientId })?.id
         when {
             response.code != 0 ->
                 Submit.Failed(RecordFailure.Rejected(response.code, response.message))
             matched == null ->
-                // code==0 却在 created[] 里找不到自己：服务端漏字段 / 转换异常。
-                // 标成失败而不是「当成记上了」——否则本地会多一行服务端没有的账。
                 Submit.Failed(
                     RecordFailure.Rejected(
                         code = response.code,

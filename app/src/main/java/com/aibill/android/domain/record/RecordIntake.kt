@@ -38,7 +38,7 @@ interface RecordIntake {
     /**
      * 记一笔。
      *
-     * ## 成功判据：服务端返回 `created` 且按 `client_id` 匹配到 id
+     * ## 成功判据：服务端回执（`created[]` 或 `duplicates[]`）里按 `client_id` 匹配到 id
      *
      * 顺序**不可调换**：先送服务端 → 拿到服务端 id → 才写本地缓存与审计行
      * → 才刷 widget / streak / 回执 / 学分类。服务端没确认的那一笔**什么都不能发生**：
@@ -89,7 +89,7 @@ sealed interface RecordFailure {
 
     /**
      * 服务端答了话但没确认：业务错误（422 / 5001 …）、HTTP 错误（含 401）、
-     * 以及 `code==0` 却在 `created[]` 里按 `client_id` 找不到这笔（漏字段 / 转换异常）。
+     * 以及 `code==0` 却在两个回执列表里都按 `client_id` 找不到这笔（漏字段 / 转换异常）。
      *
      * @param code 服务端业务码；HTTP 错误时是 HTTP 状态码；本地未知异常用 `Result.ERROR_UNKNOWN`
      * @param reason 服务端 `message` 或本地拼的说明，直接进日志与用户文案

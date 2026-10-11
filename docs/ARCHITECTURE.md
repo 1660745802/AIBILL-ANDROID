@@ -73,7 +73,7 @@ com.aibill/android/
 |---|---|---|
 | **RecordIntake**（入账） | clientId、时钟、entity 装配、提交服务端、分类预测/学习、widget、回执、隐私档 | `intake(intent)`：4 个意图 subtype = 4 条入账路径的全部差异 |
 | **NotificationPrefilter**（预筛） | 「这条通知值不值得当账」的全部判据 + 每源状态 | `evaluate(Capture): Verdict` |
-| **LocalDataOwnership**（本地归属） | 哪些表归 server × account、三种处置、SyncLock 握手 | `currentOwnership` / `dispose(intent)` / `awaitSyncQuiescence` |
+| **LocalDataOwnership**（本地归属） | 哪些表归 server × account、三种处置 | `currentOwnership` / `dispose(intent)` |
 | **RecordUndo**（撤销） | 「这笔还撤不撤得掉」的判据与文案 | `undo(clientId): UndoOutcome` |
 
 **跨表写入**（`data/record/RecordWriter.kt`）：`RoomRecordWriter`（生产，Room 真事务）/
@@ -84,7 +84,8 @@ suspend lambda。**测试里跑的是 `DirectRecordWriter`，不提供原子性�
 
 **不变量（所有入账路径共用）**
 
-- **成功判据 = 服务端返回 `created` 且按 `client_id` 匹配到 id**。服务端确认之前不算记上，
+- **成功判据 = 服务端回执（`created[]` 或 `duplicates[]`）里按 `client_id` 匹配到 id**。
+  服务端确认之前不算记上，
   也**不许对用户声称记上**；本地缓存只在确认之后写入 —— `pending_transactions` 里
   因此不存在「已接受却未送达」的中间态（见 §6.1）。
 - **失败绝不静默**，各路径有各自的说法：手工记账 → Snackbar 报错 + **保留表单输入**
@@ -103,7 +104,7 @@ AI 自动入账的 `source_detail` 走云控来源名映射、其余走硬编码
 静默入账的 `client_created_at` 是无时区本地串，其余是 UTC Instant。
 
 **手工记账不经过 RecordIntake**：它只把这一笔交给 `TransactionRepository.createTransactions`
-（送服务端 + 核对 `created` 回执），成功即结束、失败即报错并保留表单；
+（送服务端 + 逐条核对 `created`/`duplicates` 回执），成功即结束、失败即报错并保留表单；
 它不落任何本地行，因此也不进 `pending_transactions`。
 
 ### 2.4 通知入账（核心差异化能力）
@@ -260,9 +261,9 @@ IOException → `-1`，HttpException → 服务器错误，其它 → `-2`。
 | 切换服务器 | `SwitchingServer` | 清空（**同样 4 张**） | — |
 
 **判定必须在 `saveSession()` 之前**（它会覆盖归属判据），处置也必须在之前
-（否则 user B 的 session 盖在没清掉的 user A 数据上）。换服务器路径不做 SyncLock 握手
-（`ServerConfig` 只在未登录态可达）；登录路径的「取消在飞任务 → 等锁 → 处置」顺序保留，
-即使当前已经没有在飞的记账任务。
+（否则 user B 的 session 盖在没清掉的 user A 数据上）。换服务器路径直接处置
+（`ServerConfig` 只在未登录态可达，没有有效会话）；登录路径只有四步：
+「先问归属 → 发登录请求 → 处置 → 写 session」。
 
 **归属判据是 `TokenManager.getLastKnownUserId()`，不能用 `getUserId()`**：
 会话结束会清 `user_id`，而「Token 过期→重登」正是最需要保住本地数据的场景。
@@ -346,7 +347,7 @@ R8 开启（保留 DTO/Entity/Retrofit 接口）· `allowBackup=false` · 权限
 |---|---|
 | 入账（记一笔） | 让一笔收支成为事实：先服务端确认，再写本地缓存。手工 / 通知自动 / 通知确认 / 外部 Intent / 小组件 |
 | 记录缓存 | `pending_transactions`，只装服务端已确认的记录；`server_transaction_id` 供撤销使用 |
-| 成功判据 | 服务端返回 `created` 且按 `client_id` 匹配到 id；在此之前不算记上，也不许对用户声称记上 |
+| 成功判据 | 服务端回执（`created[]` 或 `duplicates[]`）里按 `client_id` 匹配到 id；在此之前不算记上，也不许对用户声称记上 |
 | 失败当场告知 | 服务端没确认就把失败显示给用户：手工保留表单重试、通知自动降级待审池、确认弹 Toast |
 | 来源渠道 | 通知入账的三个平台入口：NLS / A11Y / SMS |
 | 预筛 | 调 AI 之前「值不值得当账」的判定链 |

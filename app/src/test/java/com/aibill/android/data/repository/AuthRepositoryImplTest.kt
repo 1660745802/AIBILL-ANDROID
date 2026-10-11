@@ -18,9 +18,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
 import io.mockk.every
-import io.mockk.just
 import io.mockk.mockk
-import io.mockk.runs
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -33,7 +31,6 @@ import org.junit.jupiter.api.Test
  * - **同账号重登不清本地数据**（数据丢失回归）：Token 过期 → 用户重登同一账号 →
  *   本地缓存与通知审计必须一张不动
  * - M1：saveSession 原子写入 token + userId + username + nickname
- * - C1：登录前经归属 module 做 SyncLock 握手（取消在飞的后台任务）
  *
  * 关键不变量：
  * 1. login 成功且**换号/首次**（旧归属为 null 或 != 新 userId）→ 处置意图必须是
@@ -43,7 +40,7 @@ import org.junit.jupiter.api.Test
  * 3. register 成功 → 必处置 SwitchingAccount（新账号，无条件）
  * 4. login/register 失败 → 不处置、不调 saveSession
  * 5. 换号路径下处置顺序在 saveSession 之前（避免 user B 拿到 user A 的脏数据）
- * 6. login/register 前必调 `awaitSyncQuiescence()`（SyncLock 握手）
+ * 6. login 前必先问归属（`currentOwnership()`），再发登录请求
  * 7. **B6**：logout 不得删除 `last_known_user_id` —— 否则「登出→登回同账号」
  *    退化成「首次登录」并清空本地数据，违反登出弹窗对用户的承诺。
  *    但保留它也不得削弱换号防护（见下面两个 B6 用例）
@@ -89,7 +86,7 @@ class AuthRepositoryImplTest {
     )
 
     /**
-     * 打桩归属 module 三件套：SyncLock 握手、归属判据（`last_known_user_id`）、处置结果。
+     * 打桩归属 module 两件套：归属判据（`last_known_user_id`）与处置结果。
      *
      * [lastAccount] = 上一次会话归属的账号；`null` = 从未登录过 / 老版本没写该字段。
      */
@@ -97,7 +94,6 @@ class AuthRepositoryImplTest {
         lastAccount: Int? = null,
         outcome: DisposalOutcome = DisposalOutcome.Cleared,
     ) {
-        coEvery { ownership.awaitSyncQuiescence() } just runs
         every { ownership.currentOwnership() } returns LocalOwnership(accountId = lastAccount)
         coEvery { ownership.dispose(any()) } returns outcome
     }
@@ -116,9 +112,6 @@ class AuthRepositoryImplTest {
         val user = (result as com.aibill.android.domain.model.Result.Success).data
         assertEquals(42, user.id)
         assertEquals("alice", user.username)
-
-        // C1：login 前必做 SyncLock 握手（取消在飞的后台任务 + 等锁）
-        coVerify(exactly = 1) { ownership.awaitSyncQuiescence() }
 
         // P1#44：换号 → 处置意图必须是 SwitchingAccount（它清 4 张表）
         coVerify(exactly = 1) { ownership.dispose(DisposalIntent.SwitchingAccount) }
@@ -215,8 +208,6 @@ class AuthRepositoryImplTest {
         assertTrue(result is com.aibill.android.domain.model.Result.Success)
         // 注册一定是新账号 → 无条件按换号处置
         coVerify(exactly = 1) { ownership.dispose(DisposalIntent.SwitchingAccount) }
-        // C1：注册前同样握手
-        coVerify(exactly = 1) { ownership.awaitSyncQuiescence() }
         coVerify(exactly = 1) {
             tokenManager.saveSession(
                 token = "jwt-new",
@@ -246,7 +237,7 @@ class AuthRepositoryImplTest {
     }
 
     @Test
-    fun `sync quiescence happens BEFORE the login request`() = runTest {
+    fun `ownership is asked BEFORE the login request`() = runTest {
         stubOwnership(42, DisposalOutcome.Retained)
         coEvery { authApi.login(LoginRequest("alice", "pass")) } returns ApiResponse(
             code = 0, data = makeAuthResponse(), message = "ok"
@@ -254,10 +245,13 @@ class AuthRepositoryImplTest {
 
         newRepo().login("alice", "pass")
 
+        // 归属必须在请求**之前**问：`saveSession()` 会覆盖 last_known_user_id，
+        // 而处置又必须排在 saveSession 之前（见下一个用例）。顺序错了就会
+        // 把「同号重登」判成「换号」而清掉用户的本地数据。
         coVerifyOrder {
-            ownership.awaitSyncQuiescence()
             ownership.currentOwnership()
             authApi.login(LoginRequest("alice", "pass"))
+            ownership.dispose(any())
         }
     }
 

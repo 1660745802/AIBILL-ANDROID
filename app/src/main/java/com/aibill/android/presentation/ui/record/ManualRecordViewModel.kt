@@ -324,7 +324,7 @@ class ManualRecordViewModel @Inject constructor(
      *
      * ## 成功判据在服务端手里
      *
-     * `createTransactions` 只有在服务端回执 `created` + `client_id` 匹配时才返回
+     * `createTransactions` 只有在服务端回执（`created` / `duplicates`）+ `client_id` 匹配时才返回
      * [Result.Success]，所以走到这里就意味着「真的记上了」。
      *
      * ## 失败当场告知，且**保留表单输入**

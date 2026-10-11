@@ -19,12 +19,11 @@ import javax.inject.Singleton
 
 /**
  * 认证与会话。**本地数据的处置不再在这里**：换号 / 同号重登 / 换服务器要动哪几张表、
- * 要不要 SyncLock 握手、`last_known_user_id` 判成什么，全部归
- * [LocalDataOwnership]（架构候选 4 收口）。
+ * `last_known_user_id` 判成什么，全部归 [LocalDataOwnership]（架构候选 4 收口）。
  *
- * 收口前本类持有 3 个 DAO + 同步队列 + `SyncLock` + `WorkManagerProvider`，
- * 与 `ServerConfigViewModel` 各手列一份 4 张表的清单，靠 KDoc 互保。
- * 现在这里只剩**一句意图**，表清单在 `data/ownership/LocalDataOwnershipImpl` 一处。
+ * 收口前本类持有 3 个 DAO + 同步队列，与 `ServerConfigViewModel` 各手列一份 4 张表的
+ * 清单，靠 KDoc 互保。现在这里只剩**一句意图**，表清单在
+ * `data/ownership/LocalDataOwnershipImpl` 一处。
  */
 @Singleton
 class AuthRepositoryImpl @Inject constructor(
@@ -36,8 +35,6 @@ class AuthRepositoryImpl @Inject constructor(
 ) : AuthRepository {
 
     override suspend fun login(username: String, password: String): Result<User> {
-        // PR C1：登录前取消在飞的后台任务并等 SyncLock 释放（或超时强杀）
-        localDataOwnership.awaitSyncQuiescence()
         // 必须在处置 / saveSession 之前问归属——saveSession 会覆盖 last_known_user_id，
         // 之后问到的永远是「刚登进来的这个账号」，同号重登会被误判成换号。
         // 问的是 last_known_user_id（跨 session 存活的归属判据）而非 user_id（session 字段）：
@@ -87,8 +84,6 @@ class AuthRepositoryImpl @Inject constructor(
         inviteCode: String,
         nickname: String?
     ): Result<User> {
-        // PR C1：注册前同样做同步静默握手
-        localDataOwnership.awaitSyncQuiescence()
         val result = safeApiCall {
             authApi.register(RegisterRequest(username, password, inviteCode, nickname))
         }

@@ -7,7 +7,7 @@ import androidx.room.PrimaryKey
 /**
  * **已确认记录的本地缓存**（表名 `pending_transactions` 是历史遗留，列也一并不动）。
  *
- * 只在服务端返回 `created` 并按 `client_id` 匹配到 id **之后**才写入
+ * 只在服务端回执（`created[]` 或 `duplicates[]`）按 `client_id` 匹配到 id **之后**才写入
  * （唯一写入口 `data/record/RecordWriter`），因此行 = 服务端已确认。
  * [serverTransactionId] 是撤销时删服务端那一笔的凭据。
  *

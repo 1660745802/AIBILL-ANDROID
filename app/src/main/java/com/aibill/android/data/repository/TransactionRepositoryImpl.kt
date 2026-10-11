@@ -19,7 +19,7 @@ import javax.inject.Singleton
 /**
  * 服务端那侧的账。
  *
- * 记一笔只在这里发生：送 `POST /transactions` → 按 `client_id` 核对 `created[]` 回执。
+ * 记一笔只在这里发生：送 `POST /transactions` → 按 `client_id` 核对回执。
  * 核不平就是 [Result.Error]，本地不留任何痕迹（架构 §2.3 的成功判据）。
  */
 @Singleton
@@ -36,15 +36,21 @@ class TransactionRepositoryImpl @Inject constructor(
             is Result.Loading -> response
             is Result.Success -> {
                 val created = response.data.created
-                // 成功判据 = 服务端返回 created 且按 client_id 匹配到 id。
-                // code==0 但回执里少一条（漏字段 / 转换异常 / 只在 duplicates 里）都算没记上——
-                // 放过去就会出现「本地以为记了、服务端没有」的中间态。
+                val duplicates = response.data.duplicates
+                // 成功判据 = 服务端返回 created **或** duplicates 且按 client_id 匹配到 id。
+                // duplicates 必须算确认：RetryInterceptor 会重发同一个 body，首次请求其实
+                // 已落库、只是响应丢了，重发拿到的是 duplicates —— 判成失败就会
+                // 「服务端已有这笔，却告诉用户没记上」，用户重记就是重复账。
+                // 两个列表都没匹配到自己才是失败（漏字段 / 转换异常），
+                // 放过去会出现「本地以为记了、服务端没有」的中间态。
+                // 逐条在**两个列表的并集**里找：一批里有的新建、有的命中幂等也是合法回执。
+                val confirmedItems = created + duplicates
                 val unconfirmed = items.filter { item ->
                     // TransactionDto.id 是非空 Int：匹配到即等于拿回了 id
-                    created.none { it.clientId == item.clientId }
+                    confirmedItems.none { it.clientId == item.clientId }
                 }
                 if (unconfirmed.isEmpty()) {
-                    Result.Success(created.map { it.toDomain() })
+                    Result.Success(confirmedItems.map { it.toDomain() })
                 } else {
                     Timber.w("createTransactions 未获服务端确认: ${unconfirmed.map { it.clientId }}")
                     Result.Error(Result.ERROR_UNKNOWN, "服务端未确认这笔记录")

@@ -5,13 +5,11 @@ import com.aibill.android.data.local.dao.AccountDao
 import com.aibill.android.data.local.dao.CategoryDao
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
-import com.aibill.android.data.local.datastore.SyncLock
 import com.aibill.android.data.local.db.AppDatabase
 import com.aibill.android.data.local.entity.AccountEntity
 import com.aibill.android.data.local.entity.CategoryEntity
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
-import com.aibill.android.data.local.work.WorkManagerProvider
 import com.aibill.android.data.remote.interceptor.TokenManager
 import com.aibill.android.domain.ownership.DisposalIntent
 import com.aibill.android.domain.ownership.DisposalOutcome
@@ -52,8 +50,7 @@ import org.robolectric.annotation.Config
  * - **真实**：Room（4 张表都走真表，因此「清单本身」被端到端钉住）；
  * - **mock**：`TokenManager`（真实实现要 `EncryptedSharedPreferences` →
  *   `AndroidKeyStore`，Robolectric 沙箱里抛 `KeyStoreException`；本类只断言
- *   「判据取自哪个方法」，`TokenManager` 自身的语义另有测试）、`SyncLock` /
- *   `WorkManagerProvider`（只需控制握手时机）。
+ *   「判据取自哪个方法」，`TokenManager` 自身的语义另有测试）。
  *
  * ## 同号重登的语义已收窄
  *
@@ -77,8 +74,6 @@ class LocalDataOwnershipImplTest {
     private lateinit var ownership: LocalDataOwnershipImpl
 
     private val tokenManager: TokenManager = mockk(relaxed = true)
-    private val syncLock: SyncLock = mockk(relaxed = true)
-    private val workManagerProvider: WorkManagerProvider = mockk(relaxed = true)
 
     @Before
     fun setUp() {
@@ -100,8 +95,6 @@ class LocalDataOwnershipImplTest {
             categoryDao = categoryDao,
             accountDao = accountDao,
             notificationRecordDao = notificationDao,
-            syncLock = syncLock,
-            workManagerProvider = workManagerProvider,
         )
     }
 
@@ -182,15 +175,14 @@ class LocalDataOwnershipImplTest {
         assertRows(1, 1, 1, 2)
     }
 
-    /** 同号重登也不排任何东西、不碰 SyncLock：没有待上传的行要推。 */
+    /** 同号重登不排任何东西：没有待上传的行要推。 */
     @Test
     fun `same account relogin schedules nothing`() = runTest {
         seedAllFourTables()
 
         ownership.dispose(DisposalIntent.SameAccountRelogin)
 
-        verify(exactly = 0) { workManagerProvider.cancelSyncWorker() }
-        verify(exactly = 0) { syncLock.isActive() }
+        assertRows(1, 1, 1, 2)
     }
 
     // ==================== 换号 / 换服务器：同一份 4 表清单 ====================
@@ -222,52 +214,14 @@ class LocalDataOwnershipImplTest {
         assertRows(0, 0, 0, 0)
     }
 
-    /**
-     * 清空**不得**碰 SyncLock：换服务器不做握手（与收口前逐字一致，刻意不改）。
-     *
-     * `ServerConfig` 只在未登录态可达（`MainViewModel` 的 `startRoute` 与 `LoginScreen` 的入口），
-     * 此时没有有效会话、也就没有在飞的后台循环要取消。钉住它，是为了让「顺手补上握手」
-     * 变成一次显眼的决定，而不是无声的改动。
-     */
+    /** 清空换服务器时同一份清单：4 张表一张不剩。 */
     @Test
-    fun `clearing never touches the sync lock`() = runTest {
+    fun `clearing empties every owned table`() = runTest {
         seedAllFourTables()
 
         ownership.dispose(DisposalIntent.SwitchingServer)
 
-        verify(exactly = 0) { workManagerProvider.cancelSyncWorker() }
-        verify(exactly = 0) { syncLock.isActive() }
         assertRows(0, 0, 0, 0)
-    }
-
-    // ==================== SyncLock 握手 ====================
-
-    /** 握手顺序：先 cancel 在飞的 worker，再等锁释放。 */
-    @Test
-    fun `awaitSyncQuiescence cancels the in-flight worker and waits for the lock to release`() = runTest {
-        every { syncLock.isActive() } returnsMany listOf(true, true, false)
-
-        ownership.awaitSyncQuiescence()
-
-        verify(exactly = 1) { workManagerProvider.cancelSyncWorker() }
-        verify(exactly = 3) { syncLock.isActive() }
-    }
-
-    /**
-     * 锁一直不放时也不能把登录卡死——等锁有 3s 上限，超时照常返回
-     * （记账已经没有在飞的后台循环，最坏情况只是白等一轮）。
-     *
-     * ⚠️ 只断言「一定会退出」，不断言耗时：等锁跨了虚拟时钟与真实墙钟，
-     * 逐次断言毫秒数只会把测试变成竞速。
-     */
-    @Test
-    fun `awaitSyncQuiescence gives up instead of blocking forever`() = runTest {
-        every { syncLock.isActive() } returns true
-
-        ownership.awaitSyncQuiescence()
-
-        verify(exactly = 1) { workManagerProvider.cancelSyncWorker() }
-        verify(atLeast = 1) { syncLock.isActive() }
     }
 
     // ==================== 夹具 ====================

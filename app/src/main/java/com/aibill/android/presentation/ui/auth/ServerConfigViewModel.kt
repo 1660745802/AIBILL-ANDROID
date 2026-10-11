@@ -98,8 +98,7 @@ class ServerConfigViewModel @Inject constructor(
      *
      * 代价（刻意接受）：A→B→A 换回原服务器时，中间捕获的通知记录一并丢失——通知记录是
      * **设备侧**捕获的审计数据，不带服务器归属，按「换服务器 = 换命名空间」处理。
-     * `ServerConfig` 仅从登录页可达，故不存在「用户在线时被误清」；
-     * 也因此**不需要** SyncLock 握手（此时无有效会话、无在飞同步），与收口前一致。
+     * `ServerConfig` 仅从登录页可达，故不存在「用户在线时被误清」。
      */
     fun onSave(clearLocalCache: Boolean = true) {
         viewModelScope.launch {
