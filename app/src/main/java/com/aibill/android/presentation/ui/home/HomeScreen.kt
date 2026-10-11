@@ -475,7 +475,7 @@ internal fun bannerVariantOf(status: SyncQueueStatus): SyncBannerVariant = when 
  * ## 硬约束二：Failed 档不得主张任何**上传状态**
  *
  * 「已上传」「尚未上传」「可能已上传」都不能说。依据是本仓库自己的真相表
- * （`AutoRecordActionReceiver.handleUndo` 的 KDoc）：三条 `markFailed` 路径里
+ * （`domain/undo/RecordUndo` 的 KDoc）：三条 `markFailed` 路径里
  * **只有 401**（`ERROR_TOKEN_EXPIRED`）能证明服务端明确拒绝、没建这笔；
  * 其余 `ERROR_MAX_RETRY_EXCEEDED`（5 次累积的是 IOException，请求可能已抵达、
  * 只是响应丢了）、`ERROR_SERVER_ANOMALY`（服务端 `code==0` 可能已建，

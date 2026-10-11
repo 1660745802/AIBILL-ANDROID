@@ -489,6 +489,13 @@ class RecordIntakeTest {
 
     // ═══════════════════════════════════════════════════════════════
     // 意图 4：外部 Intent 静默入账（ExternalActionReceiver）
+    //
+    // 这两条断言原先住在 `ExternalActionReceiverTest`，直接调接收器上的
+    // `internal suspend fun handleAutoConfirmRecord`——那是为绕开 Hilt 门禁
+    // （`Hilt_ExternalActionReceiver.onReceive` / `goAsync()` 都会 `inject()`）
+    // 而留的后门。候选 5 撤掉后门：写入逻辑本来就在本 module 里，用例随之搬到这里。
+    // 接收器里剩下的「权限被拒 / autoConfirm=false 不写库」两条分支**仍不可测**
+    // （它们需要 `@HiltAndroidApp` 的 Application），见 ARCHITECTURE §11.3。
     // ═══════════════════════════════════════════════════════════════
 
     @Test
@@ -505,14 +512,42 @@ class RecordIntakeTest {
         assertTrue(insertedRecords.isEmpty())
 
         val row = onlyRow()
+        // 意图载荷原样落库：外部 Intent 的金额/类型/描述不能被同步逻辑改动
+        assertEquals(2590, row.amount)
+        assertEquals("expense", row.type)
+        assertEquals("咖啡", row.description)
         assertEquals(outcome.clientId, row.clientId)
+        // clientId 是撤销与幂等的唯一凭据（AutoRecordActionReceiver 按它查行），
+        // 空值会让这笔账永远无法被撤销。
+        assertTrue(row.clientId.isNotBlank())
         assertEquals("external_intent", row.source)
+        // 来源标记的**具体值**：tasker_quick_record 是 AutoRecord 与本入口的区分依据，
+        // 丢了它两类记录在服务端就分不出来。
         assertEquals("tasker_quick_record", row.sourceDetail)
         assertEquals("pending", row.syncStatus)
         assertEquals("2026-07-10", row.date)
         assertEquals("12:30", row.time)
         // 历史口径：本入口的 client_created_at 是**无时区**的本地日期时间串
         assertEquals("2026-07-10T12:30", row.clientCreatedAt)
+    }
+
+    @Test
+    @DisplayName("静默入账：排调度抛异常也不抛、不回滚，账仍恰好写一行")
+    fun `external quick record never rolls back when scheduling throws`() = runTest {
+        // 与「落离线」那条同源：证明「写库之后才排调度」，且排调度失败不影响已写入的这一行。
+        every { SyncScheduler.scheduleSyncIfNeeded(any()) } answers {
+            calls += "schedule"
+            throw RuntimeException("WM down")
+        }
+
+        // 不抛即通过：静默入账跑在 ApplicationScope 上，异常逃出去 = 崩进程
+        // （本工程没有全局 CoroutineExceptionHandler）。
+        intake.intake(
+            RecordIntent.ExternalQuickRecord(amount = 100, type = "expense", description = "午饭")
+        )
+
+        assertEquals(1, insertedRows.size)
+        assertEquals(listOf("write", "schedule"), calls)
     }
 
     // ═══════════════════════════════════════════════════════════════

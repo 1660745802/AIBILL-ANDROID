@@ -30,7 +30,7 @@ import com.aibill.android.domain.model.Transaction
  * | [RecordIntent.NotificationConfirm] | `NotificationActionReceiver.handleConfirmWithNote` | [ReceiptPolicy.CONFIRM_RECEIPT] | 是 | 是 | 每笔 |
  * | [RecordIntent.NotificationCenterConfirm] | `NotificationCenterViewModel.insertTransaction` | [ReceiptPolicy.NONE] | 否 | 否 | 每笔 |
  * | [RecordIntent.NotificationCenterConfirm] | `NotificationCenterViewModel.confirmAll` | [ReceiptPolicy.NONE] | 否 | 否 | [SyncScheduling.DEFERRED] → [RecordOutcome.syncScheduled] = false |
- * | [RecordIntent.ExternalQuickRecord] | `ExternalActionReceiver.handleAutoConfirmRecord` | [ReceiptPolicy.NONE] | 否 | 否 | 每笔 |
+ * | [RecordIntent.ExternalQuickRecord] | `ExternalActionReceiver`（`auto_confirm` 静默入账） | [ReceiptPolicy.NONE] | 否 | 否 | 每笔 |
  * | [RecordIntent.ManualOffline] | `TransactionRepositoryImpl.createTransactionOffline` | [ReceiptPolicy.NONE] | 否 | 否 | 每笔 |
  *
  * 上表里的「否」多数是**历史事实而非疏漏**：批量确认本来就不预测不学习，
@@ -214,14 +214,14 @@ sealed interface RecordIntent {
     /**
      * 外部 Intent 静默入账（Tasker / 快捷指令，同签名权限校验在调用方）。
      *
-     * 对应今天的 `ExternalActionReceiver.handleAutoConfirmRecord`，其独有的历史写法全部保留：
+     * 对应今天的 `ExternalActionReceiver`（`auto_confirm` 静默入账分支），其独有的历史写法全部保留：
      * - `source="external_intent"`、`source_detail="tasker_quick_record"`
      *   （Tasker 与通知自动记账的区分依据，丢了服务端就分不出来）；
      - `client_created_at` 用**无时区的本地日期时间串**（`LocalDateTime.now().toString()`），
      *   与其余路径的 `Instant`（UTC）口径不同——保留，不在本次收口里统一；
      - **不刷 widget**（其余通知路径都刷）。
      *
-     * 安全边界不变：权限检查与 `auto_confirm` 判定仍在 [onReceive]，不在本意图内。
+     * 安全边界不变：权限检查与 `auto_confirm` 判定仍在接收器的 `onReceive` 里，不在本意图内。
      */
     data class ExternalQuickRecord(
         val amount: Int,

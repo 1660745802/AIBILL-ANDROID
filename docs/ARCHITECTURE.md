@@ -63,12 +63,13 @@ ViewModel 标准模式：
 ```
 app/src/main/java/com/aibill/android/
 ├── AiBillApp.kt                 # Application：Timber + 定时任务调度
-├── di/                          # Hilt 模块（9 个：Network/Database/Repository/Work/RecordIntake/Queue/NotificationPrefilter/Ownership/CoroutineScope）
+├── di/                          # Hilt 模块（10 个：Network/Database/Repository/Work/RecordIntake/Queue/NotificationPrefilter/Ownership/Undo/CoroutineScope）
 ├── domain/
 │   ├── model/                   # Transaction / User / Result / CategoryAndAccount / SyncQueueStatus
 │   ├── record/                  # RecordIntake：入账 interface + 意图（见 §2.3）
 │   ├── queue/                   # SyncQueue：离线队列 interface + SyncRequest（见 §2.5）
 │   ├── ownership/               # LocalDataOwnership：归属与处置 interface + 三种意图（见 §2.6）
+│   ├── undo/                    # RecordUndo：撤销 interface + UndoOutcome（见 §2.7）
 │   ├── notification/            # NotificationPrefilter：预筛 interface + 判据词汇（见 §2.4）
 │   ├── repository/              # 9 个接口（Auth/Transaction/Category/Account/Ai/...；离线队列已不在此，见 §2.5）
 │   └── usecase/                 # CategoryLearningEngine / StreakTracker
@@ -81,6 +82,7 @@ app/src/main/java/com/aibill/android/
 │   ├── record/                  # 入账实现 + RecordClock
 │   ├── queue/                   # 离线队列：SyncQueueImpl + RecordWriter（两个 adapter）+ SyncScheduler（见 §2.5）
 │   ├── ownership/               # 本地数据归属：LocalDataOwnershipImpl（4 张表的唯一清单，见 §2.6）
+│   ├── undo/                    # 撤销：RecordUndoImpl（按 sync_status 的撤销真值表，见 §2.7）
 │   ├── notification/            # 预筛实现 + NotificationRuleSource（两个 adapter）
 │   └── remote/
 │       ├── api/                 # 10 个 Retrofit API（含 AppUpdateApi + GithubReleaseApi）
@@ -292,6 +294,34 @@ session 盖在还没清掉的 user A 数据上）。重放 401 待补偿通知�
 
 **刻意不改**：换服务器路径**不做** SyncLock 握手（与收口前逐字一致；`ServerConfig` 只在未登录态
 可达，此时无在飞同步）；§11.1 #4 的 `unsyncedCount` init 快照竞态；§11.1 #3 的根因。
+
+### 2.7 撤销（RecordUndo）
+
+「刚才那笔还撤不撤得掉」的全部判据曾经住在 `AutoRecordActionReceiver` 这个 `BroadcastReceiver` 里，
+而且**一行都测不到**：`Hilt_AutoRecordActionReceiver` 在 `onReceive` 与 `goAsync()` 两处都会 `inject()`，
+要求 Application 是 `@HiltAndroidApp`；而本工程的 Robolectric 给不出这种 Application
+（`Application::class` 抛 Hilt 前置条件，`AiBillApp::class` 抛 `KeyStoreException: AndroidKeyStore not found`，
+引入 `hilt-android-testing` 不在本轮范围）。于是接收器把 `handleUndo` 提成 `internal suspend fun` 让测试直接调——
+**逻辑住在平台壳里、可见性只为测试放宽**。现在判据在可注入的 module 里：
+
+| 归属 | 文件 | 职责 |
+|---|---|---|
+| interface + 结果 | `domain/undo/RecordUndo.kt` | `undo(clientId)`；`UndoOutcome`（`Undone` / `LocalMissing` / `ServerStillHasIt` / `ServerStateUnknown`）与真值表 KDoc |
+| 实现 | `data/undo/RecordUndoImpl.kt`（`@Singleton`） | 读 `sync_status` → 决定删本地 / 删服务端 / 两侧都不删 → 日志（日志 tag 沿用 `AutoRecordActionReceiver`，排障检索姿势不变） |
+| 装配 | `di/UndoModule.kt` | `RecordUndo` 绑定 |
+| 调用点 | `service/AutoRecordActionReceiver.kt` | 只剩平台管道：取 extras → 撤通知 → `goAsync()` → 播 `UndoOutcome.userMessage` |
+
+**为什么文案跟着判据走**：文案本身是一条不变量（不得指引用户无法执行的动作、不得主张不确定的
+上传状态，与 Home 横幅同一约束）。文案留在 receiver 里 = 「判据被测了、文案靠 review」，
+那正是收口前的状态。因此文案是 `UndoOutcome` 的一等成员，由 `RecordUndoImplTest` 用
+**字面量双写 + 禁词断言**钉死；且该用例现在**不再需要 Robolectric**（判据类不碰 Context）。
+
+**fail-closed 是判据本身**：未知 `syncStatus` 与 `failed` 非 401 一律两侧都不删——
+`!= "synced"` 这种判据会把将来新增/拼错的状态当成「未上传」而删本地，静默退化成 fail-open。
+401 是唯一能证明「服务端明确拒绝、未落库」的 reason（`SyncWorker.ERROR_TOKEN_EXPIRED`）。
+
+**刻意不改**：`pending` 与在途 `SyncWorker` 的 TOCTOU 竞态（由 worker 的补偿分支处理）、
+服务端删除失败后的重试队列（§11.1 #2）。
 
 ---
 
@@ -559,7 +589,7 @@ sealed class AuthEvent {
 > `PendingTransactionDao.cleanSyncedBefore(before)` 已在 DAO 定义，但**零调用点**
 > ——从没有接线。每笔同步成功的记录永久留在 `pending_transactions` 表里。
 > 该方法原先也被视为「撤销三态修好之后再接线」的候选项，因为过早启用可能激活历史
-> `keyword` 兜底路径（见 `AutoRecordActionReceiver` KDoc 提及）；该前提现已满足
+> `keyword` 兜底路径（见 `RecordUndo` KDoc 提及）；该前提现已满足
 > （撤销三态与 R-Y/R-Z 补偿均已在 `804a23d` 修好），但**本次未接线**——
 > 仅陈述该存储事实，接线时需确认清理窗口（多久前的 `synced` 可删）与
 > 不误删在途补偿场景。类似地 `NotificationRecordDao.cleanIgnoredBefore` /
@@ -783,7 +813,7 @@ module 返回实际结果（`Retained` / `Cleared`）。4 张表的清单只在
 | # | 缺口 | 触发条件 | 现状判定 | 出处 |
 |---|---|---|---|---|
 | 1 | `failed` 行无任何逐行 UI 处置入口（不可查看/删除/重试） | 队列里存在 `failed` | 横幅只作状态陈述、不指引；待「failed 明细页」切片 | §6.2 |
-| 2 | 补偿删除失败无重试队列 | 撤销时服务端删除失败 | 仅 error 日志对账，可能留服务端孤儿账 | `AutoRecordActionReceiver` |
+| 2 | 补偿删除失败无重试队列 | 撤销时服务端删除失败 | 仅 error 日志对账，可能留服务端孤儿账 | `RecordUndoImpl`（§2.7） |
 | 3 | 跨服务器 `userId` 命名空间碰撞 | 登出态换服务器 + 两端 userId 相同（自建部署常见） | **收口已做**（候选 4：4 张表的清单、归属判据、SyncLock 握手、`last_known_user_id` 存活期已归 `LocalDataOwnership`，并把归属键显式写成 `LocalOwnership`（server × account））；**根因待后续切片**——server 维度现在**故意为空**，换服务器仍被当作「整表作废」而不是「换命名空间」 | §2.6 / §6.4 |
 | 4 | `ServerConfigUiState.unsyncedCount` 是 `init` 快照 | 进入页面时队列为空、期间后台落 pending、用户点保存 | 有竞态窗口可致「无警告即清空」；按钮需 `isConnected` 才可点，窗口极窄，定为低优先 | `ServerConfigViewModel` |
 
@@ -825,9 +855,12 @@ module 返回实际结果（`Retained` / `Cleared`）。4 张表的清单只在
   （三步的**顺序与关联键**已由 `DirectRecordWriterTest` 钉死，缺的只是「原子」这一层。）
 - `PendingTransactionDao.cleanSyncedBefore` 等三个「清理」方法定义未调用（存储无上限，见 §6.2）。
 - `HomeViewModelTest` 用 5 个非 relaxed mock 打桩 `init` 的四路 `refresh()`；`init` 再新增任何调用都会让全部用例因 `no answer found` 变红（红因与被测行为无关）。
-- **Hilt 门禁挡住 receiver/service 的可测性**：`Hilt_*` 生成类在 `onReceive` / `goAsync()` 均 `inject()`，而本工程 Robolectric 给不出 `@HiltAndroidApp` 的 `Application`（`Application::class` 抛 Hilt 前置条件；`AiBillApp::class` 抛 `AndroidKeyStore not found`）。为此 `ExternalActionReceiver` 把 autoConfirm 块提取为 `internal suspend fun` 才能测（先例：`AutoRecordActionReceiver.handleUndo`）。根治需引入 `hilt-android-testing` + `HiltTestApplication`（新增依赖，需单独立项）。
-- `ExternalActionReceiver` 的「权限被拒」与「autoConfirm=false」两条「不排同步」分支仍不可测（入账收口未改动 `onReceive`，靠 review 把守）。
-- `AutoRecordActionReceiverUndoTest` 的约束断言（禁「上传/服务器/流水页」）未覆盖 `MSG_NOT_FOUND` 分支；现状文案合规，等值双写断言兜底。
+- ~~**Hilt 门禁挡住 receiver/service 的可测性**~~ —— **候选 5 已处理「为测试而开的后门」那一半**（架构候选 5，见 [§2.7](#27-撤销recordundo)）。门禁本身还在：`Hilt_*` 生成类在 `onReceive` / `goAsync()` 均 `inject()`，而本工程 Robolectric 给不出 `@HiltAndroidApp` 的 `Application`（`Application::class` 抛 Hilt 前置条件；`AiBillApp::class` 抛 `AndroidKeyStore not found`），且本轮**不引入** `hilt-android-testing`（需单独立项）。
+  - **已撤掉的后门**（逻辑住在平台壳里、可见性只为测试放宽）：① `AutoRecordActionReceiver.handleUndo` → 判据与文案搬进 `domain/undo/RecordUndo` + `data/undo/RecordUndoImpl`，用例改名 `RecordUndoImplTest`（纯 JVM，不再需要 Robolectric 与 `Dispatchers.setMain`）；② `ExternalActionReceiver.handleAutoConfirmRecord` → 恢复 `private`，其用例并入 `RecordIntakeTest`（候选 1 之后该函数只剩「翻译成 `RecordIntent`」一步，逻辑早已在入账 module 里，后门没有存在必要）。
+  - **盘点后判定为「自然分解」、刻意保留**：`SyncWorker.syncTransaction`（`doWork` 的真实调用点，且 `SyncWorker` 本身可用 assisted 构造参数直接构造测试）、`PaymentAccessibilityRecognition`（12 个生产调用点的纯函数提取）、`RecordWriter.applyRecordWrite`（两个 adapter 共用）、`NotificationRuleSourceAdapters.deriveSnapshot`。
+  - **仍未测**：平台壳本身（取 extras / `goAsync()` 配对 / 撤通知 / Toast / 启动 Intent）依旧只能靠 review 把守——这正是收口的目的（可测的部分不该藏在壳里）。
+- `ExternalActionReceiver` 的「权限被拒」与「autoConfirm=false」两条「不排同步」分支仍不可测（两条都在 `onReceive` 内、需要 Hilt 门禁才能到达；候选 5 **刻意未动**它们——它们不是后门，而是还没被拆出来的平台管道，靠 review 把守）。
+- `RecordUndoImplTest` 的约束断言（禁「上传/服务器/流水页」）未覆盖 `LocalMissing` 分支；现状文案合规，等值双写断言兜底。
 - `RecordIntakeTest` 直接构造 `RecordIntakeImpl` + 匿名 `object : RecordWriter`（不 mock 入账入口），
   因此「入账时界面不崩」这点仍依赖 Hilt 图的编译期正确性，无运行时测试。
   ⚠️ 正因为它注入的是匿名 writer，`RecordWriter` 的三步写入一度**全仓无断言**（候选 1 的 KDoc 与代码不符），

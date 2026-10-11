@@ -1,36 +1,25 @@
-package com.aibill.android.service
+package com.aibill.android.data.undo
 
-import android.app.Application
-import android.content.Context
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.repository.TransactionRepository
+import com.aibill.android.domain.undo.UndoOutcome
+import com.aibill.android.service.SyncWorker
 import com.aibill.android.util.AppLogger
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
 import io.mockk.mockk
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import org.junit.After
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Before
-import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
-import org.robolectric.annotation.Config
-import org.robolectric.shadows.ShadowToast
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
 
 /**
- * `AutoRecordActionReceiver.handleUndo` 的状态真值表测试。
+ * 撤销 module（[RecordUndoImpl]）的状态真值表测试。
  *
  * ## 为什么这条链路必须有测试
  *
@@ -52,7 +41,7 @@ import org.robolectric.shadows.ShadowToast
  *
  * ## `failed` 必须区分 reason（fail-safe 白名单）
  *
- * `SyncWorker` 的 markFailed 有四条路径，只有 401 能证明服务端拒绝、未落库：
+ * `SyncWorker` 的 markFailed 有多条路径，只有 401 能证明服务端拒绝、未落库：
  * `ERROR_SERVER_ANOMALY`（服务端可能已创建、只是响应没匹配上 clientId）、
  * `ERROR_MAX_RETRY_EXCEEDED`（上次请求可能已成功、只是响应丢了）、
  * `ERROR_BUSINESS`（5xx）以及 `lastError == null`（历史遗留写法）——
@@ -62,7 +51,7 @@ import org.robolectric.shadows.ShadowToast
  *
  * ## 本测试锁住的不变量
  *
- * 1. **Toast 是结果，不是意图**：说「已撤销」的前提是 DAO 或服务端**真的**删了；
+ * 1. **文案是结果，不是意图**：说「已撤销」的前提是 DAO 或服务端**真的**删了；
  *    任何失败路径都不得出现「已撤销」，也不得出现「回收站」（pending 记录从未上过
  *    服务端，不存在回收站可恢复）。
  * 2. **synced 分支必须先服务端、后本地**：服务端失败时本地行必须留存，
@@ -75,68 +64,59 @@ import org.robolectric.shadows.ShadowToast
  * 硬约束（与 Home 横幅同一约束）：**不得指引用户无法执行的动作，
  * 也不得主张不确定的上传状态**。因此失败文案拆成两支：
  *
- * - `MSG_FAILED_MANUAL`（服务端**确有**这笔）：指向流水页——流水页数据源是服务端，
+ * - `ServerStillHasIt`（服务端**确有**这笔）：指向流水页——流水页数据源是服务端，
  *   那里看得到也删得掉。断言必须 `contains("流水页")`，防「一刀切改保守」也是信息丢失。
- * - `MSG_FAILED_UNCHANGED`（服务端**状态未知**）：什么都没删，不得指路、不得主张上传状态。
+ * - `ServerStateUnknown`（服务端**状态未知**）：什么都没删，不得指路、不得主张上传状态。
  *   断言用 `assertNoActionOrUploadClaim()` 挡禁词。
  *
- * 本类的 `MSG_*` 常量是生产常量的**字面量副本**（而非引用）：故意双写。
- * 只有这样，生产侧文案被无意识改动时全等断言才会红；若引用生产常量，
+ * 本类的 `MSG_*` 常量是生产 `UndoOutcome.userMessage` 的**字面量副本**（而非引用）：
+ * 故意双写。只有这样，生产侧文案被无意识改动时全等断言才会红；若引用生产文案，
  * 改文案两边自动同步、测试永远绿。代价是改文案要同步改这里——接受。
  *
  * ⚠️ 全等断言的局限：若有人把生产与测试字面量**同时**改成违反约束的
  * （例：「尚未上传到服务器」），全等断言仍会绿——**只有 `assertNoActionOrUploadClaim`
  * 的禁词断言能拦**。这也是约束断言必须存在的原因。
  *
- * 直接调 `handleUndo`（internal）而不是走 `onReceive`：绕开 `goAsync()` +
- * 进程级 ApplicationScope 的时序噪声。注入字段是 `lateinit`，测试直接赋值。
+ * ## 这里为什么不再需要 Robolectric
+ *
+ * 收口前判据住在 `AutoRecordActionReceiver.handleUndo`（`internal suspend fun`）里，
+ * 用例因此要 `@RunWith(RobolectricTestRunner)` + `application = Application::class`，
+ * 还要 `Dispatchers.setMain(UnconfinedTestDispatcher())` 顶掉末尾的 `Toast`。
+ * 判据搬到 [RecordUndoImpl] 后这些都是噪声：**本类是纯 JVM 单测**，构造即用。
+ * 接收器那边只剩「取 extras / 撤通知 / goAsync / 播 Toast」，属平台管道，不测。
  */
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = Application::class)
-@OptIn(ExperimentalCoroutinesApi::class)
-class AutoRecordActionReceiverUndoTest {
+class RecordUndoImplTest {
 
-    private lateinit var context: Context
     private lateinit var pendingTransactionDao: PendingTransactionDao
     private lateinit var transactionRepository: TransactionRepository
     private lateinit var appLogger: AppLogger
-    private lateinit var receiver: AutoRecordActionReceiver
+    private lateinit var undo: RecordUndoImpl
 
     private val clientId = "C-undo-1"
     private val serverId = 4242
 
     private companion object {
         const val MSG_UNDONE = "已撤销"
-        /** 与生产的 `MSG_FAILED_MANUAL` **有意双写**（理由见类 KDoc） */
+        /** 与生产的 `UndoOutcome.ServerStillHasIt.userMessage` **有意双写**（理由见类 KDoc） */
         const val MSG_FAILED_MANUAL = "撤销失败，请稍后在流水页手动删除"
 
-        /** 与生产的 `MSG_FAILED_UNCHANGED` **有意双写** */
+        /** 与生产的 `UndoOutcome.ServerStateUnknown.userMessage` **有意双写** */
         const val MSG_FAILED_UNCHANGED = "撤销失败，未删除任何数据"
 
         const val MSG_NOT_FOUND = "撤销失败，未找到本地记录"
     }
 
-    @Before
+    @BeforeEach
     fun setUp() {
-        // handleUndo 末尾会 withContext(Dispatchers.Main) 弹 Toast，
-        // 必须替换 Main dispatcher，否则在 JVM 测试里抛
-        // "Module with the Main dispatcher had failed to initialize"。
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-
-        context = RuntimeEnvironment.getApplication()
         pendingTransactionDao = mockk(relaxed = true)
         transactionRepository = mockk(relaxed = true)
         appLogger = mockk(relaxed = true)
 
-        receiver = AutoRecordActionReceiver()
-        receiver.pendingTransactionDao = pendingTransactionDao
-        receiver.transactionRepository = transactionRepository
-        receiver.appLogger = appLogger
-    }
-
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
+        undo = RecordUndoImpl(
+            pendingTransactionDao = pendingTransactionDao,
+            transactionRepository = transactionRepository,
+            appLogger = appLogger,
+        )
     }
 
     private fun localEntity(
@@ -157,35 +137,39 @@ class AutoRecordActionReceiverUndoTest {
         lastError = lastError,
     )
 
-    private fun latestToast(): String? = ShadowToast.getTextOfLatestToast()
-
     /**
      * 硬约束：服务端**状态未知**时的失败文案，
      * 既不得指引用户无法执行的动作（流水页 / 手动删除），
      * 也不得主张不确定的上传状态（上传 / 服务器）。
      */
-    private fun assertNoActionOrUploadClaim(toast: String?) {
-        val text = toast.orEmpty()
+    private fun assertNoActionOrUploadClaim(message: String) {
         listOf("流水页", "手动删除", "上传", "服务器").forEach { forbidden ->
-            assertFalse("状态未知的失败文案不得含「$forbidden」：$text", text.contains(forbidden))
+            assertFalse(message.contains(forbidden), "状态未知的失败文案不得含「$forbidden」：$message")
         }
     }
 
+    /** 任何非「已撤销」的结果都不得出现「已撤销」，也不得提「回收站」（pending 从未上过服务端）。 */
+    private fun assertNotClaimedUndone(outcome: UndoOutcome) {
+        assertFalse(outcome.userMessage.contains(MSG_UNDONE), outcome.userMessage)
+        assertFalse(outcome.userMessage.contains("回收站"), outcome.userMessage)
+    }
+
     // pending 表示尚未确认同步成功；本用例锁住无并发 Worker 时的既有本地撤销语义。
-    // 「请求已在途但尚未回写 synced」的 TOCTOU 由独立补偿切片处理。
+    // 「请求已在途但尚未回写 synced」的 TOCTOU 由 SyncWorker 的补偿分支处理。
 
     @Test
     fun `pending - deletes local row only, no server call, reports undone`() = runTest {
         coEvery { pendingTransactionDao.findByClientId(clientId) } returns localEntity("pending")
 
-        receiver.handleUndo(context, clientId)
+        val outcome = undo.undo(clientId)
 
         coVerify(exactly = 1) { pendingTransactionDao.deleteByClientId(clientId) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_UNDONE, latestToast())
+        assertEquals(UndoOutcome.Undone, outcome)
+        assertEquals(MSG_UNDONE, outcome.userMessage)
         // pending 记录从未上过服务端，谈不上「回收站可恢复」——不许出现。
-        assertFalse(latestToast().orEmpty().contains("回收站"))
+        assertFalse(outcome.userMessage.contains("回收站"))
     }
 
     // ==================== failed：只有 401 能证明服务端没建 ====================
@@ -195,13 +179,13 @@ class AutoRecordActionReceiverUndoTest {
         coEvery { pendingTransactionDao.findByClientId(clientId) } returns
             localEntity("failed", lastError = SyncWorker.ERROR_TOKEN_EXPIRED)
 
-        receiver.handleUndo(context, clientId)
+        val outcome = undo.undo(clientId)
 
         coVerify(exactly = 1) { pendingTransactionDao.deleteByClientId(clientId) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_UNDONE, latestToast())
-        assertFalse(latestToast().orEmpty().contains("回收站"))
+        assertEquals(UndoOutcome.Undone, outcome)
+        assertEquals(MSG_UNDONE, outcome.userMessage)
     }
 
     @Test
@@ -211,15 +195,16 @@ class AutoRecordActionReceiverUndoTest {
         coEvery { pendingTransactionDao.findByClientId(clientId) } returns
             localEntity("failed", lastError = SyncWorker.ERROR_SERVER_ANOMALY)
 
-        receiver.handleUndo(context, clientId)
+        val outcome = undo.undo(clientId)
 
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
         // 服务端是否已有并不确定 ⇒ 不得指向流水页，也不得主张任何上传状态
-        assertEquals(MSG_FAILED_UNCHANGED, latestToast())
-        assertNoActionOrUploadClaim(latestToast())
-        assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
+        assertEquals(UndoOutcome.ServerStateUnknown, outcome)
+        assertEquals(MSG_FAILED_UNCHANGED, outcome.userMessage)
+        assertNoActionOrUploadClaim(outcome.userMessage)
+        assertNotClaimedUndone(outcome)
     }
 
     @Test
@@ -227,14 +212,15 @@ class AutoRecordActionReceiverUndoTest {
         coEvery { pendingTransactionDao.findByClientId(clientId) } returns
             localEntity("failed", lastError = SyncWorker.ERROR_MAX_RETRY_EXCEEDED)
 
-        receiver.handleUndo(context, clientId)
+        val outcome = undo.undo(clientId)
 
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_FAILED_UNCHANGED, latestToast())
-        assertNoActionOrUploadClaim(latestToast())
-        assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
+        assertEquals(UndoOutcome.ServerStateUnknown, outcome)
+        assertEquals(MSG_FAILED_UNCHANGED, outcome.userMessage)
+        assertNoActionOrUploadClaim(outcome.userMessage)
+        assertNotClaimedUndone(outcome)
     }
 
     @Test
@@ -244,14 +230,15 @@ class AutoRecordActionReceiverUndoTest {
         coEvery { pendingTransactionDao.findByClientId(clientId) } returns
             localEntity("failed", lastError = null)
 
-        receiver.handleUndo(context, clientId)
+        val outcome = undo.undo(clientId)
 
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_FAILED_UNCHANGED, latestToast())
-        assertNoActionOrUploadClaim(latestToast())
-        assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
+        assertEquals(UndoOutcome.ServerStateUnknown, outcome)
+        assertEquals(MSG_FAILED_UNCHANGED, outcome.userMessage)
+        assertNoActionOrUploadClaim(outcome.userMessage)
+        assertNotClaimedUndone(outcome)
     }
 
     // ==================== 未知 status：fail-closed ====================
@@ -262,14 +249,15 @@ class AutoRecordActionReceiverUndoTest {
         coEvery { pendingTransactionDao.findByClientId(clientId) } returns
             localEntity("uploading_v2")
 
-        receiver.handleUndo(context, clientId)
+        val outcome = undo.undo(clientId)
 
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_FAILED_UNCHANGED, latestToast())
-        assertNoActionOrUploadClaim(latestToast())
-        assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
+        assertEquals(UndoOutcome.ServerStateUnknown, outcome)
+        assertEquals(MSG_FAILED_UNCHANGED, outcome.userMessage)
+        assertNoActionOrUploadClaim(outcome.userMessage)
+        assertNotClaimedUndone(outcome)
     }
 
     // ==================== synced + 有 serverId：先服务端，成功才删本地 ====================
@@ -281,7 +269,7 @@ class AutoRecordActionReceiverUndoTest {
                 localEntity("synced", serverTransactionId = serverId)
             coEvery { transactionRepository.deleteTransaction(serverId) } returns Result.Success(Unit)
 
-            receiver.handleUndo(context, clientId)
+            val outcome = undo.undo(clientId)
 
             coVerify(exactly = 1) { transactionRepository.deleteTransaction(serverId) }
             // 顺序不变量：服务端删成功才敢删本地；反过来会把账变成两处都查不到。
@@ -291,7 +279,8 @@ class AutoRecordActionReceiverUndoTest {
             }
             // keyword 兜底已删除：synced 路径不再靠搜索猜 serverId。
             coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-            assertEquals(MSG_UNDONE, latestToast())
+            assertEquals(UndoOutcome.Undone, outcome)
+            assertEquals(MSG_UNDONE, outcome.userMessage)
         }
 
     @Test
@@ -302,16 +291,17 @@ class AutoRecordActionReceiverUndoTest {
             transactionRepository.deleteTransaction(serverId)
         } returns Result.Error(5001, "删除失败")
 
-        receiver.handleUndo(context, clientId)
+        val outcome = undo.undo(clientId)
 
         coVerify(exactly = 1) { transactionRepository.deleteTransaction(serverId) }
         // 服务端还在，本地行必须留着，用户才能在流水页看到并重试。
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_FAILED_MANUAL, latestToast())
+        assertEquals(UndoOutcome.ServerStillHasIt, outcome)
+        assertEquals(MSG_FAILED_MANUAL, outcome.userMessage)
         // 服务端**确有**这笔 ⇒ 必须把处置入口指出来（防「一刀切改保守」也是信息丢失）
-        assertTrue(latestToast().orEmpty().contains("流水页"))
-        assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
+        assertTrue(outcome.userMessage.contains("流水页"))
+        assertNotClaimedUndone(outcome)
     }
 
     @Test
@@ -320,13 +310,14 @@ class AutoRecordActionReceiverUndoTest {
             localEntity("synced", serverTransactionId = serverId)
         coEvery { transactionRepository.deleteTransaction(serverId) } returns Result.Loading
 
-        receiver.handleUndo(context, clientId)
+        val outcome = undo.undo(clientId)
 
         coVerify(exactly = 1) { transactionRepository.deleteTransaction(serverId) }
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_FAILED_MANUAL, latestToast())
-        assertTrue(latestToast().orEmpty().contains("流水页"))
+        assertEquals(UndoOutcome.ServerStillHasIt, outcome)
+        assertEquals(MSG_FAILED_MANUAL, outcome.userMessage)
+        assertTrue(outcome.userMessage.contains("流水页"))
     }
 
     // ==================== synced 但无 serverId：无处可删，诚实报失败 ====================
@@ -336,16 +327,17 @@ class AutoRecordActionReceiverUndoTest {
         coEvery { pendingTransactionDao.findByClientId(clientId) } returns
             localEntity("synced", serverTransactionId = null)
 
-        receiver.handleUndo(context, clientId)
+        val outcome = undo.undo(clientId)
 
         // 没有可靠凭据定位服务端那条 → 既不猜（无搜索）、也不删本地。
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_FAILED_MANUAL, latestToast())
+        assertEquals(UndoOutcome.ServerStillHasIt, outcome)
+        assertEquals(MSG_FAILED_MANUAL, outcome.userMessage)
         // 服务端确有（synced 是 code==0 + clientId 匹配的产物）⇒ 指向流水页是可执行动作
-        assertTrue(latestToast().orEmpty().contains("流水页"))
-        assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
+        assertTrue(outcome.userMessage.contains("流水页"))
+        assertNotClaimedUndone(outcome)
     }
 
     // ==================== 本地无此行 ====================
@@ -354,12 +346,15 @@ class AutoRecordActionReceiverUndoTest {
     fun `local row missing - deletes nothing, reports not found`() = runTest {
         coEvery { pendingTransactionDao.findByClientId(clientId) } returns null
 
-        receiver.handleUndo(context, clientId)
+        val outcome = undo.undo(clientId)
 
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(MSG_NOT_FOUND, latestToast())
-        assertFalse(latestToast().orEmpty().contains(MSG_UNDONE))
+        assertEquals(UndoOutcome.LocalMissing, outcome)
+        assertEquals(MSG_NOT_FOUND, outcome.userMessage)
+        // 「本地」是限定词：不能被读成「这笔从没记过」而诱发重复记账
+        assertTrue(outcome.userMessage.contains("本地"))
+        assertNotClaimedUndone(outcome)
     }
 }

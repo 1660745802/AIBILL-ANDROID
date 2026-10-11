@@ -73,17 +73,16 @@ class ExternalActionReceiver : BroadcastReceiver() {
      * 静默入账本体（`autoConfirm` 且签名权限已通过时调用）：
      * 表达入账意图 → 由入账 module 写库并排一次同步。
      *
-     * internal 而非 private，与 [AutoRecordActionReceiver.handleUndo] 同款：为让
-     * 单元测试能直接调本函数，绕开 `onReceive` 的两道门——
-     * `Hilt_ExternalActionReceiver` 在 `onReceive` 与 `goAsync()` 里都会 `inject()`，
-     * 而本工程的 Robolectric 基建给不出 `@HiltAndroidApp` 的 `Application`：
-     * 用 `Application::class` 抛 Hilt 前置条件，用 `AiBillApp::class` 抛
-     * `KeyStoreException: AndroidKeyStore not found`（`hilt-android-testing` 本轮不引入）。
+     * **private 是收口后的状态**（架构候选 5）：本函数曾是 `internal`，理由写着「为让单测
+     * 直接调它，绕开 `onReceive` 的 `inject()`」——逻辑住在壳里、可见性只为测试放宽，
+     * 那是本仓库唯一的测试后门形态。但候选 1 之后它只剩「翻译成 [RecordIntent] 再交给
+     * [RecordIntake]」这一步，写入逻辑根本不在这里，于是后门没有必要存在：
+     * 可测的部分已经全在 `data/record/RecordIntakeImpl` 里，由 `RecordIntakeTest`
+     * 用真实的入账实现直接驱动。
      *
-     * 本函数是**纯搬移**：判断、日志级别与文案、写入内容均与搬移前逐行相同；
-     * 权限检查与 `autoConfirm` 判断仍留在 [onReceive]，位置与逻辑均未改动。
+     * 权限检查与 `autoConfirm` 判定仍留在 [onReceive]，位置与逻辑均未改动。
      */
-    internal suspend fun handleAutoConfirmRecord(
+    private suspend fun handleAutoConfirmRecord(
         amount: Int,
         type: String,
         description: String?,
