@@ -183,12 +183,33 @@ tasks.withType<Test>().configureEach {
 }
 
 // Kover 覆盖率配置（PR：CI 化的第一步）
+//
+// ⚠️ 验证范围**只认 debug 变体**，且**必须**跑 `koverVerifyDebug`（不是 `koverVerify`）。
+//
+// 背景：Kover 0.9.0 的 `reports { total { } }` 跨变体聚合，`koverVerify` 会把
+// `testReleaseUnitTest` 一起拖进任务图；而 release 变体有 9 个**已知失败**
+// （compose-ui-test-manifest 只进 debug 清单，根因见 docs/ARCHITECTURE.md §11.3），
+// 于是 CI 的 `./gradlew :app:testDebugUnitTest :app:koverHtmlReport :app:koverVerify`
+// 会被这 9 个打红——门禁被一个「已知且刻意不修」的变体差异绑架。
+//
+// 那 9 个的正解（给 release 清单补 ComponentActivity）**刻意不做**：那条声明是
+// `android:exported="true"`，等于往 release APK 里塞一个谁都能拉起的空 activity。
+// Compose UI 单测因此只在 debug 变体跑，覆盖率门禁跟随同一变体。
+//
+// 为什么不是 `currentProject { providedVariant("debug") }`：0.9.0 里 `providedVariant`
+// 只是**改写某个变体的配置**（KMP 用），不裁剪变体集合——total 依然聚合全部变体，
+// 实测 `koverVerify` 的任务图照旧含 `testReleaseUnitTest`。能真正裁剪的只有
+// 「把规则挂到 `variant("debug")`」这一条，代价是门禁任务名随之变成 `koverVerifyDebug`。
 kover {
     reports {
-        total {
+        variant("debug") {
+            html {
+                // 保持 CI 上传的产物路径不变（app/build/reports/kover/html）
+                htmlDir.set(layout.buildDirectory.dir("reports/kover/html"))
+            }
             verify {
                 rule {
-                    // 当前覆盖率 ~9.8%（存量代码），随测试补齐逐步提高
+                    // 当前 line 覆盖率 22.8%（2026-10 实测，debug 变体），随测试补齐逐步提高
                     // 目标：先 20%（关键 VM + Repository）→ 50%（UI Kit + 工具类）
                     minBound(9)
                 }
