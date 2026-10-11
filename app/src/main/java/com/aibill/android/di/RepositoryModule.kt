@@ -8,7 +8,6 @@ import com.aibill.android.data.repository.CategoryRuleRepositoryImpl
 import com.aibill.android.data.repository.NotificationRecordRepositoryImpl
 import com.aibill.android.data.repository.StatsRepositoryImpl
 import com.aibill.android.data.repository.StreakRepositoryImpl
-import com.aibill.android.data.repository.TemplateRepositoryImpl
 import com.aibill.android.data.repository.TransactionRepositoryImpl
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.AiRepository
@@ -18,7 +17,6 @@ import com.aibill.android.domain.repository.CategoryRuleRepository
 import com.aibill.android.domain.repository.NotificationRecordRepository
 import com.aibill.android.domain.repository.StatsRepository
 import com.aibill.android.domain.repository.StreakRepository
-import com.aibill.android.domain.repository.TemplateRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import dagger.Binds
 import dagger.Module
@@ -49,10 +47,6 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindAccountRepository(impl: AccountRepositoryImpl): AccountRepository
-
-    @Binds
-    @Singleton
-    abstract fun bindTemplateRepository(impl: TemplateRepositoryImpl): TemplateRepository
 
     // PR M9：补 StatsRepository bind，PR #802bc0f 漏了
     @Binds

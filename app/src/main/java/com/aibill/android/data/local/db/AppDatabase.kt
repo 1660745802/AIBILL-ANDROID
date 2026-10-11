@@ -4,21 +4,16 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import com.aibill.android.data.local.dao.AccountDao
 import com.aibill.android.data.local.dao.AppLogDao
-import com.aibill.android.data.local.dao.AutoRuleDao
 import com.aibill.android.data.local.dao.CategoryDao
 import com.aibill.android.data.local.dao.CategoryRuleDao
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
-import com.aibill.android.data.local.dao.RecurringDao
-import com.aibill.android.data.local.dao.TemplateDao
 import com.aibill.android.data.local.entity.AccountEntity
-import com.aibill.android.data.local.entity.AutoRuleEntity
+import com.aibill.android.data.local.entity.AppLogEntity
 import com.aibill.android.data.local.entity.CategoryEntity
 import com.aibill.android.data.local.entity.CategoryRuleEntity
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
-import com.aibill.android.data.local.entity.RecurringRuleEntity
-import com.aibill.android.data.local.entity.TemplateEntity
 
 @Database(
     entities = [
@@ -27,12 +22,9 @@ import com.aibill.android.data.local.entity.TemplateEntity
         AccountEntity::class,
         NotificationRecordEntity::class,
         CategoryRuleEntity::class,
-        TemplateEntity::class,
-        AutoRuleEntity::class,
-        RecurringRuleEntity::class,
-        com.aibill.android.data.local.entity.AppLogEntity::class,
+        AppLogEntity::class,
     ],
-    version = 7, // v6 → v7: 新增 app_logs 表
+    version = 8, // v7 → v8: 删除死表 templates / auto_rules / recurring_rules
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -42,9 +34,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao
     abstract fun notificationRecordDao(): NotificationRecordDao
     abstract fun categoryRuleDao(): CategoryRuleDao
-    abstract fun templateDao(): TemplateDao
-    abstract fun autoRuleDao(): AutoRuleDao
-    abstract fun recurringDao(): RecurringDao
     abstract fun appLogDao(): AppLogDao
 
     companion object {

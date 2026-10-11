@@ -12,8 +12,6 @@ interface AuthRepository {
     /** 修改密码 */
     suspend fun changePassword(oldPassword: String, newPassword: String): Result<Unit>
 
-    suspend fun validateToken(): Result<User>
-
     suspend fun logout()
 
     fun isLoggedIn(): Boolean

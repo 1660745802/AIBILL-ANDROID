@@ -20,7 +20,7 @@ sealed interface Route {
     @Serializable data object Profile : Route
 
     // --- 独立页面 ---
-    @Serializable data class ManualRecord(val templateId: Long? = null) : Route
+    @Serializable data object ManualRecord : Route
     @Serializable data class TransactionDetail(val id: Int) : Route
     @Serializable data object NotificationCenter : Route
     @Serializable data object Settings : Route

@@ -34,7 +34,7 @@ import javax.inject.Singleton
  * 其中一个漏了新表」。判据是「用户换号后，这张表里的数据对他还有意义吗」：
  * 有 → 进清单；没有（纯设备侧统计 / 纯本地缓存）→ 不进，由各 module 自己管。
  *
- * 另外 5 张表（`category_rules` / `templates` / `auto_rules` / `recurring_rules` / `app_logs`）
+ * 另外 2 张表（`category_rules` / `app_logs`）
  * **刻意不在清单里**：它们要么是可重建的本地配置，要么是跨账号的设备级数据，
  * 历史上换号时也从未被清——收口只搬运、不改行为。
  *

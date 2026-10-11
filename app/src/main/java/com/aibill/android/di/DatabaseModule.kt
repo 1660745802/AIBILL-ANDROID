@@ -3,13 +3,10 @@ package com.aibill.android.di
 import android.content.Context
 import androidx.room.Room
 import com.aibill.android.data.local.dao.AccountDao
-import com.aibill.android.data.local.dao.AutoRuleDao
 import com.aibill.android.data.local.dao.CategoryDao
 import com.aibill.android.data.local.dao.CategoryRuleDao
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
-import com.aibill.android.data.local.dao.RecurringDao
-import com.aibill.android.data.local.dao.TemplateDao
 import com.aibill.android.data.local.db.AppDatabase
 import dagger.Module
 import dagger.Provides
@@ -39,6 +36,14 @@ object DatabaseModule {
                 },
                 androidx.room.migration.Migration(6, 7) { db ->
                     db.execSQL("CREATE TABLE IF NOT EXISTS app_logs (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, timestamp INTEGER NOT NULL, level TEXT NOT NULL, tag TEXT NOT NULL, message TEXT NOT NULL)")
+                },
+                // v7 → v8：删掉三张死表 templates / auto_rules / recurring_rules。
+                // 这三张表从来没有写入方（TemplateRepository.addLocal 零调用、
+                // AutoRuleDao / RecurringDao 零业务调用），DROP 不会丢任何用户数据。
+                androidx.room.migration.Migration(7, 8) { db ->
+                    db.execSQL("DROP TABLE IF EXISTS templates")
+                    db.execSQL("DROP TABLE IF EXISTS auto_rules")
+                    db.execSQL("DROP TABLE IF EXISTS recurring_rules")
                 }
             )
             // 不允许 fallbackToDestructiveMigration：schema 不匹配时必须显式写 Migration，
@@ -70,21 +75,6 @@ object DatabaseModule {
     @Singleton
     fun provideCategoryRuleDao(db: AppDatabase): CategoryRuleDao =
         db.categoryRuleDao()
-
-    @Provides
-    @Singleton
-    fun provideTemplateDao(db: AppDatabase): TemplateDao =
-        db.templateDao()
-
-    @Provides
-    @Singleton
-    fun provideAutoRuleDao(db: AppDatabase): AutoRuleDao =
-        db.autoRuleDao()
-
-    @Provides
-    @Singleton
-    fun provideRecurringDao(db: AppDatabase): RecurringDao =
-        db.recurringDao()
 
     @Provides
     @Singleton

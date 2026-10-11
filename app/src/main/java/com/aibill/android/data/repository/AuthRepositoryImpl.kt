@@ -106,15 +106,6 @@ class AuthRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun validateToken(): Result<User> {
-        val result = safeApiCall { authApi.getCurrentUser() }
-        return when (result) {
-            is Result.Success -> Result.Success(result.data.user.toDomain())
-            is Result.Error -> result
-            is Result.Loading -> result
-        }
-    }
-
     /**
      * 显式登出：**只结束会话，不删本地数据**。
      *

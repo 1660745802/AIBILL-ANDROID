@@ -1,6 +1,5 @@
 package com.aibill.android.presentation.ui.record
 
-import androidx.lifecycle.SavedStateHandle
 import app.cash.turbine.test
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
@@ -8,7 +7,6 @@ import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.AiRepository
 import com.aibill.android.domain.repository.CategoryRepository
-import com.aibill.android.domain.repository.TemplateRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.domain.usecase.StreakTracker
 import io.mockk.coEvery
@@ -58,7 +56,6 @@ class ManualRecordViewModelTest {
     private val transactionRepository: TransactionRepository = mockk(relaxed = true)
     private val categoryRepository: CategoryRepository = mockk(relaxed = true)
     private val accountRepository: AccountRepository = mockk(relaxed = true)
-    private val templateRepository: TemplateRepository = mockk(relaxed = true)
     private val aiRepository: AiRepository = mockk(relaxed = true)
     private val streakTracker: StreakTracker = mockk(relaxed = true)
 
@@ -77,19 +74,14 @@ class ManualRecordViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel(): ManualRecordViewModel {
-        // 空路由参数 = 不是从模板跳过来的（`templateId` 取默认值 null）
-        val handle = SavedStateHandle(emptyMap<String, Any?>())
-        return ManualRecordViewModel(
+    private fun buildViewModel(): ManualRecordViewModel =
+        ManualRecordViewModel(
             transactionRepository = transactionRepository,
             categoryRepository = categoryRepository,
             accountRepository = accountRepository,
-            templateRepository = templateRepository,
             aiRepository = aiRepository,
             streakTracker = streakTracker,
-            savedStateHandle = handle,
         )
-    }
 
     /** 填好一笔可保存的账（金额 + 分类）。 */
     private fun filledViewModel(): ManualRecordViewModel = buildViewModel().apply {

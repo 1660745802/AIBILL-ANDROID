@@ -51,8 +51,8 @@ package com.aibill.android.domain.undo
  *
  * ## 历史 bug（收口前修的，搬移时逐行保留）
  *
- * 1. 分支条件只判「本地行是否存在」而不看 `sync_status`，且 `cleanSyncedBefore`
- *    从未被调用（DAO 里定义了但零调用点）、synced 行无限留存，
+ * 1. 分支条件只判「本地行是否存在」而不看 `sync_status`，且本地缓存没有清理窗口、
+ *    synced 行无限留存，
  *    于是「已记上的账」几乎总是命中本地删除分支 → 服务端账目存活，用户却被告知
  *    「已撤销」（实际连回收站都没进）。
  * 2. 已同步时用 `TransactionQuery(keyword = clientId)` + `items.first()` 猜 serverId：

@@ -40,34 +40,17 @@ interface NotificationRecordDao {
     @Query("UPDATE notification_records SET status = :status, linked_client_id = :clientId WHERE id = :id")
     suspend fun updateStatus(id: Long, status: String, clientId: String? = null)
 
-    @Query("UPDATE notification_records SET parsed_amount = :amount, parsed_type = :type, parsed_description = :description, status = :status WHERE id = :id")
-    suspend fun updateParsedResult(id: Long, amount: Int, type: String, description: String?, status: String = "parsed")
-
     @Query("SELECT * FROM notification_records WHERE id = :id LIMIT 1")
     suspend fun findById(id: Long): NotificationRecordEntity?
 
     @Query("SELECT * FROM notification_records WHERE package_name = :packageName AND content = :content AND received_at > :since LIMIT 1")
     suspend fun findDuplicate(packageName: String, content: String, since: Long): NotificationRecordEntity?
 
-    /** 入库前去重：同金额+60s内已有confirmed记录（防多渠道重复入库） */
-    @Query("SELECT * FROM notification_records WHERE parsed_amount = :amount AND status = 'confirmed' AND received_at > :since LIMIT 1")
-    suspend fun findRecentConfirmed(amount: Int, since: Long): NotificationRecordEntity?
-
     /**
      * 跨包名去重：查 60s 内不同包名已处理（confirmed 或 parsed）的同金额记录。
      */
     @Query("SELECT * FROM notification_records WHERE parsed_amount = :amount AND status IN ('confirmed', 'parsed') AND received_at > :since AND package_name != :excludePackageName LIMIT 1")
     suspend fun findRecentConfirmedFromOtherChannel(amount: Int, since: Long, excludePackageName: String): NotificationRecordEntity?
-
-    @Query("DELETE FROM notification_records WHERE status = 'ignored' AND received_at < :before")
-    suspend fun cleanIgnoredBefore(before: Long)
-
-    /** 清理过期的待补偿记录（避免无限堆积） */
-    @Query("DELETE FROM notification_records WHERE status = 'auth_pending' AND received_at < :before")
-    suspend fun cleanAuthPendingBefore(before: Long)
-
-    @Query("SELECT * FROM notification_records WHERE package_name = :packageName AND received_at >= :since ORDER BY received_at DESC LIMIT 1")
-    suspend fun findRecentByPackage(packageName: String, since: Long): NotificationRecordEntity?
 
     @Query("DELETE FROM notification_records")
     suspend fun deleteAll()

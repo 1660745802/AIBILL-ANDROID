@@ -5,7 +5,6 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.aibill.android.data.local.entity.PendingTransactionEntity
-import kotlinx.coroutines.flow.Flow
 
 /**
  * `pending_transactions` = **已确认记录的本地缓存**。
@@ -32,12 +31,6 @@ interface PendingTransactionDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(entities: List<PendingTransactionEntity>)
-
-    @Query("SELECT * FROM pending_transactions ORDER BY created_at DESC LIMIT :limit")
-    fun observeRecentTransactions(limit: Int = 20): Flow<List<PendingTransactionEntity>>
-
-    @Query("DELETE FROM pending_transactions WHERE sync_status = 'synced' AND updated_at < :before")
-    suspend fun cleanSyncedBefore(before: Long)
 
     @Query("DELETE FROM pending_transactions")
     suspend fun deleteAll()

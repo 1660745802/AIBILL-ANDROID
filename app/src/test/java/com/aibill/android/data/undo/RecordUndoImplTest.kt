@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test
  *   findByClientId(clientId) != null → 只删本地 → Toast「已撤销」
  * ```
  *
- * 而 `cleanSyncedBefore` 定义在 DAO 里却**零调用点**，synced 行无限留存，
+ * 而本地缓存没有任何清理窗口，synced 行无限留存，
  * 于是「已上传到服务端的账」几乎总是走上面这条分支：服务端账目原封不动，
  * 用户却被告知已撤销 → 用户手动重记 → 重复账。已同步时用
  * `TransactionQuery(keyword = clientId)` + `items.first()` 猜 serverId 还有第二个

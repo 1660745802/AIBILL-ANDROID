@@ -290,11 +290,10 @@ IOException → `-1`，HttpException → 服务器错误，其它 → `-2`。
 
 ## 七、数据模型
 
-### 7.1 Room（9 张表）
+### 7.1 Room（6 张表）
 
 `pending_transactions`（已确认记录的本地缓存）· `categories` / `accounts`（服务端派生缓存）·
-`notification_records`（通知审计）· `category_rules`（分类学习）· `templates` ·
-`auto_rules` · `recurring_rules` · `app_logs`。无自定义索引。
+`notification_records`（通知审计）· `category_rules`（分类学习）· `app_logs`。无自定义索引。
 Migration 显式列出，禁 destructive fallback。
 
 ### 7.2 敏感数据（`TokenManager`）
@@ -358,6 +357,7 @@ R8 开启（保留 DTO/Entity/Retrofit 接口）· `allowBackup=false` · 权限
 |---|---|---|
 | 1 | 跨服务器 `userId` 命名空间碰撞 | 归属已收进 `LocalOwnership`（server × account），**server 维度仍为空**，换服务器仍是「整表作废」。当前唯一还在丢数据的根因 |
 | 2 | 撤销时服务端删除失败无自动重试 | 删除失败就保留本地缓存行并提示去流水页手动删；`RecordUndoImpl` 只记日志、不自动重试。可能留下用户不知道的服务端记录 |
+| 3 | `pending_transactions` / `notification_records` 只增不减 | 两张表都没有清理窗口：原本定义的 `cleanSyncedBefore` / `cleanIgnoredBefore` / `cleanAuthPendingBefore` 零调用，已随死代码一并删除。DB 体积随使用时长单调增长，将来要清必须先补清理时机 |
 
 ### 12.2 认知陷阱
 

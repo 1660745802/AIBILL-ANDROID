@@ -23,7 +23,7 @@ fun NavHostController.navigateToDetail(id: Int) {
 }
 
 fun NavHostController.navigateToManualRecord() {
-    navigate(Route.ManualRecord())
+    navigate(Route.ManualRecord)
 }
 
 fun NavHostController.navigateToNotificationCenter() {

@@ -1,9 +1,7 @@
 package com.aibill.android.presentation.ui.record
 
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.navigation.toRoute
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
@@ -11,14 +9,12 @@ import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository
-import com.aibill.android.presentation.navigation.Route
 import com.aibill.android.util.AmountUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -31,10 +27,8 @@ class ManualRecordViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
     private val accountRepository: com.aibill.android.domain.repository.AccountRepository,
-    private val templateRepository: com.aibill.android.domain.repository.TemplateRepository,
     private val aiRepository: com.aibill.android.domain.repository.AiRepository,
     private val streakTracker: com.aibill.android.domain.usecase.StreakTracker,
-    savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     data class RecordUiState(
@@ -72,10 +66,6 @@ class ManualRecordViewModel @Inject constructor(
     private val _uiEvent = Channel<UiEvent>(Channel.BUFFERED)
     val uiEvent = _uiEvent.receiveAsFlow()
 
-    /** PR #28：从路由参数读取的 templateId，非空则预填表单 */
-    private val templateId: Long? =
-        savedStateHandle.toRoute<com.aibill.android.presentation.navigation.Route.ManualRecord>().templateId
-
     /**
      * 当前 type 对应的分类订阅 Job，PR #36：切类型时取消旧 Job，
      * 避免 collect 协程叠加浪费 Room 订阅。
@@ -86,48 +76,6 @@ class ManualRecordViewModel @Inject constructor(
         loadCategories(_uiState.value.type)
         loadAccounts()
         loadAvailableTags()
-        // PR #28：如果从 TemplateScreen 跳过来，预填表单
-        if (templateId != null) {
-            applyTemplatePrefill(templateId)
-        }
-    }
-
-    /**
-     * PR #28：按 templateId 加载模板并预填表单字段。
-     * 加载完成后会触发 onTypeChanged 重订阅分类列表，
-     * 之后用户在已选分类上确认即可保存。
-     */
-    private fun applyTemplatePrefill(id: Long) {
-        viewModelScope.launch {
-            val template = templateRepository.findById(id) ?: return@launch
-            // PR H1：先写不依赖分类列表的字段（type/amount/description/accountId）
-            // 不立即设 selectedCategoryId，等 onTypeChanged 触发的分类列表加载完
-            // 后再设，否则 onTypeChanged 会把它清掉。
-            _uiState.update {
-                it.copy(
-                    type = template.type.value,
-                    amountFen = template.amount,
-                    amountText = "%.2f".format(template.amount / 100.0),
-                    accountId = template.accountId,
-                    description = template.description.orEmpty(),
-                )
-            }
-            // 切换 type 让分类/账户列表按模板的类型加载
-            onTypeChanged(template.type.value)
-            // 在分类列表加载完后查模板的 categoryId 是否仍在；若分类被删则保持 null
-            val templateCategoryId = template.categoryId
-            if (templateCategoryId != null) {
-                val currentCategories = categoryRepository
-                    .observeCategories(template.type.value)
-                    .first()
-                val matched = currentCategories.firstOrNull { it.id == templateCategoryId }
-                if (matched != null) {
-                    _uiState.update { it.copy(selectedCategoryId = matched.id) }
-                }
-            }
-            // 选择模板指定的账户
-            template.accountId?.let { onAccountSelected(it) }
-        }
     }
 
     private fun loadAccounts() {
