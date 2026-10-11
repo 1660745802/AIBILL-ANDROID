@@ -2,9 +2,9 @@ package com.aibill.android.presentation.ui.home
 
 import app.cash.turbine.test
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.notification.ReviewQueue
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
-import com.aibill.android.domain.repository.NotificationRecordRepository
 import com.aibill.android.domain.repository.StatsRepository
 import com.aibill.android.domain.repository.StatsSummary
 import com.aibill.android.domain.repository.TransactionPage
@@ -61,7 +61,7 @@ class HomeViewModelTest {
     private lateinit var categoryRepository: CategoryRepository
     private lateinit var accountRepository: AccountRepository
     private lateinit var statsRepository: StatsRepository
-    private lateinit var notificationRepository: NotificationRecordRepository
+    private lateinit var reviewQueue: ReviewQueue
     private lateinit var widgetSyncScheduler: WidgetSyncScheduler
     private lateinit var viewModel: HomeViewModel
 
@@ -73,7 +73,7 @@ class HomeViewModelTest {
         categoryRepository = mockk()
         accountRepository = mockk()
         statsRepository = mockk()
-        notificationRepository = mockk()
+        reviewQueue = mockk()
         // 最终类 + 无挂起函数：relaxed 免去 stub scheduleMonthlyUpdate
         widgetSyncScheduler = mockk(relaxed = true)
 
@@ -88,14 +88,14 @@ class HomeViewModelTest {
         } returns Result.Success(TransactionPage(items = emptyList(), total = 0))
 
         // init → observePendingNotifications()：通知中心入口计数
-        every { notificationRepository.observePendingCount() } returns flowOf(3)
+        every { reviewQueue.observePendingCount() } returns flowOf(3)
 
         viewModel = HomeViewModel(
             transactionRepository = transactionRepository,
             categoryRepository = categoryRepository,
             accountRepository = accountRepository,
             statsRepository = statsRepository,
-            notificationRepository = notificationRepository,
+            reviewQueue = reviewQueue,
             widgetSyncScheduler = widgetSyncScheduler,
         )
     }

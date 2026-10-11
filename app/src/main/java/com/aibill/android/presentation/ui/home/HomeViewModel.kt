@@ -4,9 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
+import com.aibill.android.domain.notification.ReviewQueue
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
-import com.aibill.android.domain.repository.NotificationRecordRepository
 import com.aibill.android.domain.repository.StatsRepository
 import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
@@ -40,7 +40,7 @@ class HomeViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val accountRepository: AccountRepository,
     private val statsRepository: StatsRepository,
-    private val notificationRepository: NotificationRecordRepository,
+    private val reviewQueue: ReviewQueue,
     private val widgetSyncScheduler: com.aibill.android.service.WidgetSyncScheduler,
 ) : ViewModel() {
 
@@ -73,7 +73,7 @@ class HomeViewModel @Inject constructor(
 
     private fun observePendingNotifications() {
         viewModelScope.launch {
-            notificationRepository.observePendingCount().collect { count ->
+            reviewQueue.observePendingCount().collect { count ->
                 _uiState.update { it.copy(pendingNotificationCount = count) }
             }
         }

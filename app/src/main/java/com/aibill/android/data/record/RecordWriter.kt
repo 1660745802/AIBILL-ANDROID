@@ -32,7 +32,8 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
  * ## 三步写入有不变量，由 `DirectRecordWriterTest` 钉死
  *
  * 第三步 `updateStatus(confirmId, "confirmed", pending.clientId)` 丢不得：它把审计行
- * 移出 `observePending()` 的待确认集合。丢了 = 用户再点一次确认 = 重复账。
+ * 从 `parsed` 推到 `confirmed`，对待审池（`ReviewQueue.observe`）而言即移出待确认集合。
+ * 丢了 = 用户再点一次确认 = 重复账。
  * 且传入的 clientId **必须**是写进 `pending_transactions` 的那一个（两表关联键，
  * 撤销链路靠它定位缓存行）。
  */

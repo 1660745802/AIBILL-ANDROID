@@ -6,11 +6,11 @@ import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.notification.ReviewQueue
 import com.aibill.android.domain.record.RecordIntent
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.record.RecordOutcome
 import com.aibill.android.domain.repository.CategoryRepository
-import com.aibill.android.domain.repository.NotificationRecordRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -28,11 +28,11 @@ import javax.inject.Inject
 
 /**
  * 通知中心 ViewModel。**已重构**：移除所有 DAO/AppLogger/Context 直接依赖，
- * 全部走 Repository 接口。
+ * 通知记录读取全部走 `ReviewQueue` module，不直接碰 DAO。
  */
 @HiltViewModel
 class NotificationCenterViewModel @Inject constructor(
-    private val notificationRepository: NotificationRecordRepository,
+    private val reviewQueue: ReviewQueue,
     private val recordIntake: RecordIntake,
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
@@ -91,28 +91,20 @@ class NotificationCenterViewModel @Inject constructor(
         }
     }
 
-    val pendingNotifications: StateFlow<List<NotificationRecordEntity>> =
-        notificationRepository.observePending()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    val confirmedNotifications: StateFlow<List<NotificationRecordEntity>> =
-        notificationRepository.observeConfirmed()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
     /**
      * 通知中心展示：待确认全部 + 已确认最近 24h。
      */
     val allNotifications: StateFlow<List<NotificationRecordEntity>> =
-        notificationRepository.observeAllWithConfirmedSince(
+        reviewQueue.observe(
             System.currentTimeMillis() - 24 * 60 * 60 * 1000L,
         ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val pendingCount: StateFlow<Int> = notificationRepository.observePendingCount()
+    val pendingCount: StateFlow<Int> = reviewQueue.observePendingCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     fun confirmItem(id: Long) {
         viewModelScope.launch {
-            val record = notificationRepository.findById(id) ?: return@launch
+            val record = reviewQueue.findById(id) ?: return@launch
             if (record.status == "confirmed") {
                 _uiEvent.send(UiEvent.ShowToast("该笔已确认，请勿重复操作"))
                 return@launch
@@ -146,7 +138,7 @@ class NotificationCenterViewModel @Inject constructor(
                 _uiEvent.send(UiEvent.ShowToast("请输入有效金额"))
                 return@launch
             }
-            val record = notificationRepository.findById(id) ?: return@launch
+            val record = reviewQueue.findById(id) ?: return@launch
             if (record.status == "confirmed") {
                 _uiEvent.send(UiEvent.ShowToast("该笔已确认，请勿重复操作"))
                 return@launch
@@ -211,7 +203,7 @@ class NotificationCenterViewModel @Inject constructor(
 
     fun ignoreItem(id: Long) {
         viewModelScope.launch {
-            notificationRepository.updateStatus(id, "ignored")
+            reviewQueue.ignore(id)
             _uiEvent.send(UiEvent.ShowToast("已忽略"))
         }
     }

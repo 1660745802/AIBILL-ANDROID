@@ -1,20 +1,20 @@
 package com.aibill.android.di
 
+import com.aibill.android.data.notification.ReviewQueueImpl
 import com.aibill.android.data.repository.AccountRepositoryImpl
 import com.aibill.android.data.repository.AiRepositoryImpl
 import com.aibill.android.data.repository.AuthRepositoryImpl
 import com.aibill.android.data.repository.CategoryRepositoryImpl
 import com.aibill.android.data.repository.CategoryRuleRepositoryImpl
-import com.aibill.android.data.repository.NotificationRecordRepositoryImpl
 import com.aibill.android.data.repository.StatsRepositoryImpl
 import com.aibill.android.data.repository.StreakRepositoryImpl
 import com.aibill.android.data.repository.TransactionRepositoryImpl
+import com.aibill.android.domain.notification.ReviewQueue
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.AiRepository
 import com.aibill.android.domain.repository.AuthRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.CategoryRuleRepository
-import com.aibill.android.domain.repository.NotificationRecordRepository
 import com.aibill.android.domain.repository.StatsRepository
 import com.aibill.android.domain.repository.StreakRepository
 import com.aibill.android.domain.repository.TransactionRepository
@@ -65,7 +65,7 @@ abstract class RepositoryModule {
 
     @Binds
     @Singleton
-    abstract fun bindNotificationRecordRepository(impl: NotificationRecordRepositoryImpl): NotificationRecordRepository
+    abstract fun bindReviewQueue(impl: ReviewQueueImpl): ReviewQueue
 
     // pending_transactions 的写入绑定不在这里：它归 `di/RecordWriteModule` 的 RecordWriter。
     // 收口前这里是 `bindPendingTransactionRepository`，一个 4 方法、每个方法一行转发的浅接口。

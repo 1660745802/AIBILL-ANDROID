@@ -3,11 +3,11 @@ package com.aibill.android.presentation.ui.notification
 import app.cash.turbine.test
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.notification.ReviewQueue
 import com.aibill.android.domain.record.RecordFailure
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.record.RecordOutcome
 import com.aibill.android.domain.repository.CategoryRepository
-import com.aibill.android.domain.repository.NotificationRecordRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import io.mockk.coEvery
@@ -48,7 +48,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34], application = android.app.Application::class)
 class NotificationCenterViewModelTest {
 
-    private val notificationRepository: NotificationRecordRepository = mockk(relaxed = true)
+    private val reviewQueue: ReviewQueue = mockk(relaxed = true)
     private val recordIntake: RecordIntake = mockk()
     private val transactionRepository: TransactionRepository = mockk(relaxed = true)
     private val categoryRepository: CategoryRepository = mockk(relaxed = true)
@@ -58,10 +58,8 @@ class NotificationCenterViewModelTest {
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
 
-        every { notificationRepository.observePending() } returns flowOf(emptyList())
-        every { notificationRepository.observeConfirmed() } returns flowOf(emptyList())
-        every { notificationRepository.observeAllWithConfirmedSince(any()) } returns flowOf(emptyList())
-        every { notificationRepository.observePendingCount() } returns flowOf(0)
+        every { reviewQueue.observe(any()) } returns flowOf(emptyList())
+        every { reviewQueue.observePendingCount() } returns flowOf(0)
         every { categoryRepository.observeCategories(any()) } returns flowOf(emptyList())
         coEvery { transactionRepository.getTags() } returns Result.Success(emptyList())
     }
@@ -72,7 +70,7 @@ class NotificationCenterViewModelTest {
     }
 
     private fun buildViewModel() = NotificationCenterViewModel(
-        notificationRepository = notificationRepository,
+        reviewQueue = reviewQueue,
         recordIntake = recordIntake,
         transactionRepository = transactionRepository,
         categoryRepository = categoryRepository,
@@ -92,7 +90,7 @@ class NotificationCenterViewModelTest {
 
     @Test
     fun `confirm failure reports the failure instead of claiming it was recorded`() = runTest {
-        coEvery { notificationRepository.findById(1L) } returns parsedRecord()
+        coEvery { reviewQueue.findById(1L) } returns parsedRecord()
         coEvery { recordIntake.intake(any()) } returns RecordOutcome(
             clientId = "C-1",
             failure = RecordFailure.Rejected(422, "分类不存在"),
@@ -111,7 +109,7 @@ class NotificationCenterViewModelTest {
 
     @Test
     fun `confirm success reports the recorded outcome`() = runTest {
-        coEvery { notificationRepository.findById(1L) } returns parsedRecord()
+        coEvery { reviewQueue.findById(1L) } returns parsedRecord()
         coEvery { recordIntake.intake(any()) } returns RecordOutcome(clientId = "C-1")
 
         val viewModel = buildViewModel()
@@ -125,7 +123,7 @@ class NotificationCenterViewModelTest {
 
     @Test
     fun `offline confirm failure surfaces the offline wording`() = runTest {
-        coEvery { notificationRepository.findById(1L) } returns parsedRecord()
+        coEvery { reviewQueue.findById(1L) } returns parsedRecord()
         coEvery { recordIntake.intake(any()) } returns RecordOutcome(
             clientId = "C-1",
             failure = RecordFailure.Offline,
@@ -142,7 +140,7 @@ class NotificationCenterViewModelTest {
 
     @Test
     fun `already confirmed records are not re-submitted`() = runTest {
-        coEvery { notificationRepository.findById(1L) } returns parsedRecord().copy(status = "confirmed")
+        coEvery { reviewQueue.findById(1L) } returns parsedRecord().copy(status = "confirmed")
 
         val viewModel = buildViewModel()
         viewModel.uiEvent.test {

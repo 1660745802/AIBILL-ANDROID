@@ -12,12 +12,6 @@ interface NotificationRecordDao {
     @Insert
     suspend fun insert(entity: NotificationRecordEntity): Long
 
-    @Query("SELECT * FROM notification_records WHERE status IN ('raw', 'parsed') ORDER BY received_at DESC")
-    fun observePending(): Flow<List<NotificationRecordEntity>>
-
-    @Query("SELECT * FROM notification_records WHERE status = 'confirmed' ORDER BY received_at DESC LIMIT 20")
-    fun observeConfirmed(): Flow<List<NotificationRecordEntity>>
-
     /**
      * 因 AI 鉴权失败（401）而未能解析的待补偿记录。
      *

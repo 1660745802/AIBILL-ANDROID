@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test
  * ## 为什么丢不得这一步
  *
  * 它把 `notification_records.status` 从 `parsed` 推到 `confirmed`，
- * 而 `observePending()` 只捞非 confirmed 的行。**丢了它 = 刚入账的通知重新出现在待确认
+ * 而待审池只把非 confirmed 的行当作「待确认」。**丢了它 = 刚入账的通知重新出现在待确认
  * 列表里，用户再点一次确认就是重复账。** `RecordWriter` 的 KDoc 自己写着这是它存在的理由。
  *
  * ## 为什么要断言那个 clientId
@@ -100,7 +100,7 @@ class DirectRecordWriterTest {
     /**
      * 弹窗/通知中心确认形态（审计行早已存在）：只回填既有 id，不新建。
      *
-     * 漏掉这一步的后果与上一条相同：那条通知仍留在 `observePending()` 里，
+     * 漏掉这一步的后果与上一条相同：那条通知仍留在待审池里（status 还是 parsed），
      * 用户再点一次就是重复账。
      */
     @Test
