@@ -467,8 +467,9 @@ internal fun bannerVariantOf(status: SyncQueueStatus): SyncBannerVariant = when 
  *
  * failed 行**没有任何逐行处置入口**：流水页的数据源是服务端（`TransactionsViewModel`
  * 的 `getTransactions`），本地 pending_transactions 明细在 presentation 层无任何展示 UI；
- * `deleteByClientId` 只被 SyncWorker 补偿与通知撤销调用；`deleteAll` 只被切服务器与
- * 换号登录调用。因此 Failed 档**只陈述状态与后果**，不写「去流水页手动删除」这类
+ * `deleteByClientId` 只被 SyncWorker 补偿与通知撤销调用；`deleteAll` 只被本地数据归属
+ * module（`LocalDataOwnership`，切服务器与换号登录两个意图）调用。因此 Failed 档
+ * **只陈述状态与后果**，不写「去流水页手动删除」这类
  * 指不到入口的指引——那会是新谎报。处置能力待 failed 明细页（逐行重试/删除）解锁。
  *
  * ## 硬约束二：Failed 档不得主张任何**上传状态**

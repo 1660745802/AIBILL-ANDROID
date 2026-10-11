@@ -19,5 +19,4 @@ class NotificationRecordRepositoryImpl @Inject constructor(
     override suspend fun findById(id: Long): NotificationRecordEntity? = dao.findById(id)
     override suspend fun updateStatus(id: Long, status: String, clientId: String?) =
         dao.updateStatus(id, status, clientId)
-    override suspend fun deleteAll() = dao.deleteAll()
 }

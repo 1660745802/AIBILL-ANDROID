@@ -116,8 +116,4 @@ class CategoryRepositoryImpl @Inject constructor(
             is Result.Loading -> response
         }
     }
-
-    override suspend fun deleteAll() {
-        categoryDao.deleteAll()
-    }
 }

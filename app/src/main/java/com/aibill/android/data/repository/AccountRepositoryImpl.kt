@@ -115,8 +115,4 @@ class AccountRepositoryImpl @Inject constructor(
             }
         }
     }
-
-    override suspend fun deleteAll() {
-        accountDao.deleteAll()
-    }
 }
