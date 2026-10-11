@@ -81,7 +81,10 @@ main              ← 生产分支，PR + CI 通过才能合并
 
 ### 2.4 提交门禁
 
-- `develop` 分支 CI：单元测试 + Lint + koverCheck 全部通过
+- `develop` 分支 CI：单元测试 + Lint + Kover 覆盖率门禁全部通过
+- 单测：`./gradlew :app:testDebugUnitTest`
+- 覆盖率：`./gradlew :app:koverVerifyDebug`（**只认 debug 变体**；`koverVerify` 跨变体聚合，
+  会把 release 变体的 9 个已知失败拖进来，见 [docs/ARCHITECTURE.md §11.3](ARCHITECTURE.md#113-测试基建的技术债)）
 - Lint：`./gradlew lintDebug` 无 error
 
 ---

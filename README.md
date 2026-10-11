@@ -52,7 +52,8 @@ echo "server.url=http://10.0.2.2:3000" > local.properties  # 模拟器访问宿�
 ./gradlew assembleDebug          # 编译 Debug APK
 ./gradlew installDebug           # 安装到已连接设备
 ./gradlew testDebugUnitTest      # 运行单元测试
-./gradlew koverHtmlReport        # 覆盖率报告
+./gradlew koverHtmlReportDebug   # 覆盖率报告（只统计 debug 变体；别用 koverHtmlReport，
+                                 # 那个跨变体聚合，会把 release 变体的 9 个已知失败拖进来）
 ```
 
 Release 构建需在根目录准备 `keystore.properties`（已在 `.gitignore`）。

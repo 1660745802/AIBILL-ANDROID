@@ -845,9 +845,17 @@ module 返回实际结果（`Retained` / `Cleared`）。4 张表的清单只在
 
   **为什么不修**：把这个依赖挪成 `implementation` 就等于往 **release APK** 里塞一个
   `android:exported="true"` 的空 activity（任何应用都能拉起它）。debug-only 才是正确的
-  安全姿态，不是疏漏。因此 Compose UI 单测只在 debug 变体跑（CI 跑的正是
-  `testDebugUnitTest` + `koverVerify`），`testReleaseUnitTest` **不作为门禁**。
-  看到这 9 个失败**不要**当成某次改动的回归——那是变体配置决定的既有事实。
+  安全姿态，不是疏漏。因此 Compose UI 单测只在 debug 变体跑；看到这 9 个失败
+  **不要**当成某次改动的回归——那是变体配置决定的既有事实。
+  ⚠️ **门禁已同步收窄到 debug 变体**（`afbf0cd`）：Kover 0.9.0 的
+  `reports { total { } }` 跨变体聚合，`koverVerify` 的任务图里**含** `:app:testReleaseUnitTest`，
+  于是 CI 那一步本来必然被这 9 个打红（门禁被一个刻意不修的变体差异绑架）。
+  现在规则挂在 `kover { reports { variant("debug") { } } }`，CI 跑的是
+  **`koverHtmlReportDebug` + `koverVerifyDebug`**，实测 `--dry-run` 的任务图里只有
+  `testDebugUnitTest`。`testReleaseUnitTest` 仍可手动跑（仍是那 9 个失败），但不作为门禁。
+  ⚠️ 反过来说：**别在 CI 里写回 `koverVerify` / `koverHtmlReport`**——它们跨变体聚合，
+  会把这 9 个失败重新拖进门禁；且 `minBound(9)` 只挂在 debug 上，`koverVerify` 现在是
+  无规则的任务（跑它会得到一个「什么都没验」的绿）。
 - **跨表写入的事务回滚未覆盖**：生产用 `RoomRecordWriter`（Room 真事务），单测用 `DirectRecordWriter`（直写），
   因为 mockk 1.13.13 跑不动 `RoomDatabase.withTransaction { }` 的 suspend lambda。
   因此「三步写在一个事务里、中途失败不留下半行」这条**没有自动化测试**（见 [§2.3](#23-入账recordintake)）。
@@ -857,9 +865,18 @@ module 返回实际结果（`Retained` / `Cleared`）。4 张表的清单只在
 - `HomeViewModelTest` 用 5 个非 relaxed mock 打桩 `init` 的四路 `refresh()`；`init` 再新增任何调用都会让全部用例因 `no answer found` 变红（红因与被测行为无关）。
 - ~~**Hilt 门禁挡住 receiver/service 的可测性**~~ —— **候选 5 已处理「为测试而开的后门」那一半**（架构候选 5，见 [§2.7](#27-撤销recordundo)）。门禁本身还在：`Hilt_*` 生成类在 `onReceive` / `goAsync()` 均 `inject()`，而本工程 Robolectric 给不出 `@HiltAndroidApp` 的 `Application`（`Application::class` 抛 Hilt 前置条件；`AiBillApp::class` 抛 `AndroidKeyStore not found`），且本轮**不引入** `hilt-android-testing`（需单独立项）。
   - **已撤掉的后门**（逻辑住在平台壳里、可见性只为测试放宽）：① `AutoRecordActionReceiver.handleUndo` → 判据与文案搬进 `domain/undo/RecordUndo` + `data/undo/RecordUndoImpl`，用例改名 `RecordUndoImplTest`（纯 JVM，不再需要 Robolectric 与 `Dispatchers.setMain`）；② `ExternalActionReceiver.handleAutoConfirmRecord` → 恢复 `private`，其用例并入 `RecordIntakeTest`（候选 1 之后该函数只剩「翻译成 `RecordIntent`」一步，逻辑早已在入账 module 里，后门没有存在必要）。
+    **断言没有丢**：原 `ExternalActionReceiverTest` 的 3 条（写库→排调度顺序、排调度抛异常不抛不回滚、落库载荷）已 1:1 迁入 `RecordIntakeTest` 的「意图 4：外部 Intent 静默入账」一节（并补上 amount/type/description 透传与 clientId 非空断言）。
+    **旧类名不保留**：保留 `ExternalActionReceiverTest`（哪怕改名成 `ExternalQuickRecordIntakeTest`）反而会误导——它现在驱动的是 `RecordIntakeImpl`，跟那个 receiver 无关；而那个 receiver 已无任何可测逻辑，留一个同名壳只会让人以为「receiver 还有覆盖」。
   - **盘点后判定为「自然分解」、刻意保留**：`SyncWorker.syncTransaction`（`doWork` 的真实调用点，且 `SyncWorker` 本身可用 assisted 构造参数直接构造测试）、`PaymentAccessibilityRecognition`（12 个生产调用点的纯函数提取）、`RecordWriter.applyRecordWrite`（两个 adapter 共用）、`NotificationRuleSourceAdapters.deriveSnapshot`。
   - **仍未测**：平台壳本身（取 extras / `goAsync()` 配对 / 撤通知 / Toast / 启动 Intent）依旧只能靠 review 把守——这正是收口的目的（可测的部分不该藏在壳里）。
-- `ExternalActionReceiver` 的「权限被拒」与「autoConfirm=false」两条「不排同步」分支仍不可测（两条都在 `onReceive` 内、需要 Hilt 门禁才能到达；候选 5 **刻意未动**它们——它们不是后门，而是还没被拆出来的平台管道，靠 review 把守）。
+- `ExternalActionReceiver` 的「权限被拒」与「autoConfirm=false」两条「不排同步」分支仍不可测：
+  两条都在 `onReceive` 内，`onReceive` / `goAsync()` 会 `inject()`，必须由 Hilt 门禁才能到达，
+  而本工程给不出 `@HiltAndroidApp` 的 Application（引入 `hilt-android-testing` 需单独立项）。
+  候选 5 **刻意不拆**它们——它们是平台管道（Intent 解析 + 安全校验），不是「为测试而开的后门」；
+  把它们拆成 handler 属于扩范围。权限校验本身逐字不动（`Binder.getCallingUid()` +
+  `context.checkPermission(..., callingUid, -1)`，**不得**弱化成 `ContextCompat.checkSelfPermission`
+  ——后者只检查自己进程，而本 App 自己声明了 `uses-permission`，永远 GRANTED，等于没有防护）。
+  这两条靠 review 把守。
 - `RecordUndoImplTest` 的约束断言（禁「上传/服务器/流水页」）未覆盖 `LocalMissing` 分支；现状文案合规，等值双写断言兜底。
 - `RecordIntakeTest` 直接构造 `RecordIntakeImpl` + 匿名 `object : RecordWriter`（不 mock 入账入口），
   因此「入账时界面不崩」这点仍依赖 Hilt 图的编译期正确性，无运行时测试。
