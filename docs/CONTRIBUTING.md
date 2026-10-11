@@ -1,170 +1,132 @@
 # 贡献指南
 
-> 开发流程、测试、编码规范、AI 辅助开发规范——所有参与代码改动必读。
+> 开发流程、测试、代码与 UI 规范、发布、AI 协作。系统是什么见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ---
 
 ## 一、开发流程
 
-### 1.1 分支策略
+分支：`main`（生产，PR + CI 通过才合并）· `feat/*` · `fix/*` · `refactor/*`。
 
-```
-main              ← 生产分支，PR + CI 通过才能合并
-├── feat/*        ← 新功能
-├── fix/*         ← Bug 修复
-└── refactor/*    ← 重构
-```
+Commit 用 Conventional Commits：`<type>(<scope>): <subject>`，
+type = `feat|fix|docs|style|refactor|test|chore|perf`，
+scope = `ui|network|db|auth|transaction|ai|sync|notification|stats|widget|gradle`。
 
-### 1.2 Commit 规范（Conventional Commits）
+### 验证清单（每批必跑）
 
-```
-<type>(<scope>): <subject>
+1. `./gradlew assembleDebug` 通过
+2. `./gradlew testDebugUnitTest` 通过
+3. 手动冒烟：①首次打开 ②AI 记账 ③手动记账 ④清后台重开不退登 ⑤退出登录 ⑥每个按钮点一遍
+4. 关键改动有测试覆盖
 
-# type: feat | fix | docs | style | refactor | test | chore | perf
-# scope: ui | network | db | auth | transaction | ai | sync | notification | stats | widget | gradle
-```
+### 版本号是硬规矩
 
-示例：`feat(notification): 实现通知监听 v3 架构`
+**默认不动 `versionCode` / `versionName`。** 只有维护者明确说「发版」才改，
+改前必须把打算用的版本号发给维护者确认；「可以 / ok」这类回答**不构成授权**。
+bump 单独提 `chore: bump versionCode X → Y`，不要夹在 fix/feat 里。
 
-### 1.3 验证清单（每批开发后必跑）
-
-1. 编译 `./gradlew assembleDebug` 通过
-2. 单元测试 `./gradlew testDebugUnitTest` 通过
-3. 模拟以下 6 个用户路径无闪退/死按钮：
-   - ①首次打开 ②AI 记账 ③手动记账 ④清后台重开不退登 ⑤退出登录清 Token ⑥每个按钮点一遍
-4. 关键改动有测试覆盖（ViewModel/Repository/Util）
+> 原因：tag 打上去之后该版本就不能再含后续 commit。看到「tag 已存在」而顺手 bump，
+> 会把一批未经确认的修复卷进已发布版本，绕过发布节奏。
 
 ---
 
-### 1.3 版本号变更规则（硬性）
+## 二、测试
 
-> **默认不动 `versionCode` / `versionName`。**
+工具：JUnit5 + MockK + Turbine + Robolectric + MockWebServer + Room Testing + Compose UI Test + Kover。
 
-| 规则 | 说明 |
+| 覆盖目标 | 门槛 |
 |---|---|
-| **只在明确要求发版时才改** | 仅当项目维护者明确说「走发版流程」「发版」「打 tag」时才动版本号。普通的 fix / feat / docs / test / refactor 提交**一律不碰** `app/build.gradle.kts` |
-| **改前必须确认版本号** | 在提交任何版本号变更前，先把打算用的 `versionCode` / `versionName` 发给维护者确认，**得到明确同意后才能改** |
-| **不得自行推断授权** | 「可以」「行」「ok」这类对上一条问题的回答，**不构成对版本号变更的授权**。版本号是发布链路上的关键决策，必须单独确认 |
-| **bump 是独立的 chore commit** | 历史上 `fix`/`feat` commit 从不改 `build.gradle.kts`，版本号一律单独提 `chore: bump versionCode X → Y, versionName A → B` |
+| 工具类（AmountUtils / NotificationParser 等） | 100% |
+| ViewModel 核心 | ≥ 70% |
+| Repository | ≥ 60% |
+| 每个主页面 | 至少 1 个冒烟用例 |
 
-**为什么单独强调**：tag 一旦打在某个 commit 上，该版本就不能再包含后续 commit。看到「tag 已存在」而顺手 bump，会把一批未经确认的修复卷进已发布版本的下一个 patch，绕过维护者的发布节奏控制。
+**门禁命令**
 
----
-
-## 二、测试规范
-
-### 2.1 测试金字塔
-
-```
-        ╱  E2E  ╲          # 模拟用户路径（手动冒烟）
-       ╱ 集成测试  ╲        # Repository + Room + API（MockWebServer）
-      ╱  单元测试   ╲       # ViewModel / Util / UseCase
+```bash
+./gradlew :app:testDebugUnitTest        # 单测
+./gradlew :app:koverVerifyDebug         # 覆盖率门槛（只认 debug 变体）
+./gradlew :app:detekt
+./gradlew lintDebug
 ```
 
-### 2.2 工具矩阵
+⚠️ 用 `koverVerifyDebug`，**别用 `koverVerify`**（跨变体聚合，会把 release 的 9 个已知失败
+拖进来，见 [ARCHITECTURE.md §12.3](ARCHITECTURE.md#123-测试基建)）。同理 `koverHtmlReportDebug`。
+测试必须用 JDK 17：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew …`（JDK 25 会报
+`IllegalArgumentException: 25.0.4.1`）。
 
-| 层 | 工具 |
-|---|---|
-| 框架 | JUnit5 + MockK + Turbine + Robolectric |
-| 网络 | MockWebServer |
-| 数据库 | Room Testing |
-| 异步 | kotlinx-coroutines-test |
-| UI | Compose UI Test（debugImplementation） |
-| 覆盖率 | Kover |
-
-### 2.3 覆盖率目标
-
-- 工具类（AmountUtils / NotificationParser / BankSmsPatterns）：100%
-- ViewModel：核心 8 个 ≥ 70%
-- Repository：≥ 60%
-- UI 测试：每个主页面至少 1 个冒烟用例
-
-### 2.4 提交门禁
-
-- `develop` 分支 CI：单元测试 + Lint + Kover 覆盖率门禁全部通过
-- 单测：`./gradlew :app:testDebugUnitTest`
-- 覆盖率：`./gradlew :app:koverVerifyDebug`（**只认 debug 变体**；`koverVerify` 跨变体聚合，
-  会把 release 变体的 9 个已知失败拖进来，见 [docs/ARCHITECTURE.md §11.3](ARCHITECTURE.md#113-测试基建的技术债)）
-- Lint：`./gradlew lintDebug` 无 error
+**测试写法**：打 interface，不打实现细节；断言「顺序 + 关联键」这类不变量，
+而不是逐字段复述实现；不要把生产判据抄进测试文件（改生产不会红，护栏就失效了）。
 
 ---
 
 ## 三、代码规范
 
-### 3.1 命名规范
+- **分层**：domain 禁止依赖 `android.*` / `androidx.*` / `data.*`；Entity 不出 data 层；
+  跨层只走 Repository 接口与 UseCase；ViewModel 不直接 new，走 Hilt。
+- **命名**：包全小写 · 类 PascalCase · 函数/变量 camelCase · 常量 UPPER_SNAKE ·
+  Compose 组件 PascalCase + `Screen` 后缀 · ViewModel + `ViewModel` 后缀 · 资源 snake_case。
+- **Compose**：每个 Screen 有 `@Preview`；列表 `LazyColumn` + `key()` + `contentType`；
+  状态用 `collectAsStateWithLifecycle()`；一次性事件用 `Channel` + `receiveAsFlow()`，
+  不用 `StateFlow`；大 Composable 拆 `remember` / `derivedStateOf`。
+- **ViewModel**：`@HiltViewModel` + `@Inject constructor`；暴露 `StateFlow<UiState>`；
+  不持有 Composable / Context；协程在 `viewModelScope`。
+- **网络**：API 一律 `suspend fun → Result<T>`；401 不在 Repository 处理，走 `AuthInterceptor`。
+- **数据库**：Room schema export 开启；简单变更 AutoMigration、复杂手写；字段显式 nullable；
+  不在主线程做 DB I/O。
+- **金额**：存储/传输/计算一律整数（分）；显示走 `AmountUtils`；**禁止 `Double`/`Float` 参与计算**。
+- **日期**：一律 `java.time`。**禁止 `SimpleDateFormat(pattern, Locale.getDefault())`** 落库日期
+  （泰语 locale 会写出佛历年）。
 
-| 类型 | 规范 | 示例 |
-|---|---|---|
-| 包名 | 全小写 | `com.aibill.android.data.remote` |
-| 类名 | PascalCase | `TransactionRepositoryImpl` |
-| 函数/变量 | camelCase | `getTransactions` |
-| 常量 | UPPER_SNAKE | `MAX_RETRY_COUNT` |
-| Compose 组件 | PascalCase + Screen 后缀 | `HomeScreen`, `TransactionDetailScreen` |
-| ViewModel | PascalCase + ViewModel 后缀 | `HomeViewModel` |
-| 资源 | snake_case | `ic_notification.xml`, `theme_color_primary` |
+## 四、UI 规范（改 UI 前必读）
 
-### 3.2 架构层级规范
+**唯一来源是 `presentation/theme/`**，文档不复述数值，用之前去那里查：
+`Tokens`（间距/圆角/图标/触摸目标/动效时长）· `Colors`（语义色）· `Type`（排版）· `Shape`。
 
-- **domain 层**禁止依赖 `android.*` / `androidx.*` / `data.*`
-- **data 层**实现 domain 接口，不暴露 Entity 给 UI
-- **presentation 层**通过 Hilt 注入 ViewModel，禁止直接 new
-- 跨层通信仅通过 Repository 接口和 UseCase
+几条必须知道的：
 
-### 3.3 Compose 规范
+- **语义色是信息契约，不是装饰**：红=支出、绿=收入、必须区分明暗（同色在深底上对比度不足、
+  在浅底上过饱和）。`MaterialTheme.semantic` 自动跟随明暗。
+- **所有金额走 `AmountTypography.*`**，它们开了 `tnum`（等宽数字）。比例数字会让同列金额
+  左右跳动，用户无法竖着比较——记账类 App 最容易忽略却最影响可用性的细节。
+- **层级 = 圆角递增**：行/按钮 `sm~md` → 卡片 `lg` → 汇总卡 `xl` → Sheet `xxl`。
+- **页面卡片阴影为 0**，用色调分层；只有 sheet/fab/dialog 有 elevation。
+- **卡片预算**：一个页面不超过 3-4 张卡片，多了改用分组列表。
+- **动态取色默认关闭**：Material You 取色会破坏「红=支出」的语义契约。
+- **动效只用于回应用户动作**（按下、展开、保存成功、转场），不要给每行加装饰性淡入。
+- **空/错/加载态都要有**：`EmptyState`（矢量图 + 邀请行动）/ `LoadingState` / Snackbar + 重试。
+- **文案底线**：不指引用户做不到的动作，不主张不确定的同步状态
+  （"已加入同步队列"而不是"同步完成"）。
 
-- 所有 Screen 必须有 `@Preview`
-- 大型 Composable 拆 `remember` / `derivedStateOf`
-- 列表用 `LazyColumn` + `key()` + `contentType`
-- 用 `collectAsStateWithLifecycle()` 而非 `collectAsState()`
-- 一次性事件用 `Channel` + `receiveAsFlow()`，不用 `StateFlow`
-
-### 3.4 ViewModel 规范
-
-- 注入用 `@HiltViewModel` + `@Inject constructor`
-- 暴露 `StateFlow<UiState>`（`asStateFlow()`）+ 私有 `MutableStateFlow`
-- 一次性事件用 `Channel<UiEvent>`
-- 不持有 Composable / Context 引用
-- 协程在 `viewModelScope` 启动
-
-### 3.5 网络层规范
-
-- 所有 API 返回 `suspend fun → Result<T>`，不用 `Call<T>`
-- Repository 合并 remote + local：先网络再缓存，先缓存再网络，看场景
-- 401 不在 Repository 处理，统一走 AuthInterceptor
-
-### 3.6 数据库规范
-
-- Room schema export 开启（`app/schemas/`）
-- 起始 version = 1，简单变更 AutoMigration，复杂手写
-- Entity 字段必须显式 nullable，DAO 用 suspend / Flow
-- 不在主线程做 DB I/O（Room 自动调度）
-
-### 3.7 金额处理规范
-
-- **存储 / 传输 / 计算**：一律用整数（分）
-- **UI 显示**：用 `AmountUtils.formatYuan()`（分→元，"32.00"）
-- **UI 输入**：计算器键盘实时解析
-- **禁止** `Double` / `Float` 参与金额计算
+改完自查：明暗两套主题各看一遍 · 真机字号/语言环境 · 金额列对齐 · 空态与错误态 ·
+对比度 · 触摸目标 ≥ 40dp。
 
 ---
 
-## 四、AI 辅助开发规范
+## 五、发布
 
-> 项目已大量使用 AI 辅助生成代码，下述规则确保不引入隐性技术债。
+脚本在 `scripts/`，默认服务器 `http://localhost:3000`，用 `AIBILL_SERVER_URL` 覆盖；
+`AIBILL_ADMIN_USER` / `AIBILL_ADMIN_PASS` 是 admin 鉴权。
 
-- AI 生成代码必须符合本文档所有规范（架构分层、命名、测试）
-- 生成后必须编译通过，关键逻辑必须附带单元测试
-- 禁止生成含 `TODO` / `FIXME` 的代码提交到 develop
-- AI 生成的 Compose 组件必须支持 `@Preview`
-- AI 辅助生成的代码在 commit body 标注：`AI-assisted: 核心逻辑由 AI 生成，已 review 并调整`
-- **AI 不可做**：跳过测试、引入 `libs.versions.toml` 外的依赖、修改已稳定接口签名、生成超过 300 行的单文件、**未经确认修改 `versionCode` / `versionName`（见 §1.3）**
+| 脚本 | 用途 |
+|---|---|
+| `upload_apk.sh` | 构建 release APK 并发布到 billserver（`--github` 双发布，`--dry-run` 演练） |
+| `check_update.sh` | 模拟客户端查/下载更新，验证发布结果 |
+| `update_rules.sh` | 把 `scripts/rules.json` 的通知规则推到 billserver 并激活 |
+
+**发版前**：跑完验证清单 + `./gradlew testDebugUnitTest` · 确认版本号已与维护者核对 ·
+Release 构建需根目录有 `keystore.properties`（不入 git）。
+
+**回滚**：服务端 `PUT /api/admin/updates/:id` 停用该版本，客户端下次检查更新即回落到上一版本；
+GitHub 侧删 tag 与 release。发版后用 `check_update.sh` 验证一次。
 
 ---
 
-## 五、提交流程
+## 六、AI 辅助开发
 
-1. 在 `feat/*` / `fix/*` / `refactor/*` 分支开发
-2. 跑完验证清单（§1.3）
-3. 推送并开 PR → `main`
-4. CI 通过 + Code Review 通过 → 合并
-5. 合并后按 [RELEASE.md](./RELEASE.md) 流程发版（若是 `feat/*` 合并或紧急修复）
+AI 生成的代码必须同样符合上述全部规范：编译通过、关键逻辑有测试、不留 `TODO`/`FIXME`、
+Compose 组件支持 `@Preview`、不引入 `libs.versions.toml` 外的依赖、不改已稳定接口签名、
+单文件不超过 300 行。commit body 标注 `AI-assisted: …`。
+
+**AI 不可做**：跳过测试、未经确认改版本号、把生产判据抄进测试、为测试给生产代码开 `internal` 后门
+（该做的是把逻辑提进可注入的 module）。

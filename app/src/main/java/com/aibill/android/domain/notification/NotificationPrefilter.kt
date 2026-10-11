@@ -84,7 +84,7 @@ sealed interface Verdict {
 /**
  * 拦截原因。
  *
- * 每一个都对应真实发生过的一次漏记/刷屏，补一条就要在 [docs/NOTIFICATION.md] 里能找到出处。
+ * 每一个都对应真实发生过的一次漏记/刷屏，补一条就要能在 [docs/ARCHITECTURE.md] §2.4 的踩坑清单里找到出处。
  * 新增分支请连同「为什么不能用词表解决」一起写进 KDoc。
  */
 enum class BlockReason {

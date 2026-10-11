@@ -36,9 +36,8 @@ class AiResultValidator @Inject constructor(
          * 保持一致（scripts/rules.json 的 `processor.max_amount_cents`，当前同为 10000000），
          * 否则会出现「本地校验通过但云控认为超限」或反之的分裂行为。
          *
-         * 历史坑：本行曾被误写成注释「100 万分 = 1 万元」+ 报错文案「上限 ¥10,000」，
-         * 三处（注释 / 文案 / NOTIFICATION.md）都以为阈值是 ¥10,000，实际是 ¥100,000。
-         * 改数值前请先确认云控配置。
+         * ⚠️ 改这个数值前先确认云控配置：历史上注释、报错文案与文档曾三处不一致
+         * （都以为是 ¥10,000，实际 ¥100,000），正是分裂的来源。
          */
         private const val MAX_AMOUNT_CENTS = 10_000_000
         private val VALID_TYPES = setOf("expense", "income", "transfer")

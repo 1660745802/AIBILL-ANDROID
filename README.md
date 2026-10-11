@@ -73,11 +73,11 @@ app/src/main/java/com/aibill/android/
 
 | 文档 | 用途 |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计：分层、模块、API 契约、技术决策、网络、同步、数据模型 |
-| [docs/UI-DESIGN.md](docs/UI-DESIGN.md) | UI 设计规范：设计令牌、语义色、排版、共享组件、改 UI 前必读 |
-| [docs/NOTIFICATION.md](docs/NOTIFICATION.md) | 通知监听 v3 架构 + 实战经验（核心差异化能力必读） |
-| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | 开发流程、测试、编码规范、AI 辅助开发规范 |
-| [docs/RELEASE.md](docs/RELEASE.md) | 发布流程、脚本用法、回滚策略、AI 发布 Prompt |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统是什么：分层、模块、通知入账、API 契约、同步与会话、数据模型、术语、已知缺口 |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | 怎么干活：开发流程、测试、代码与 UI 规范、发布、AI 协作 |
+| [docs/adr/](docs/adr/) | 架构决策记录（ADR）——重提某个「不做」的方案前先看这里 |
+
+改了什么看 git：`git log -- docs/`。
 
 ## 📤 发布
 
@@ -88,4 +88,4 @@ app/src/main/java/com/aibill/android/
 ./scripts/check_update.sh              # 验证服务端更新接口
 ```
 
-详见 [docs/RELEASE.md](docs/RELEASE.md)。
+详见 [docs/CONTRIBUTING.md §五](docs/CONTRIBUTING.md)。

@@ -19,7 +19,7 @@ import com.aibill.android.domain.model.Transaction
  * ## 为什么不叫 Repository
  *
  * 它不是某张表的仓储，也不只做一件事：它是「让一笔账成为本地事实」这条**业务动作**本身
- * （落库只是其中一步）。分层与归属见 `docs/ARCHITECTURE.md` 的「入账 RecordIntake」一节。
+ * （落库只是其中一步）。分层与归属见 `docs/ARCHITECTURE.md` §2.3。
  *
  * ## 意图与调用点一一对应
  *
