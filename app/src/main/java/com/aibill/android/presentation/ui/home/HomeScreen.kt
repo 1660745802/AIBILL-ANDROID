@@ -1,12 +1,7 @@
 package com.aibill.android.presentation.ui.home
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,8 +22,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.SyncProblem
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -47,13 +40,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.aibill.android.domain.model.SyncQueueStatus
 import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.presentation.components.AmountFormatter
@@ -69,7 +60,6 @@ import com.aibill.android.presentation.components.SectionHeader
 import com.aibill.android.presentation.components.StatCell
 import com.aibill.android.presentation.components.TransactionRow
 import com.aibill.android.presentation.theme.AmountTypography
-import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.theme.semantic
 import kotlinx.coroutines.flow.collectLatest
@@ -121,11 +111,10 @@ fun HomeScreen(
 
     LaunchedEffect(Unit) {
         viewModel.uiEvent.collectLatest { event ->
-            val message = when (event) {
-                is HomeViewModel.UiEvent.ShowToast -> event.message
-                is HomeViewModel.UiEvent.ShowError -> event.message
+            when (event) {
+                is HomeViewModel.UiEvent.ShowError ->
+                    snackbarHostState.showSnackbar(event.message)
             }
-            snackbarHostState.showSnackbar(message)
         }
     }
 
@@ -182,7 +171,6 @@ fun HomeScreen(
                 HomeContent(
                     uiState = uiState,
                     onHeaderClick = onNavigateToStatistics,
-                    onSyncClick = viewModel::triggerSync,
                     onItemClick = { id -> onNavigateToDetail(id) },
                 )
             }
@@ -194,7 +182,6 @@ fun HomeScreen(
 private fun HomeContent(
     uiState: HomeViewModel.HomeUiState,
     onHeaderClick: () -> Unit,
-    onSyncClick: () -> Unit,
     onItemClick: (Int) -> Unit,
 ) {
     val today = remember { LocalDate.now() }
@@ -224,21 +211,6 @@ private fun HomeContent(
                 today = today,
                 onClick = onHeaderClick,
             )
-        }
-
-        // 待同步横幅：只在真的有东西没同步时才占空间，且给得出明确动作
-        item(key = "pending_sync") {
-            AnimatedVisibility(
-                visible = !uiState.syncStatus.isEmpty,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically(),
-            ) {
-                PendingSyncBanner(
-                    status = uiState.syncStatus,
-                    isSyncing = uiState.isSyncing,
-                    onSyncClick = onSyncClick,
-                )
-            }
         }
 
         item(key = "today_title") {
@@ -422,158 +394,6 @@ private fun MonthProgressBar(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.outline,
         )
-    }
-}
-
-/**
- * 待同步横幅的档位。
- *
- * 由 [bannerVariantOf] 从 [SyncQueueStatus] 纯函数地推出——**枚举本身就是格式化决策的
- * 唯一判定点**，配色/图标/文案/按钮一律在 [PendingSyncBanner] 内部按它取。
- * 刻意不放进 domain：档位是排版概念，domain 里出现 BannerKind 就等于
- * 把文案写进了模型（见 [SyncQueueStatus] 的 KDoc）。
- */
-internal enum class SyncBannerVariant {
-    /** 两分区都是 0：不该出现（外层 AnimatedVisibility 已挡住） */
-    Hidden,
-
-    /** 只有 pending：排队等上传，会自动补上，可手动同步 */
-    Pending,
-
-    /** 只有 failed：本地终态，不会自动重试，且无任何处置入口 */
-    Failed,
-
-    /** 两者并存 */
-    Mixed,
-}
-
-/**
- * 快照 → 档位。**展示层的纯函数**，不产生文案也不产生颜色。
- *
- * 分支顺序不能调换：`isEmpty` 是两分区同时为 0 的收口，
- * 而 Failed/Mixed 的判据是 `failed > 0`，必须先排除「无 failed」的纯 pending 档。
- */
-internal fun bannerVariantOf(status: SyncQueueStatus): SyncBannerVariant = when {
-    status.isEmpty -> SyncBannerVariant.Hidden
-    status.failed == 0 -> SyncBannerVariant.Pending
-    status.pending == 0 -> SyncBannerVariant.Failed
-    else -> SyncBannerVariant.Mixed
-}
-
-/**
- * 待同步横幅。
- *
- * ## 硬约束：文案里不得出现任何用户当前没有 UI 入口执行的动作
- *
- * failed 行**没有任何逐行处置入口**：流水页的数据源是服务端（`TransactionsViewModel`
- * 的 `getTransactions`），本地 pending_transactions 明细在 presentation 层无任何展示 UI；
- * `deleteByClientId` 只被 SyncWorker 补偿与通知撤销调用；`deleteAll` 只被本地数据归属
- * module（`LocalDataOwnership`，切服务器与换号登录两个意图）调用。因此 Failed 档
- * **只陈述状态与后果**，不写「去流水页手动删除」这类
- * 指不到入口的指引——那会是新谎报。处置能力待 failed 明细页（逐行重试/删除）解锁。
- *
- * ## 硬约束二：Failed 档不得主张任何**上传状态**
- *
- * 「已上传」「尚未上传」「可能已上传」都不能说。依据是本仓库自己的真相表
- * （`domain/undo/RecordUndo` 的 KDoc）：三条 `markFailed` 路径里
- * **只有 401**（`ERROR_TOKEN_EXPIRED`）能证明服务端明确拒绝、没建这笔；
- * 其余 `ERROR_MAX_RETRY_EXCEEDED`（5 次累积的是 IOException，请求可能已抵达、
- * 只是响应丢了）、`ERROR_SERVER_ANOMALY`（服务端 `code==0` 可能已建，
- * 只是 `created[]`/`duplicates[]` 没回显 clientId）、`ERROR_BUSINESS`
- * （服务端异常可能发生在落库之后）——服务端**都可能已经有这笔**。
- *
- * 而流水页的数据源正是服务端（`TransactionsViewModel.getTransactions`）。
- * 横幅若说「尚未上传」而用户在流水页看到这笔，就是自相矛盾，
- * 还可能诱导重复记账。所以副标题只讲「停止」这一件事，不碰上传状态。
- *
- * ## 为什么不给 Failed 档配 danger 颜色
- *
- * `dangerContainer` 的语义是**破坏性动作**（Colors.kt：「破坏性操作（删除、退出登录）」），
- * 是动作色；而本档没有任何动作，动作色 + 零动作 = 矛盾。档位区分由图标
- * （Sync → SyncProblem）与首句文案承担即可。等 failed 明细页（逐行重试/删除）
- * 给出逐行处置入口、本档拿到按钮之后，再升级为 danger 才与「有事可做」自洽。
- *
- * 配色/图标/文案/按钮全部在此函数内部按档位取，**不外传参数**：
- * 把 container/fg 提成调用方参数等于把格式化决策泄漏到上层。
- */
-@Composable
-internal fun PendingSyncBanner(
-    status: SyncQueueStatus,
-    isSyncing: Boolean,
-    onSyncClick: () -> Unit,
-) {
-    val variant = bannerVariantOf(status)
-    // 外层 AnimatedVisibility 已挡；直接调用时也不该渲染任何东西
-    if (variant == SyncBannerVariant.Hidden) return
-
-    val semantics = MaterialTheme.semantic
-    val container = semantics.warningContainer
-    val fg = semantics.onWarningContainer
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(Tokens.Radius.lg))
-            .background(container)
-            .padding(horizontal = Tokens.Spacing.md, vertical = Tokens.Spacing.md),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = when (variant) {
-                SyncBannerVariant.Pending -> Icons.Default.Sync
-                // Failed/Mixed：同一个同步语义，但带问题标记——区分档位用，非警告色
-                SyncBannerVariant.Failed,
-                SyncBannerVariant.Mixed,
-                -> Icons.Default.SyncProblem
-                SyncBannerVariant.Hidden -> Icons.Default.Sync // 已在上方 return，不可达
-            },
-            contentDescription = null,
-            tint = fg,
-            modifier = Modifier.size(Tokens.IconSize.md),
-        )
-        Spacer(Modifier.width(Tokens.Spacing.md))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = when (variant) {
-                    SyncBannerVariant.Pending -> "${status.pending} 笔还没同步"
-                    SyncBannerVariant.Failed -> "${status.failed} 笔同步失败"
-                    SyncBannerVariant.Mixed ->
-                        "${status.pending} 笔待上传 · ${status.failed} 笔同步失败"
-                    SyncBannerVariant.Hidden -> "" // 不可达
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = fg,
-            )
-            Text(
-                text = when (variant) {
-                    // 档 A 文案逐字保持现状：对 pending 而言「自动补上 / 手动同步」都成立
-                    SyncBannerVariant.Pending -> "联网后会自动补上，也可以现在手动同步"
-                    SyncBannerVariant.Failed -> "已停止自动重试"
-                    SyncBannerVariant.Mixed -> "同步失败的不会自动重试"
-                    SyncBannerVariant.Hidden -> "" // 不可达
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = fg.copy(alpha = 0.75f),
-            )
-        }
-        when (variant) {
-            SyncBannerVariant.Pending -> AppTextButton(
-                text = if (isSyncing) "同步中" else "同步",
-                onClick = onSyncClick,
-                enabled = !isSyncing,
-            )
-            // 作用域自明：只对应标题前半段的「待上传」，不暗示 failed 会被处理
-            SyncBannerVariant.Mixed -> AppTextButton(
-                text = if (isSyncing) "同步中" else "重试待上传",
-                onClick = onSyncClick,
-                enabled = !isSyncing,
-            )
-            // Failed：横幅是唯一手动同步入口，但 failed 不可被它重试——给按钮就是谎报动作
-            SyncBannerVariant.Failed,
-            SyncBannerVariant.Hidden,
-            -> Unit
-        }
     }
 }
 

@@ -81,7 +81,7 @@ fun ProfileScreen(
     if (showLogoutConfirm) {
         ConfirmDialog(
             title = "退出登录",
-            message = "退出后需重新登录才能继续记账，本地未同步的数据不会丢失。确定退出吗？",
+            message = "退出后需重新登录才能继续记账，本地数据不会丢失。确定退出吗？",
             confirmText = "退出",
             isDestructive = true,
             onConfirm = {

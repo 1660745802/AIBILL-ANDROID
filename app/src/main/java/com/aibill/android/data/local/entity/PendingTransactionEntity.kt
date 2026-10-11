@@ -5,8 +5,19 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 /**
- * 待同步交易 Entity
- * 离线记账时写入本地，联网后同步到服务器
+ * **已确认记录的本地缓存**（表名 `pending_transactions` 是历史遗留，列也一并不动）。
+ *
+ * 只在服务端返回 `created` 并按 `client_id` 匹配到 id **之后**才写入
+ * （唯一写入口 `data/record/RecordWriter`），因此行 = 服务端已确认。
+ * [serverTransactionId] 是撤销时删服务端那一笔的凭据。
+ *
+ * ## 三个废弃列（**保留列，不写 migration**）
+ *
+ * [syncStatus] / [retryCount] / [lastError] 属于「待上传队列」语义
+ * （排队等上传 / 本地终态 / 重试次数 / 失败原因），随离线队列一起取消：
+ * 本应用不再重试、不再有「未同步」这个状态，这三列不再被读取。
+ * 唯一的残留用途是 [syncStatus] 标记 `synced`（= 已确认缓存，新写入恒为此值）；
+ * 老版本留下的 `pending` / `failed` 行不参与任何判定。
  */
 @Entity(tableName = "pending_transactions")
 data class PendingTransactionEntity(
@@ -23,7 +34,7 @@ data class PendingTransactionEntity(
     @ColumnInfo(name = "category_id")
     val categoryId: Int? = null,
 
-    // PR #43：冗余存 name/icon，未同步期间列表展示不需要 join 分类表
+    // PR #43：冗余存 name/icon，本地缓存展示不需要 join 分类表
     @ColumnInfo(name = "category_name")
     val categoryName: String? = null,
 
@@ -63,15 +74,21 @@ data class PendingTransactionEntity(
     @ColumnInfo(name = "client_created_at")
     val clientCreatedAt: String,
 
+    /**
+     * @deprecated 取值只剩 `synced`（= 已确认缓存）；`pending` / `failed` 是老版本
+     * 遗留，不参与任何判定。列保留，见类 KDoc。
+     */
     @ColumnInfo(name = "sync_status")
-    val syncStatus: String = "pending", // pending / synced / failed
+    val syncStatus: String = "pending", // 已废弃：新写入恒为 synced
 
     @ColumnInfo(name = "server_transaction_id")
     val serverTransactionId: Int? = null,
 
+    /** @deprecated 已无重试机制，列保留，不再写入。 */
     @ColumnInfo(name = "retry_count")
     val retryCount: Int = 0,
 
+    /** @deprecated 已无失败落库，列保留，不再写入。 */
     @ColumnInfo(name = "last_error")
     val lastError: String? = null,
 

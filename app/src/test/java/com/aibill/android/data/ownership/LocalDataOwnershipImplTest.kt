@@ -12,20 +12,13 @@ import com.aibill.android.data.local.entity.CategoryEntity
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.local.work.WorkManagerProvider
-import com.aibill.android.data.queue.SyncQueueImpl
-import com.aibill.android.data.queue.SyncScheduler
 import com.aibill.android.data.remote.interceptor.TokenManager
-import com.aibill.android.domain.model.SyncQueueStatus
 import com.aibill.android.domain.ownership.DisposalIntent
 import com.aibill.android.domain.ownership.DisposalOutcome
 import com.aibill.android.domain.ownership.LocalOwnership
-import com.aibill.android.service.SyncWorker
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.mockkObject
-import io.mockk.unmockkObject
 import io.mockk.verify
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -48,8 +41,7 @@ import org.robolectric.annotation.Config
  * 现在清单只有一份，本类按**表名**直接数行（`SELECT COUNT(*) FROM <表名>`），
  * 三种意图各钉一遍：换了表清单、漏了一张、把「保留」写成「清空」，这里立刻红。
  * 用裸 SQL 而不是 DAO 的 `observe*`，是因为 observe 查询的 WHERE 条件各不相同
- * （`observeAllWithConfirmedSince` 就不返回 `ignored` / `synced` 行），
- * 那会让「表其实没清空」被误判成成立。
+ * （`observeAllWithConfirmedSince` 就不返回 `ignored` 行），那会让「表其实没清空」被误判成成立。
  *
  * 归属断言（谁是同号）与意图选择（`AuthRepositoryImplTest`）分属两层：
  * 本类守「意图兑现成什么」，`AuthRepositoryImplTest` 的 `DATA LOSS regression`
@@ -57,12 +49,17 @@ import org.robolectric.annotation.Config
  *
  * ## 真实的是什么，mock 的又是什么
  *
- * - **真实**：Room（4 张表 + 队列）、`SyncQueueImpl`（因此 401 判据配对端到端成立）；
- * - **mock**：`SyncScheduler`（Robolectric 里没有可用的 WorkManager，本工程也不引
- *   `work-testing`）、`TokenManager`（真实实现要 `EncryptedSharedPreferences` →
+ * - **真实**：Room（4 张表都走真表，因此「清单本身」被端到端钉住）；
+ * - **mock**：`TokenManager`（真实实现要 `EncryptedSharedPreferences` →
  *   `AndroidKeyStore`，Robolectric 沙箱里抛 `KeyStoreException`；本类只断言
  *   「判据取自哪个方法」，`TokenManager` 自身的语义另有测试）、`SyncLock` /
  *   `WorkManagerProvider`（只需控制握手时机）。
+ *
+ * ## 同号重登的语义已收窄
+ *
+ * 这里曾经还要钉「把 401 卡住的行复活回 pending + 主动排同步」。记账没有待上传队列了，
+ * 也就没有需要复活的行：同号重登 = **一张表都不动**，没有别的事要做。
+ * 因此本类只断言「4 张表原样保留」，不再有任何队列状态断言。
  *
  * 不新增任何依赖：Robolectric + room-testing 已在 `testImplementation`。
  * `application = Application::class` 必需：默认会按 manifest 启动真实 `AiBillApp`，
@@ -77,7 +74,6 @@ class LocalDataOwnershipImplTest {
     private lateinit var categoryDao: CategoryDao
     private lateinit var accountDao: AccountDao
     private lateinit var notificationDao: NotificationRecordDao
-    private lateinit var syncQueue: SyncQueueImpl
     private lateinit var ownership: LocalDataOwnershipImpl
 
     private val tokenManager: TokenManager = mockk(relaxed = true)
@@ -96,26 +92,21 @@ class LocalDataOwnershipImplTest {
         categoryDao = db.categoryDao()
         accountDao = db.accountDao()
         notificationDao = db.notificationRecordDao()
-        syncQueue = SyncQueueImpl(pendingDao, RuntimeEnvironment.getApplication())
 
         ownership = LocalDataOwnershipImpl(
             tokenManager = tokenManager,
-            // 真实实现：本类因此能证明「清队列」与「保留队列」是同一个口径
-            syncQueue = syncQueue,
+            // 真实 DAO：本类因此能证明「清缓存」清的确实是这张表
+            pendingTransactionDao = pendingDao,
             categoryDao = categoryDao,
             accountDao = accountDao,
             notificationRecordDao = notificationDao,
             syncLock = syncLock,
             workManagerProvider = workManagerProvider,
         )
-
-        mockkObject(SyncScheduler)
-        every { SyncScheduler.scheduleSyncIfNeeded(any()) } returns Unit
     }
 
     @After
     fun tearDown() {
-        unmockkObject(SyncScheduler)
         db.close()
     }
 
@@ -125,7 +116,7 @@ class LocalDataOwnershipImplTest {
      * 判据必须取自**跨 session 存活**的 `last_known_user_id`，不能取 session 字段。
      *
      * 取错的后果是数据丢失：401 时 `endSession()` 会清掉 `user_id`，
-     * 于是「Token 过期 → 重登」会判成换号 → 清空离线队列。
+     * 于是「Token 过期 → 重登」会判成换号 → 清空本地缓存。
      */
     @Test
     fun `ownership is read from the cross-session account id and never from the session one`() {
@@ -176,8 +167,8 @@ class LocalDataOwnershipImplTest {
     /**
      * **数据丢失回归**（ARCHITECTURE §6.4 历史 bug 1）：同号重登不得清任何一张表。
      *
-     * Token 30 天过期（无 refresh token）恰恰是离线数据最容易堆积的时刻；早期实现在登录
-     * 成功时无条件清空，用户「断网时记的、还没同步上去的账」被物理删除且不可恢复。
+     * Token 30 天过期（无 refresh token）时本地恰恰存着最有价值的东西——服务端已确认的
+     * 缓存与设备侧的通知审计；早期实现在登录成功时无条件清空，用户的账被物理删除且不可恢复。
      * `AuthRepositoryImplTest` 的同名用例守「意图有没有选对」，本用例守「意图兑现得对不对」。
      */
     @Test
@@ -187,47 +178,19 @@ class LocalDataOwnershipImplTest {
 
         val outcome = ownership.dispose(DisposalIntent.SameAccountRelogin)
 
-        assertEquals(DisposalOutcome.Retained(revivedRows = 0), outcome)
+        assertEquals(DisposalOutcome.Retained, outcome)
         assertRows(1, 1, 1, 2)
     }
 
-    /**
-     * 同号重登的**两件事**都得做：复活 401 卡住的行 + 主动排同步。
-     *
-     * 只复活不排 → 要等下一次网络跳变；只排不复活 → `getAllPending()` 只捞 `pending`，
-     * 那批行永远卡在 failed。判据配对（`ERROR_TOKEN_EXPIRED` ↔ `ERROR_TOKEN_EXPIRED_PATTERN`）
-     * 在这里真的穿过 Room，不需要 mock DAO 就能证伪。
-     */
+    /** 同号重登也不排任何东西、不碰 SyncLock：没有待上传的行要推。 */
     @Test
-    fun `same account relogin revives only token-expired rows then reschedules the queue`() = runTest {
-        seedAllFourTables()
-        pendingDao.insert(pending("P2"))
-        pendingDao.markFailed("P1", SyncWorker.ERROR_TOKEN_EXPIRED, updatedAt = 100L)
-        pendingDao.markFailed("P2", SyncWorker.ERROR_BUSINESS, updatedAt = 100L)
-        assertEquals(SyncQueueStatus(pending = 0, failed = 2), queueStatus())
-
-        val outcome = ownership.dispose(DisposalIntent.SameAccountRelogin)
-
-        assertEquals(DisposalOutcome.Retained(revivedRows = 1), outcome)
-        // P1 回到 pending 分区（而不只是「不再 failed」）；P2 是不可恢复失败，原样留着
-        assertEquals(SyncQueueStatus(pending = 1, failed = 1), queueStatus())
-        assertEquals(listOf("P1"), pendingDao.getAllPending().map { it.clientId })
-        // 重置后必须主动排同步，否则要等下一次网络回调
-        verify(exactly = 1) { SyncScheduler.scheduleSyncIfNeeded(any()) }
-        // 其余三张表一张未动
-        assertEquals(1, categoryDao.observeAll().first().size)
-        assertEquals(1, accountDao.observeAll().first().size)
-    }
-
-    /** 没有 401 卡住的行时同样要排同步（`revivedRows == 0` 不是「什么都不做」）。 */
-    @Test
-    fun `same account relogin reschedules even when nothing was stuck`() = runTest {
+    fun `same account relogin schedules nothing`() = runTest {
         seedAllFourTables()
 
-        val outcome = ownership.dispose(DisposalIntent.SameAccountRelogin)
+        ownership.dispose(DisposalIntent.SameAccountRelogin)
 
-        assertEquals(DisposalOutcome.Retained(revivedRows = 0), outcome)
-        verify(exactly = 1) { SyncScheduler.scheduleSyncIfNeeded(any()) }
+        verify(exactly = 0) { workManagerProvider.cancelSyncWorker() }
+        verify(exactly = 0) { syncLock.isActive() }
     }
 
     // ==================== 换号 / 换服务器：同一份 4 表清单 ====================
@@ -259,33 +222,22 @@ class LocalDataOwnershipImplTest {
         assertRows(0, 0, 0, 0)
     }
 
-    /** 清空**不得**顺手复活 401 行或排同步：那些是同号重登才做的事。 */
-    @Test
-    fun `clearing never revives failed rows nor reschedules`() = runTest {
-        seedAllFourTables()
-        pendingDao.markFailed("P1", SyncWorker.ERROR_TOKEN_EXPIRED, updatedAt = 100L)
-
-        ownership.dispose(DisposalIntent.SwitchingServer)
-
-        assertEquals(SyncQueueStatus(pending = 0, failed = 0), queueStatus())
-        verify(exactly = 0) { SyncScheduler.scheduleSyncIfNeeded(any()) }
-    }
-
     /**
-     * 换服务器**不做** SyncLock 握手（与收口前逐字一致，刻意不改）。
+     * 清空**不得**碰 SyncLock：换服务器不做握手（与收口前逐字一致，刻意不改）。
      *
      * `ServerConfig` 只在未登录态可达（`MainViewModel` 的 `startRoute` 与 `LoginScreen` 的入口），
-     * 此时没有有效会话、也就没有在飞的同步循环要取消。钉住它，是为了让「顺手补上握手」
+     * 此时没有有效会话、也就没有在飞的后台循环要取消。钉住它，是为了让「顺手补上握手」
      * 变成一次显眼的决定，而不是无声的改动。
      */
     @Test
-    fun `switching server does not touch the sync lock`() = runTest {
+    fun `clearing never touches the sync lock`() = runTest {
         seedAllFourTables()
 
         ownership.dispose(DisposalIntent.SwitchingServer)
 
         verify(exactly = 0) { workManagerProvider.cancelSyncWorker() }
         verify(exactly = 0) { syncLock.isActive() }
+        assertRows(0, 0, 0, 0)
     }
 
     // ==================== SyncLock 握手 ====================
@@ -302,7 +254,8 @@ class LocalDataOwnershipImplTest {
     }
 
     /**
-     * 锁一直不放时也不能把登录卡死——等锁有 3s 上限，超时照常返回（最坏只丢一次同步循环）。
+     * 锁一直不放时也不能把登录卡死——等锁有 3s 上限，超时照常返回
+     * （记账已经没有在飞的后台循环，最坏情况只是白等一轮）。
      *
      * ⚠️ 只断言「一定会退出」，不断言耗时：等锁跨了虚拟时钟与真实墙钟，
      * 逐次断言毫秒数只会把测试变成竞速。
@@ -319,8 +272,6 @@ class LocalDataOwnershipImplTest {
 
     // ==================== 夹具 ====================
 
-    private suspend fun queueStatus(): SyncQueueStatus = syncQueue.observeStatus().first()
-
     private fun pending(clientId: String) = PendingTransactionEntity(
         clientId = clientId,
         type = "expense",
@@ -329,6 +280,9 @@ class LocalDataOwnershipImplTest {
         date = "2026-07-05",
         source = "app_notification",
         clientCreatedAt = "2026-07-05T04:00:00Z",
+        // 缓存行唯一的合法形态：服务端确认过
+        syncStatus = "synced",
+        serverTransactionId = 1234,
     )
 
     /** 四张表各塞一行（通知表塞两行，便于「只清一半」的错删被看出来）。 */

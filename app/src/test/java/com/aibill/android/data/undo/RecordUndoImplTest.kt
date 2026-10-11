@@ -5,7 +5,6 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.domain.undo.UndoOutcome
-import com.aibill.android.service.SyncWorker
 import com.aibill.android.util.AppLogger
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -39,30 +38,28 @@ import org.junit.jupiter.api.Test
  *
  * 现在只认 `server_transaction_id`；宁可失败提示手动删除，也不猜、不谎报。
  *
- * ## `failed` 必须区分 reason（fail-safe 白名单）
+ * ## 缓存行只有一种合法形态：`synced`
  *
- * `SyncWorker` 的 markFailed 有多条路径，只有 401 能证明服务端拒绝、未落库：
- * `ERROR_SERVER_ANOMALY`（服务端可能已创建、只是响应没匹配上 clientId）、
- * `ERROR_MAX_RETRY_EXCEEDED`（上次请求可能已成功、只是响应丢了）、
- * `ERROR_BUSINESS`（5xx）以及 `lastError == null`（历史遗留写法）——
- * 这些都**不能**删本地，否则服务端留一笔用户看不见的幽灵账。
- * 未知 `syncStatus` 同理：`!= "synced"` 这种判据是 fail-open，
- * 将来加状态/改列名时会静默退化成「当成没上传→删本地」，必须落 `else` 分支不删。
+ * 新写入的行都在**服务端确认之后**（`RecordIntakeImpl.confirmAndCache`），
+ * 一律带 `server_transaction_id`。老版本留下的 `pending` / `failed` 行没有对应的
+ * 确认事实：可能从没上过服务端，也可能上过（响应丢了）——**两种都不能删**。
+ * 因此判据是白名单：只有 `synced` 才动手，其余落 `else` 分支什么都不删。
+ * 用 `!= "synced"` 写就成了 fail-open：将来加状态 / 改列名会静默退化成
+ * 「当成没上传 → 删本地」，把服务端那笔变成用户看不见的幽灵账。
  *
  * ## 本测试锁住的不变量
  *
  * 1. **文案是结果，不是意图**：说「已撤销」的前提是 DAO 或服务端**真的**删了；
- *    任何失败路径都不得出现「已撤销」，也不得出现「回收站」（pending 记录从未上过
- *    服务端，不存在回收站可恢复）。
+ *    任何失败路径都不得出现「已撤销」，也不得出现「回收站」（缓存行并非从回收站可恢复）。
  * 2. **synced 分支必须先服务端、后本地**：服务端失败时本地行必须留存，
  *    否则用户在流水页再也看不到这笔、也无从重试。
  * 3. **keyword 兜底已删除**：synced 路径 `getTransactions` 调用数恒为 0。
- *    这条断言是 mutation 式防线——把实现改回搜索分支，synced 的三条用例会立刻红。
+ *    这条断言是 mutation 式防线——把实现改回搜索分支，synced 的用例会立刻红。
  *
  * ## 失败文案分两类，且测试里的字符串是**有意双写**
  *
- * 硬约束（与 Home 横幅同一约束）：**不得指引用户无法执行的动作，
- * 也不得主张不确定的上传状态**。因此失败文案拆成两支：
+ * 硬约束：**不得指引用户无法执行的动作，也不得主张不确定的上传状态**。
+ * 因此失败文案拆成两支：
  *
  * - `ServerStillHasIt`（服务端**确有**这笔）：指向流水页——流水页数据源是服务端，
  *   那里看得到也删得掉。断言必须 `contains("流水页")`，防「一刀切改保守」也是信息丢失。
@@ -148,72 +145,24 @@ class RecordUndoImplTest {
         }
     }
 
-    /** 任何非「已撤销」的结果都不得出现「已撤销」，也不得提「回收站」（pending 从未上过服务端）。 */
+    /** 任何非「已撤销」的结果都不得出现「已撤销」，也不得提「回收站」。 */
     private fun assertNotClaimedUndone(outcome: UndoOutcome) {
         assertFalse(outcome.userMessage.contains(MSG_UNDONE), outcome.userMessage)
         assertFalse(outcome.userMessage.contains("回收站"), outcome.userMessage)
     }
 
-    // pending 表示尚未确认同步成功；本用例锁住无并发 Worker 时的既有本地撤销语义。
-    // 「请求已在途但尚未回写 synced」的 TOCTOU 由 SyncWorker 的补偿分支处理。
+    // ==================== 非 synced：老版本遗留行一律 fail-closed ====================
+    //
+    // 这些行没有「服务端到底有没有这笔」的证据：`pending` 可能正在上传、也可能从没发出去，
+    // `failed` 里的 401 也只是「那一次被拒」，本地重登后还可能再发。删本地就可能留下
+    // 服务端看不见的幽灵账，因此一律什么都不删 + 如实说明。
 
     @Test
-    fun `pending - deletes local row only, no server call, reports undone`() = runTest {
+    fun `legacy pending row - no evidence about the server, deletes nothing`() = runTest {
         coEvery { pendingTransactionDao.findByClientId(clientId) } returns localEntity("pending")
 
         val outcome = undo.undo(clientId)
 
-        coVerify(exactly = 1) { pendingTransactionDao.deleteByClientId(clientId) }
-        coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
-        coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(UndoOutcome.Undone, outcome)
-        assertEquals(MSG_UNDONE, outcome.userMessage)
-        // pending 记录从未上过服务端，谈不上「回收站可恢复」——不许出现。
-        assertFalse(outcome.userMessage.contains("回收站"))
-    }
-
-    // ==================== failed：只有 401 能证明服务端没建 ====================
-
-    @Test
-    fun `failed with token expired - server rejected the request, deletes local row only`() = runTest {
-        coEvery { pendingTransactionDao.findByClientId(clientId) } returns
-            localEntity("failed", lastError = SyncWorker.ERROR_TOKEN_EXPIRED)
-
-        val outcome = undo.undo(clientId)
-
-        coVerify(exactly = 1) { pendingTransactionDao.deleteByClientId(clientId) }
-        coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
-        coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(UndoOutcome.Undone, outcome)
-        assertEquals(MSG_UNDONE, outcome.userMessage)
-    }
-
-    @Test
-    fun `failed with server anomaly - server may already have created it, deletes nothing`() = runTest {
-        // SERVER_ANOMALY = 服务端返回里 created[]/duplicates[] 都没匹配上 clientId，
-        // 交易**很可能已经在服务端**。删本地 = 用户永久看不见这笔账。
-        coEvery { pendingTransactionDao.findByClientId(clientId) } returns
-            localEntity("failed", lastError = SyncWorker.ERROR_SERVER_ANOMALY)
-
-        val outcome = undo.undo(clientId)
-
-        coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
-        coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
-        coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        // 服务端是否已有并不确定 ⇒ 不得指向流水页，也不得主张任何上传状态
-        assertEquals(UndoOutcome.ServerStateUnknown, outcome)
-        assertEquals(MSG_FAILED_UNCHANGED, outcome.userMessage)
-        assertNoActionOrUploadClaim(outcome.userMessage)
-        assertNotClaimedUndone(outcome)
-    }
-
-    @Test
-    fun `failed with max retry exceeded - last request may have succeeded, deletes nothing`() = runTest {
-        coEvery { pendingTransactionDao.findByClientId(clientId) } returns
-            localEntity("failed", lastError = SyncWorker.ERROR_MAX_RETRY_EXCEEDED)
-
-        val outcome = undo.undo(clientId)
-
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
@@ -224,24 +173,28 @@ class RecordUndoImplTest {
     }
 
     @Test
-    fun `failed with null last error - no evidence about server state, deletes nothing`() = runTest {
-        // 历史上 markFailed 误用 updateSyncStatus 不写 last_error，会留下这种行。
-        // 「原因未知」不能当成「服务端一定没有」。
-        coEvery { pendingTransactionDao.findByClientId(clientId) } returns
-            localEntity("failed", lastError = null)
+    fun `legacy failed row - deletes nothing regardless of the recorded reason`() = runTest {
+        // 401 也救不了它：那次 401 之后本地并没有删行，服务端状态依然只能靠猜。
+        listOf(
+            "Token expired, need re-login",
+            "Server response missing clientId match (created/duplicates both empty)",
+            "Max retry count exceeded",
+            null,
+        ).forEach { reason ->
+            coEvery { pendingTransactionDao.findByClientId(clientId) } returns
+                localEntity("failed", lastError = reason)
 
-        val outcome = undo.undo(clientId)
+            val outcome = undo.undo(clientId)
 
+            assertEquals(UndoOutcome.ServerStateUnknown, outcome, "reason=$reason")
+            assertEquals(MSG_FAILED_UNCHANGED, outcome.userMessage)
+            assertNoActionOrUploadClaim(outcome.userMessage)
+            assertNotClaimedUndone(outcome)
+        }
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(UndoOutcome.ServerStateUnknown, outcome)
-        assertEquals(MSG_FAILED_UNCHANGED, outcome.userMessage)
-        assertNoActionOrUploadClaim(outcome.userMessage)
-        assertNotClaimedUndone(outcome)
     }
-
-    // ==================== 未知 status：fail-closed ====================
 
     @Test
     fun `unknown sync status - deletes nothing instead of treating it as unsynced`() = runTest {

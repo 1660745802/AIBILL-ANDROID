@@ -3,6 +3,7 @@ package com.aibill.android.data.ownership
 import com.aibill.android.data.local.dao.AccountDao
 import com.aibill.android.data.local.dao.CategoryDao
 import com.aibill.android.data.local.dao.NotificationRecordDao
+import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.SyncLock
 import com.aibill.android.data.local.work.WorkManagerProvider
 import com.aibill.android.data.remote.interceptor.TokenManager
@@ -10,7 +11,6 @@ import com.aibill.android.domain.ownership.DisposalIntent
 import com.aibill.android.domain.ownership.DisposalOutcome
 import com.aibill.android.domain.ownership.LocalDataOwnership
 import com.aibill.android.domain.ownership.LocalOwnership
-import com.aibill.android.domain.queue.SyncQueue
 import kotlinx.coroutines.delay
 import timber.log.Timber
 import javax.inject.Inject
@@ -27,7 +27,7 @@ import javax.inject.Singleton
  *
  * | 表 | 归属判据 | 同号重登 |
  * |---|---|---|
- * | `pending_transactions` | 归属当前账号（`last_known_user_id`）：离线队列，是「用户是谁」最直接的证据 | **必须保留**，否则用户断网时记的账被物理删除 |
+ * | `pending_transactions` | 归属当前账号（`last_known_user_id`）：已确认记录的本地缓存，是「用户是谁」最直接的证据 | **必须保留**，否则用户重登后撤销链路失去凭据 |
  * | `categories` | 服务端派生缓存 | 保留（`HomeViewModel.refresh()` 会重新拉；清掉会造成登录后分类短暂空白） |
  * | `accounts` | 服务端派生缓存 | 保留（同上，含余额显示） |
  * | `notification_records` | **设备侧**捕获的审计数据（不带账号列） | 保留（本地通知审计） |
@@ -45,17 +45,14 @@ import javax.inject.Singleton
  *
  * 1. **同号重登一张表都不能少**（数据丢失回归，见 `AuthRepositoryImplTest` 的
  *    `DATA LOSS regression` 与本类的同名用例）；
- * 2. 401 恢复只经 `SyncQueue.recoverTokenExpiredFailures()`，判据配对（写入侧
- *    `SyncWorker.ERROR_TOKEN_EXPIRED` ↔ 读取侧 `ERROR_TOKEN_EXPIRED_PATTERN`）由
- *    `SyncQueueImplTest` 用真实 Room 端到端钉住；
- * 3. 换号 / 换服务器清的是**同一份**清单，且都在 `TokenManager.saveSession()` 之前完成
+ * 2. 换号 / 换服务器清的是**同一份**清单，且都在 `TokenManager.saveSession()` 之前完成
  *    （调用方保证顺序：先 `dispose` 再写 session）；
- * 4. `last_known_user_id` 本 module **只读不写**（写入在 `TokenManager.saveSession()`）。
+ * 3. `last_known_user_id` 本 module **只读不写**（写入在 `TokenManager.saveSession()`）。
  */
 @Singleton
 class LocalDataOwnershipImpl @Inject constructor(
     private val tokenManager: TokenManager,
-    private val syncQueue: SyncQueue,
+    private val pendingTransactionDao: PendingTransactionDao,
     private val categoryDao: CategoryDao,
     private val accountDao: AccountDao,
     private val notificationRecordDao: NotificationRecordDao,
@@ -74,21 +71,16 @@ class LocalDataOwnershipImpl @Inject constructor(
     }
 
     /**
-     * 同号重登：本地数据**一张都不动**，只把 401 卡住的行复活回 pending 并主动排同步。
+     * 同号重登：本地数据**一张都不动**，也没有任何要补做的收尾。
      *
-     * 复活 + 排调度两件事都必须做：只复活不排，账要等下一次网络跳变才上传；
-     * 只排不复活，`getAllPending()` 只捞 `pending`，那批行永远卡在 failed。
+     * 这里曾经还要「把 401 卡住的行复活回 pending + 主动排一次同步」——那是
+     * 待上传队列的恢复动作。记账不再有队列，也就没有需要恢复的行：
+     * 缓存里的每一行都已经是服务端确认过的。
      */
     private suspend fun retainForSameAccount(): DisposalOutcome.Retained {
         val accountId = currentOwnership().accountId
-        val revived = syncQueue.recoverTokenExpiredFailures()
-        if (revived > 0) {
-            Timber.i("Ownership: 同账号重登(userId=$accountId)，复活 $revived 条 401 卡住的离线记录为待同步")
-        }
-        // 排同步失败不外抛：SyncQueueImpl 已把它翻译成 SyncRequest.Rejected 并记过日志，
-        // 这里不必打断登录（账还在本地，下次网络跳变还会再排）。
-        syncQueue.requestSync()
-        return DisposalOutcome.Retained(revived)
+        Timber.i("Ownership: 同账号重登(userId=$accountId)，本地数据一张不动")
+        return DisposalOutcome.Retained
     }
 
     /**
@@ -98,7 +90,7 @@ class LocalDataOwnershipImpl @Inject constructor(
      * 顺序本身不承载不变量（4 张表互不引用），但「新表加在末尾」比「插在中间」好读。
      */
     private suspend fun clearOwnedTables(intent: DisposalIntent): DisposalOutcome.Cleared {
-        syncQueue.clear()
+        pendingTransactionDao.deleteAll()
         categoryDao.deleteAll()
         accountDao.deleteAll()
         notificationRecordDao.deleteAll()
@@ -107,10 +99,11 @@ class LocalDataOwnershipImpl @Inject constructor(
     }
 
     /**
-     * PR C1：清缓存 / 换 token 之前先取消在飞的 SyncWorker 并等 `SyncLock` 释放，
+     * PR C1：清缓存 / 换 token 之前先取消在飞的后台任务并等 `SyncLock` 释放，
      * 避免循环进行到一半时 user A 的交易用 user B 的 token 写到 user B 的服务端。
      *
-     * 最坏情况只丢一次循环（`cancelUniqueWork` 是异步生效的），不会跨用户写。
+     * 记账已经没有在飞的后台任务，取消这一步因此是空操作；**顺序仍要保住**——
+     * 「先静默、再等锁、后处置」是这条路径的不变量，别因为某一步暂时无害就摘掉。
      * 等锁有上限（[MAX_WAIT_MS]）：锁迟迟不放时宁可直接处置，也不能把登录卡死。
      */
     override suspend fun awaitSyncQuiescence() {

@@ -18,13 +18,11 @@ import com.aibill.android.presentation.ui.auth.components.AuthScaffold
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.theme.AppOutlinedButton
 import com.aibill.android.presentation.theme.PrimaryButton
@@ -35,7 +33,6 @@ fun ServerConfigScreen(
     viewModel: ServerConfigViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var pendingClearConfirm by rememberSaveable { mutableStateOf(false) }
 
     AuthScaffold(
         title = "连接你的记账服务器",
@@ -114,14 +111,8 @@ fun ServerConfigScreen(
             PrimaryButton(
                 text = "继续",
                 onClick = {
-                    // PR #42：有未同步数据时弹二次确认
-                    if (viewModel.hasPendingData()) {
-                        // 用全局 state 由 Screen 层捕获显示
-                        pendingClearConfirm = true
-                    } else {
-                        viewModel.onSave(clearLocalCache = true)
-                        onConfigured()
-                    }
+                    viewModel.onSave(clearLocalCache = true)
+                    onConfigured()
                 },
                 modifier = Modifier.weight(1f),
                 enabled = uiState.isConnected,
@@ -150,29 +141,5 @@ fun ServerConfigScreen(
                 color = MaterialTheme.colorScheme.outline,
             )
         }
-    }
-
-    // PR #42：保存前若本地仍有未同步数据（含 failed），弹 AlertDialog 让用户选择
-    if (pendingClearConfirm) {
-        AlertDialog(
-            onDismissRequest = { pendingClearConfirm = false },
-            title = { Text("清空本地缓存") },
-            text = {
-                Text("当前有 ${uiState.unsyncedCount} 条未同步交易（含同步失败）。\n保存服务器设置将清空本地缓存，此操作不可恢复。\n确定继续吗？")
-            },
-            confirmButton = {
-                AppTextButton(
-                    text = "保存并清空",
-                    onClick = {
-                        pendingClearConfirm = false
-                        viewModel.onSave(clearLocalCache = true)
-                        onConfigured()
-                    },
-                )
-            },
-            dismissButton = {
-                AppTextButton(text = "取消", onClick = { pendingClearConfirm = false })
-            },
-        )
     }
 }

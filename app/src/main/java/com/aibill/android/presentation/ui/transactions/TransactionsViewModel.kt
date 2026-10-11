@@ -331,14 +331,14 @@ class TransactionsViewModel @Inject constructor(
 
     /**
      * 删除事务。保存被删的 [Transaction] 以供 [undoDelete] 恢复。
-     * 只在 id 非空时发送请求（本地的 pending 记录可能还没有 server id）。
+     * 只在 id 非空时发送请求（列表数据来自服务端，理论上必有 id；此处只是防御）。
      */
     fun onDeleteTransaction(transaction: Transaction) {
         lastDeletedTransaction = transaction
         viewModelScope.launch {
             val id = transaction.id ?: run {
                 lastDeletedTransaction = null
-                _uiEvent.emit(UiEvent.ShowToast("该记录尚未同步，无法删除"))
+                _uiEvent.emit(UiEvent.ShowToast("无法删除：找不到这条记录"))
                 return@launch
             }
             // 软删除（billserver 移到回收站，本地/远端缓存不自动感知）

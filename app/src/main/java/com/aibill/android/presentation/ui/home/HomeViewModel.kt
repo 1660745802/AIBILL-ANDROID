@@ -3,10 +3,7 @@ package com.aibill.android.presentation.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.domain.model.Result
-import com.aibill.android.domain.model.SyncQueueStatus
 import com.aibill.android.domain.model.Transaction
-import com.aibill.android.domain.queue.SyncQueue
-import com.aibill.android.domain.queue.SyncRequest
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.NotificationRecordRepository
@@ -34,9 +31,7 @@ import javax.inject.Inject
  * 设计要点：
  * - 不持有 Application/Context。Widget 更新走 [com.aibill.android.service.WidgetDataUpdater] 静态入口
  *   时，依赖通过 Hilt 注入到上层协程作用域（避免 Application 注入）
- * - 不直接注入 DAO。所有数据访问走 Repository 接口或离线队列 module
- * - 队列相关（快照 / 手动排调度）一律走 [SyncQueue]——它们属于离线队列 module，
- *   不再寄居在 [TransactionRepository] 里
+ * - 不直接注入 DAO。所有数据访问走 Repository 接口
  * - 删除 [loadWeeklyTrend]：MiniTrendChart 组件已删除
  */
 @HiltViewModel
@@ -46,7 +41,6 @@ class HomeViewModel @Inject constructor(
     private val accountRepository: AccountRepository,
     private val statsRepository: StatsRepository,
     private val notificationRepository: NotificationRecordRepository,
-    private val syncQueue: SyncQueue,
     private val widgetSyncScheduler: com.aibill.android.service.WidgetSyncScheduler,
 ) : ViewModel() {
 
@@ -57,17 +51,9 @@ class HomeViewModel @Inject constructor(
         val monthlyIncome: Int = 0,
         val todayTransactions: List<Transaction> = emptyList(),
         val pendingNotificationCount: Int = 0,
-        /**
-         * 离线队列快照。**只存这一个字段**，不拆成 pendingSyncCount + failedSyncCount
-         * 两个平行 Int——两个数各自漂移正是 [SyncQueueStatus] 要消灭的形态。
-         * 档位/文案/配色的决策留在 HomeScreen，本层只转发快照。
-         */
-        val syncStatus: SyncQueueStatus = SyncQueueStatus(0, 0),
-        val isSyncing: Boolean = false,
     )
 
     sealed class UiEvent {
-        data class ShowToast(val message: String) : UiEvent()
         data class ShowError(val message: String) : UiEvent()
     }
 
@@ -83,7 +69,6 @@ class HomeViewModel @Inject constructor(
     init {
         refresh()
         observePendingNotifications()
-        observeSyncStatus()
     }
 
     private fun observePendingNotifications() {
@@ -91,40 +76,6 @@ class HomeViewModel @Inject constructor(
             notificationRepository.observePendingCount().collect { count ->
                 _uiState.update { it.copy(pendingNotificationCount = count) }
             }
-        }
-    }
-
-    private fun observeSyncStatus() {
-        viewModelScope.launch {
-            syncQueue.observeStatus().collect { status ->
-                _uiState.update { it.copy(syncStatus = status) }
-            }
-        }
-    }
-
-    /**
-     * 手动点同步（待同步横幅上的按钮）。
-     *
-     * ⚠️ 这里拿到的是**已入队**而不是**已上传**：[SyncQueue.requestSync] 只是把
-     * SyncWorker 交给 WorkManager，真实上传结果由队列快照与横幅呈现。
-     * 收口前这里调 `TransactionRepository.syncPending()`，它的 `Result.Success`
-     * 同样只代表入队，却顶着「同步完成」的 toast——那句话本身就是新谎报，
-     * 现在返回类型与文案都跟事实对齐了。
-     */
-    fun triggerSync() {
-        if (_uiState.value.isSyncing) return
-        viewModelScope.launch {
-            _uiState.update { it.copy(isSyncing = true) }
-            when (val request = syncQueue.requestSync()) {
-                is SyncRequest.Enqueued -> {
-                    _uiEvent.emit(UiEvent.ShowToast("已加入同步队列"))
-                    refreshData()
-                }
-                is SyncRequest.Rejected -> {
-                    _uiEvent.emit(UiEvent.ShowError("同步失败: 触发同步失败: ${request.cause.message}"))
-                }
-            }
-            _uiState.update { it.copy(isSyncing = false) }
         }
     }
 
@@ -203,10 +154,4 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun refreshData() {
-        viewModelScope.launch {
-            launch { loadTodayTransactions() }
-            launch { loadMonthlyExpense() }
-        }
-    }
 }

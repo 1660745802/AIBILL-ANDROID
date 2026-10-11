@@ -13,8 +13,8 @@ import javax.inject.Singleton
 /**
  * 入账 module 的装配。
  *
- * 入库的跨表写入器（[com.aibill.android.data.queue.RecordWriter]）已随离线队列
- * 一起收进 `di/QueueModule`，入账侧不再直接持有它。
+ * 入库的跨表写入器（[com.aibill.android.data.record.RecordWriter]）
+ * 一起收进 `di/RecordWriteModule`，入账侧不再直接持有它。
  */
 @Module
 @InstallIn(SingletonComponent::class)

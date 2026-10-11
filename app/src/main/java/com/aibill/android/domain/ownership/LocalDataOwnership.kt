@@ -9,7 +9,7 @@ package com.aibill.android.domain.ownership
  * 「把本地数据清掉」这件事原本写了两遍，靠两段 KDoc 互相声明「表集合必须一致，改一处
  * 必须改另一处」：
  *
- * - `AuthRepositoryImpl.clearLocalCache()`（登录路径：cancel 在飞 SyncWorker → 等 SyncLock
+ * - `AuthRepositoryImpl.clearLocalCache()`（登录路径：取消在飞任务 → 等 SyncLock
  *   → 清 4 张表）；
  * - `ServerConfigViewModel.onSave(clearLocalCache = true)`（同一个 4 张表清单，
  *   **没有** SyncLock 握手）。
@@ -32,7 +32,7 @@ package com.aibill.android.domain.ownership
  *
  * | 意图 | 场景 | 4 张表 | 附带动作 |
  * |---|---|---|---|
- * | [DisposalIntent.SameAccountRelogin] | Token 过期后重登、登出后登回同一账号 | **一张都不动** | 只按 `ERROR_TOKEN_EXPIRED_PATTERN` 复活 failed 行 + 主动排同步 |
+ * | [DisposalIntent.SameAccountRelogin] | Token 过期后重登、登出后登回同一账号 | **一张都不动** | — |
  * | [DisposalIntent.SwitchingAccount] | 换号 / 首次登录 / 旧版本拿不到 userId | 清空 | — |
  * | [DisposalIntent.SwitchingServer] | `ServerConfig` 页保存服务器地址 | 清空（**同样 4 张**） | — |
  *
@@ -52,7 +52,7 @@ package com.aibill.android.domain.ownership
  *
  * 判据来自 `TokenManager.getLastKnownUserId()`，**任何**会话结束路径都不清除它
  * （401 不清、显式登出也不清）：删掉它，用户登出再登回同一账号时会退化成「首次登录」
- * 而清空离线队列，违反登出弹窗对用户的承诺。它的写入发生在
+ * 而清空本地缓存，违反登出弹窗对用户的承诺。它的写入发生在
  * `TokenManager.saveSession()`，本 module 只读。
  */
 interface LocalDataOwnership {
@@ -76,9 +76,9 @@ interface LocalDataOwnership {
     suspend fun dispose(intent: DisposalIntent): DisposalOutcome
 
     /**
-     * SyncLock 握手：取消在飞的 SyncWorker，并等 `SyncLock` 释放（最长 3s）。
+     * SyncLock 握手：取消在飞的后台任务，并等 `SyncLock` 释放（最长 3s）。
      *
-     * 为什么必须在处置之前：清缓存 / 换 token 时若同步循环跑到一半，
+     * 为什么必须在处置之前：清缓存 / 换 token 时若后台循环跑到一半，
      * user A 的交易会用 user B 的 token 写到 user B 的服务端。
      *
      * 换服务器路径**不**调它（与收口前一致，`ServerConfig` 仅登录页可达、此时无有效会话）。
@@ -126,15 +126,12 @@ sealed interface DisposalIntent {
 
     /**
      * 同号重登（Token 过期后重登、登出后登回同一账号）：数据仍归同一个账号，
-     * **一张表都不清**，只把 `last_error LIKE '%Token expired%'` 的 failed 行复活回 pending，
-     * 再主动排一次同步。
+     * **一张表都不清**，也没有任何要补做的收尾。
      *
-     * 为什么保留：Token 30 天过期（无 refresh token）恰恰是离线数据最容易堆积的时刻，
-     * 早期实现在登录成功时无条件清空，用户「断网时记的、还没同步上去的账」被物理删除，
-     * 且不可恢复（`AuthRepositoryImplTest` 的 `DATA LOSS regression` 钉住此不变量）。
-     *
-     * 为什么只按 401 模式复活：`failed` 是本地终态，只捞 `pending`；
-     * 但业务错误 / 服务端异常 / 超最大重试是**不可恢复**的，一并复活就是无限重试死循环。
+     * 为什么保留：Token 30 天过期（无 refresh token）时本地恰恰存着最有价值的东西
+     * （服务端已确认的缓存 + 设备侧通知审计），早期实现在登录成功时无条件清空，
+     * 用户的账被物理删除且不可恢复（`AuthRepositoryImplTest` 的
+     * `DATA LOSS regression` 钉住此不变量）。
      */
     data object SameAccountRelogin : DisposalIntent
 
@@ -152,14 +149,9 @@ sealed interface DisposalIntent {
  */
 sealed interface DisposalOutcome {
 
-    /** 4 张表已清空（换号 / 换服务器）。队列里没有这个用户的离线记账了。 */
+    /** 4 张表已清空（换号 / 换服务器）。这个用户的本地缓存与通知审计都没了。 */
     data object Cleared : DisposalOutcome
 
-    /**
-     * 4 张表一张未动；其中 [revivedRows] 条 401 卡住的行被复活回 pending，并已排同步。
-     *
-     * `revivedRows == 0` 也是正常的（没有卡住的行）。**无论是不是 0 都会排同步**，
-     * 因为「刚登回来」这件事本身就该把积压推一次。
-     */
-    data class Retained(val revivedRows: Int) : DisposalOutcome
+    /** 4 张表一张未动。没有需要补做的收尾（本地缓存里没有「等上传」的行）。 */
+    data object Retained : DisposalOutcome
 }

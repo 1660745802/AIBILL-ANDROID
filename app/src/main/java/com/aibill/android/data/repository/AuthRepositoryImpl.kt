@@ -22,7 +22,7 @@ import javax.inject.Singleton
  * 要不要 SyncLock 握手、`last_known_user_id` 判成什么，全部归
  * [LocalDataOwnership]（架构候选 4 收口）。
  *
- * 收口前本类持有 3 个 DAO + `SyncQueue` + `SyncLock` + `WorkManagerProvider`，
+ * 收口前本类持有 3 个 DAO + 同步队列 + `SyncLock` + `WorkManagerProvider`，
  * 与 `ServerConfigViewModel` 各手列一份 4 张表的清单，靠 KDoc 互保。
  * 现在这里只剩**一句意图**，表清单在 `data/ownership/LocalDataOwnershipImpl` 一处。
  */
@@ -36,13 +36,13 @@ class AuthRepositoryImpl @Inject constructor(
 ) : AuthRepository {
 
     override suspend fun login(username: String, password: String): Result<User> {
-        // PR C1：登录前取消在飞的 SyncWorker 并等 SyncLock 释放（或超时强杀）
+        // PR C1：登录前取消在飞的后台任务并等 SyncLock 释放（或超时强杀）
         localDataOwnership.awaitSyncQuiescence()
         // 必须在处置 / saveSession 之前问归属——saveSession 会覆盖 last_known_user_id，
         // 之后问到的永远是「刚登进来的这个账号」，同号重登会被误判成换号。
         // 问的是 last_known_user_id（跨 session 存活的归属判据）而非 user_id（session 字段）：
         // 401 时 AuthInterceptor 会把整个 session（含 user_id）清掉，
-        // 而「Token 过期 → 重登」正是最需要保住离线队列的场景。
+        // 而「Token 过期 → 重登」正是最需要保住本地缓存的场景。
         val previousOwnership = localDataOwnership.currentOwnership()
         val result = safeApiCall { authApi.login(LoginRequest(username, password)) }
         return when (result) {
@@ -87,7 +87,7 @@ class AuthRepositoryImpl @Inject constructor(
         inviteCode: String,
         nickname: String?
     ): Result<User> {
-        // PR C1：注册前同样等 SyncWorker
+        // PR C1：注册前同样做同步静默握手
         localDataOwnership.awaitSyncQuiescence()
         val result = safeApiCall {
             authApi.register(RegisterRequest(username, password, inviteCode, nickname))
@@ -126,8 +126,8 @@ class AuthRepositoryImpl @Inject constructor(
      * - `last_known_user_id` 刻意保留：它是本地缓存的归属判据
      *   （见 [LocalDataOwnership.currentOwnership]）。
      *   若删掉，用户登出再登回同一账号时 `login()` 会判成换号 → 走 `SwitchingAccount`
-     *   清空本地缓存，把离线记的账物理删除——而 `ProfileScreen` 的
-     *   登出确认弹窗向用户承诺「本地未同步的数据不会丢失」。
+     *   清空本地缓存，把用户的本地数据物理删除——而 `ProfileScreen` 的
+     *   登出确认弹窗向用户承诺「本地数据不会丢失」。
      * - 换号防护不受影响：`login()` 靠 `previousOwnership != incomingUserId` 的**比较**
      *   判定换号，登出后换号依然会清空本地缓存。
      */

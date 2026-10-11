@@ -5,7 +5,6 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import com.aibill.android.domain.queue.SyncQueue
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,19 +13,21 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 网络状态监听：网络从「不可用 → 可用」时触发一次 [SyncQueue.requestSync]，
- * 让离线队列自动上传（README「离线可用：联网后 WorkManager 自动同步」的实现处）。
+ * 网络状态监听：把「当前有没有网」维持成一个 [StateFlow]。
+ *
+ * 记账**不在网络跳变时做任何补偿**——没有网时记账当场被拒绝
+ * （见 `docs/ARCHITECTURE.md` §2.3），所以本类不再是任何记账路径的触发点，
+ * 它只是给需要「此刻是否在线」的调用方一个可信读数的观察者。
  *
  * ⚠️ **必须在本进程内被注入一次，否则本类完全不会运行。**
  * 它是 `@Singleton`，所有注册都发生在 `init` 里——没有任何人注入 = 永远不会构造 =
- * NetworkCallback 不会注册 = 离线记账永不自动同步。
+ * NetworkCallback 不会注册 = `isOnline` 永远停在构造时的初值。
  * 目前唯一的注入点是 [com.aibill.android.AiBillApp]（Application 启动时）。
  * 移除那处注入会静默回归，请勿删除。
  */
 @Singleton
 class NetworkMonitor @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val syncQueue: SyncQueue,
 ) {
 
     private val connectivityManager =
@@ -54,21 +55,9 @@ class NetworkMonitor @Inject constructor(
         }
     }
 
-    /**
-     * 统一的在线状态入口：**只在「不可用 → 可用」的跳变时**排一次同步。
-     *
-     * 之前 [onCapabilitiesChanged] 每次都排（计费切换 / WiFi↔蜂窝切换 / 网络能力刷新
-     * 都会回调），配合 `APPEND_OR_REPLACE` 会让 unique work 链不断增长。
-     *
-     * 排调度本身走离线队列 module（[SyncQueue.requestSync]），与入账、手动点同步、
-     * 同号重登共用同一个入口；它不抛异常，WorkManager 不可用时只记日志。
-     */
+    /** 在线状态的唯一写入口；`MutableStateFlow` 对同值写入不发射，重复回调无副作用。 */
     private fun onOnlineStateChanged(nowOnline: Boolean) {
-        val wasOnline = _isOnline.value
         _isOnline.value = nowOnline
-        if (nowOnline && !wasOnline) {
-            syncQueue.requestSync()
-        }
     }
 
     init {
@@ -76,7 +65,7 @@ class NetworkMonitor @Inject constructor(
             .addCapability(NET_CAPABILITY_INTERNET)
             .build()
         // registerNetworkCallback 会**立即**为当前网络回调一次 onAvailable/onCapabilitiesChanged，
-        // 因此「App 启动时已联网」也能触发一次同步（覆盖进程被杀期间的积压）。
+        // 因此 `isOnline` 在 App 启动后很短时间内就会收敛到真实值。
         connectivityManager.registerNetworkCallback(request, networkCallback)
     }
 

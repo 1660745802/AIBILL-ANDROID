@@ -30,10 +30,10 @@ import org.junit.jupiter.api.Test
  * 覆盖：
  * - P0#3：register 真接通 AuthApi.register（之前 RegisterScreen 直接跳登录，UI 调用 register 假接口）
  * - P1#44：换号时把本地数据交给归属 module 按「换号」处置
- * - **同账号重登不清本地数据**（数据丢失回归）：Token 过期 → 队列被 401 标 failed →
- *   用户重登同一账号 → 离线记录必须被保留并被重置为可重试
+ * - **同账号重登不清本地数据**（数据丢失回归）：Token 过期 → 用户重登同一账号 →
+ *   本地缓存与通知审计必须一张不动
  * - M1：saveSession 原子写入 token + userId + username + nickname
- * - C1：登录前经归属 module 做 SyncLock 握手（cancel 在飞的 SyncWorker）
+ * - C1：登录前经归属 module 做 SyncLock 握手（取消在飞的后台任务）
  *
  * 关键不变量：
  * 1. login 成功且**换号/首次**（旧归属为 null 或 != 新 userId）→ 处置意图必须是
@@ -45,12 +45,12 @@ import org.junit.jupiter.api.Test
  * 5. 换号路径下处置顺序在 saveSession 之前（避免 user B 拿到 user A 的脏数据）
  * 6. login/register 前必调 `awaitSyncQuiescence()`（SyncLock 握手）
  * 7. **B6**：logout 不得删除 `last_known_user_id` —— 否则「登出→登回同账号」
- *    退化成「首次登录」并清空离线队列，违反登出弹窗对用户的承诺。
+ *    退化成「首次登录」并清空本地数据，违反登出弹窗对用户的承诺。
  *    但保留它也不得削弱换号防护（见下面两个 B6 用例）
  *
  * ## 架构候选 4 之后：这里断言的是**意图**，表级不变量搬去了 `LocalDataOwnershipImplTest`
  *
- * 收口前本类直连 4 张表（DAO + SyncQueue），断言是「某张表被 deleteAll 了」。
+ * 收口前本类直连 4 张表（DAO + 同步队列），断言是「某张表被 deleteAll 了」。
  * 现在处置归 [LocalDataOwnership]，本类只负责**选对意图**，于是断言换成
  * 「dispose 收到哪个意图」+「据处置结果做了什么」。
  *
@@ -117,7 +117,7 @@ class AuthRepositoryImplTest {
         assertEquals(42, user.id)
         assertEquals("alice", user.username)
 
-        // C1：login 前必做 SyncLock 握手（cancel 在飞的 SyncWorker + 等锁）
+        // C1：login 前必做 SyncLock 握手（取消在飞的后台任务 + 等锁）
         coVerify(exactly = 1) { ownership.awaitSyncQuiescence() }
 
         // P1#44：换号 → 处置意图必须是 SwitchingAccount（它清 4 张表）
@@ -144,7 +144,7 @@ class AuthRepositoryImplTest {
         //      → 用户重新登录【同一个账号】(userId 42 → 42)
         // 原实现无条件 clearLocalCache() → 队列表 deleteAll
         // 用户「断网时记的账」被物理删除，不可恢复。
-        stubOwnership(42, DisposalOutcome.Retained(revivedRows = 3))
+        stubOwnership(42, DisposalOutcome.Retained)
         coEvery { authApi.login(LoginRequest("alice", "pass")) } returns ApiResponse(
             code = 0, data = makeAuthResponse(), message = "ok"
         )
@@ -230,7 +230,7 @@ class AuthRepositoryImplTest {
     @Test
     fun `disposal happens BEFORE saveSession on account switch - prevents user A data leak`() = runTest {
         // PR C1/P1#44：换号时处置本地数据必须在 saveSession 之前，
-        // 否则在处置和 saveSession 之间，SyncWorker 可能用旧 token 写新表
+        // 否则在处置和 saveSession 之间，后台可能用旧 token 写新表
         stubOwnership(7)
         coEvery { authApi.login(LoginRequest("a", "b")) } returns ApiResponse(
             code = 0, data = makeAuthResponse(), message = "ok"
@@ -247,7 +247,7 @@ class AuthRepositoryImplTest {
 
     @Test
     fun `sync quiescence happens BEFORE the login request`() = runTest {
-        stubOwnership(42, DisposalOutcome.Retained(0))
+        stubOwnership(42, DisposalOutcome.Retained)
         coEvery { authApi.login(LoginRequest("alice", "pass")) } returns ApiResponse(
             code = 0, data = makeAuthResponse(), message = "ok"
         )
@@ -286,7 +286,7 @@ class AuthRepositoryImplTest {
     @Test
     fun `logout then SAME account login - data retained, nothing disposed as account switch`() = runTest {
         // 登出保留了 last_known_user_id（last_known_user_id = 42）
-        stubOwnership(42, DisposalOutcome.Retained(revivedRows = 2))
+        stubOwnership(42, DisposalOutcome.Retained)
         coEvery { authApi.login(LoginRequest("alice", "pass")) } returns ApiResponse(
             code = 0, data = makeAuthResponse(), message = "ok"
         )

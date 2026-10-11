@@ -4,8 +4,6 @@ import android.content.Context
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.local.datastore.UserPreferences
-import com.aibill.android.data.queue.RecordWrite
-import com.aibill.android.data.queue.RecordWriter
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
 import com.aibill.android.data.remote.dto.request.TransactionItemRequest

@@ -66,13 +66,13 @@ class TokenManager internal constructor(
      * **最近一次成功登录过的用户 ID**，与当前 session 解耦。
      *
      * 用途：本地数据归属 module（`LocalDataOwnership.currentOwnership()`，架构候选 4）
-     * 据此判定「同账号重登」还是「换号」，从而决定**是否清空本地离线队列**
+     * 据此判定「同账号重登」还是「换号」，从而决定**是否清空本地缓存**
      * （见 ARCHITECTURE §6.4）。
      *
      * ⚠️ 为什么不能用 [getUserId]：401 / 登出时 [endSession] 会把整个
-     * session（含 user_id）清掉。而「Token 过期 → 重登」恰恰是最需要保住离线队列的场景——
+     * session（含 user_id）清掉。而「Token 过期 → 重登」恰恰是最需要保住本地缓存的场景——
      * 若此时 user_id 已被抹掉，登录侧就只能保守地判定为「身份未知」，
-     * 从而**删掉用户未同步的记账**。Token 过期并不改变「这台设备上的用户是谁」，
+     * 从而**删掉用户的本地缓存与通知审计**。Token 过期并不改变「这台设备上的用户是谁」，
      * 所以身份信息必须活得比 session 长。
      *
      * 与 [endSession] 的区别：本字段**任何**会话结束路径都不清除（401 不清、显式登出也不清），
@@ -122,8 +122,8 @@ class TokenManager internal constructor(
      * 删了它，用户登出再登回**同一账号**时本地数据归属 module 会因
      * `accountId == null` 判定为「首次登录」而走
      * `DisposalIntent.SwitchingAccount`，
-     * 把用户离线记的账物理删除——而 `ProfileScreen` 的登出弹窗向用户承诺过
-     * 「本地未同步的数据不会丢失」。跨账号防护靠的是
+     * 把用户的本地数据物理删除——而 `ProfileScreen` 的登出弹窗向用户承诺过
+     * 「本地数据不会丢失」。跨账号防护靠的是
      * `accountId != incomingUserId` 的比较，不靠 `accountId != null`。
      */
     fun endSession(reason: SessionEndReason) {

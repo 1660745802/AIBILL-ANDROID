@@ -4,8 +4,6 @@ import android.content.Context
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
-import com.aibill.android.data.queue.RecordWrite
-import com.aibill.android.data.queue.RecordWriter
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
 import com.aibill.android.data.remote.dto.response.ApiResponse
@@ -53,7 +51,7 @@ import java.util.Locale
  * 而服务端契约是 `YYYY-MM-DD`。收口后这 6 条路径共用同一个入口，
  * **入口就是全部写入行为的测试面**：字段装配、调用顺序、locale 不变都在这里钉。
  *
- * ## 本类**不用** [com.aibill.android.data.queue.DirectRecordWriter]
+ * ## 本类**不用** [com.aibill.android.data.record.DirectRecordWriter]
  *
  * `DirectRecordWriter` 的三步写入（建审计行 → 写缓存行 → 回填 `status` + `linked_client_id`）
  * 由 `DirectRecordWriterTest` **直接驱动**并逐行断言（含两表关联键）。
@@ -67,7 +65,7 @@ import java.util.Locale
  * 代码却注入的是匿名 object），已在架构候选 3 补上。
  *
  * ⚠️ 本类同样**不覆盖**事务回滚（那要 Robolectric/Room 集成测试）；
- * 「三步写在一个事务里」这条由生产 [com.aibill.android.data.queue.RoomRecordWriter]
+ * 「三步写在一个事务里」这条由生产 [com.aibill.android.data.record.RoomRecordWriter]
  * 的实现保证，不由本类保证。
  *
  * ## 时钟是注入的

@@ -5,11 +5,11 @@ import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
-import com.aibill.android.data.queue.DirectRecordWriter
+import com.aibill.android.data.record.DirectRecordWriter
 import com.aibill.android.data.record.RecordClock
 import com.aibill.android.data.record.RecordIntakeImpl
 import com.aibill.android.data.record.RecordMoment
-import com.aibill.android.data.queue.RecordWriter
+import com.aibill.android.data.record.RecordWriter
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.data.remote.api.AiApi
 import com.aibill.android.data.remote.api.TransactionApi

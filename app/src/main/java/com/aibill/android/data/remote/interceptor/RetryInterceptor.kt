@@ -16,7 +16,7 @@ import javax.inject.Inject
  * PR #57：原 Thread.sleep 阻塞 OkHttp Dispatcher 线程，高并发
  * （流水分页 + 同步 + AI 解析）容易把 Dispatcher 池打满。
  * 缩短 BACKOFF_BASE_MS（500→200ms）以减小最坏阻塞时长，
- * 重试次数从 3 减到 2（搭配 SyncWorker 已有指数退避）。
+ * 重试次数从 3 减到 2。
  * 完整异步化需重写为 OkHttp Authenticator 接口，留待后续重构。
  */
 class RetryInterceptor @Inject constructor() : Interceptor {

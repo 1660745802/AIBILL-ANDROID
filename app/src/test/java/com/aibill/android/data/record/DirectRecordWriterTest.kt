@@ -1,4 +1,4 @@
-package com.aibill.android.data.queue
+package com.aibill.android.data.record
 
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
@@ -34,15 +34,14 @@ import org.junit.jupiter.api.Test
  *
  * `updateStatus` 的第三个参数是 `linked_client_id`，它必须等于**写进
  * `pending_transactions.client_id` 的那一个**——两表关联键：
- * - 通知回执的「撤销」按它回查队列行并删除；
- * - `SyncWorker` 的补偿逻辑按 clientId 匹配。
+ * - 通知回执的「撤销」按它回查缓存行并删除。
  * 传错（甚至传成审计行自己的 id）会让撤销删不到那一行，于是出现幽灵账。
  *
  * ## 为什么用 mock DAO 而不是真实 Room
  *
  * 本类断言的是**调用顺序与参数**（三步、clientId 关联键），
- * mock 的调用序列表达力最强。真实 SQL 那一层由
- * `PendingTransactionDaoQueueStatusTest` / `PendingTransactionDaoMarkFailedTest` 覆盖。
+ * mock 的调用序列表达力最强。真实 Room 那一层由 `LocalDataOwnershipImplTest`
+ * （按表名数行、真实 insert/delete）覆盖。
  * ⚠️ 本类**不覆盖**事务原子性——那是生产 `RoomRecordWriter` 的 `withTransaction` 的事。
  */
 class DirectRecordWriterTest {
@@ -74,13 +73,14 @@ class DirectRecordWriterTest {
     )
 
     /**
-     * AI 自动入账形态（新建审计行）：三步顺序 + **关联键必须是队列行的 clientId**。
+     * AI 自动入账形态（新建审计行）：三步顺序 + **关联键必须是缓存行的 clientId**。
      *
-     * 顺序：建审计行 → 写队列行 → 回填审计行。
-     * 反过来写队列行会让 SyncWorker 早于审计行提交就捞到队列（重复入账的缝）。
+     * 顺序：建审计行 → 写缓存行 → 回填审计行。
+     * 反过来先写缓存行，就留下「账已在缓存、审计行还没回填」的缝——
+     * 用户再点一次确认就是重复账。
      */
     @Test
-    fun `auto intake writes audit row then queue row then backfills with the queue clientId`() = runTest {
+    fun `auto intake writes audit row then cache row then backfills with the cache clientId`() = runTest {
         coEvery { notificationDao.insert(any()) } returns 7L
         val row = pending(clientId = "C-AUTO")
 
@@ -134,10 +134,10 @@ class DirectRecordWriterTest {
     }
 
     /**
-     * clientId 不做任何加工：即便带中文/空格，回填用的也必须原封不动是队列行那一个。
+     * clientId 不做任何加工：即便带中文/空格，回填用的也必须原封不动是缓存行那一个。
      *
      * 固化的是「不做任何转换」这条不变量：一旦有人在这里 trim、lowercase 或
-     * 自己生成一个，回执的「撤销」与 SyncWorker 的补偿就再也匹配不上那一行。
+     * 自己生成一个，回执的「撤销」就再也匹配不上那一行。
      */
     @Test
     fun `backfill passes the row's own clientId through untouched`() = runTest {

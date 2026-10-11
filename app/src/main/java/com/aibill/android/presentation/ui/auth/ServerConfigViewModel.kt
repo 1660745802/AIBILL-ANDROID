@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.domain.ownership.DisposalIntent
 import com.aibill.android.domain.ownership.LocalDataOwnership
-import com.aibill.android.domain.queue.SyncQueue
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,30 +23,23 @@ data class ServerConfigUiState(
     val isTesting: Boolean = false,
     val isConnected: Boolean = false,
     val error: String? = null,
-    /**
-     * 未同步条数（含 failed），UI 用于切换服务器前的二次确认。
-     *
-     * **快照**：仅在 `init` 里取一次，之后不随队列变化刷新。
-     * 口径见 [SyncQueue.unsyncedCount]。
-     */
-    val unsyncedCount: Int = 0,
 )
 
 /**
  * 服务器配置 ViewModel。**已重构**（两次）：
- * 移除 3 个 DAO 直接依赖 → 走 Repository 与离线队列 module（候选 3）；
+ * 移除 3 个 DAO 直接依赖 → 走 Repository（候选 3）；
  * 再移除 3 个 Repository 的 `deleteAll` → 走本地数据归属 module（候选 4）。
  *
  * 只留两个依赖：
- * - [syncQueue]：只取 [SyncQueue.unsyncedCount]（换服务器前的二次确认口径，属队列自己的快照口径）；
- * - [localDataOwnership]：`onSave` 的处置——本 ViewModel 只说「换服务器」这一句意图。
+ * - [localDataOwnership]：`onSave` 的处置——本 ViewModel 只说「换服务器」这一句意图；
+ * - [userPreferences]：DataStore facade，按项目惯例允许直接使用。
  *
- * 保留 UserPreferences（DataStore facade，按项目惯例允许直接使用）。
+ * 换服务器前**没有**「未同步数据」二次确认：不存在「未同步」这个状态，
+ * 本地缓存是服务端派生数据，换命名空间就该整份丢掉（见 `docs/ARCHITECTURE.md` §6.3）。
  */
 @HiltViewModel
 class ServerConfigViewModel @Inject constructor(
     private val userPreferences: UserPreferences,
-    private val syncQueue: SyncQueue,
     private val localDataOwnership: LocalDataOwnership,
 ) : ViewModel() {
 
@@ -57,13 +49,7 @@ class ServerConfigViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             val savedUrl = userPreferences.serverUrl.first()
-            val count = syncQueue.unsyncedCount()
-            _uiState.update {
-                it.copy(
-                    serverUrl = savedUrl.orEmpty(),
-                    unsyncedCount = count,
-                )
-            }
+            _uiState.update { it.copy(serverUrl = savedUrl.orEmpty()) }
         }
     }
 
@@ -101,10 +87,10 @@ class ServerConfigViewModel @Inject constructor(
     /**
      * 保存服务器地址；`clearLocalCache` 为 true 时按「换服务器」处置本地数据。
      *
-     * 事实性说明（**不是**可选入口）：UI 的两处调用点——直接保存与二次确认——
-     * 都固定传 `true`，当前**没有**任何调用方传 `false`。参数保留是为了让
-     * 「首配置/不希望清空」的语义在签名上仍有表达力；新增调用方若要传 `false`，
-     * 必须先想清楚它与 [hasPendingData] 的弹框逻辑如何配合，不要默认复用。
+     * 事实性说明（**不是**可选入口）：UI 的唯一调用点固定传 `true`，
+     * 当前**没有**任何调用方传 `false`。参数保留是为了让「首配置/不希望清空」
+     * 的语义在签名上仍有表达力；新增调用方若要传 `false`，
+     * 必须先想清楚它与清空时机的配合，不要默认复用。
      *
      * 「清哪几张表」不再由本 ViewModel 决定（架构候选 4）：[DisposalIntent.SwitchingServer]
      * 由本地数据归属 module 兑现，清空范围 = pending/categories/accounts/notification_records
@@ -120,14 +106,10 @@ class ServerConfigViewModel @Inject constructor(
             val url = normalizeUrl(_uiState.value.serverUrl)
             if (clearLocalCache) {
                 localDataOwnership.dispose(DisposalIntent.SwitchingServer)
-                _uiState.update { it.copy(unsyncedCount = 0) }
             }
             userPreferences.setServerUrl(url)
         }
     }
-
-    /** 是否存在「切换服务器时会被一并清空」的未同步数据（pending + failed）。 */
-    fun hasPendingData(): Boolean = _uiState.value.unsyncedCount > 0
 
     private fun normalizeUrl(input: String): String {
         var url = input.trim()

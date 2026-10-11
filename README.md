@@ -9,7 +9,7 @@ AI 驱动的智能记账 Android 原生应用，复用 [AIBILL 后端](https://g
 - ✏️ **手动记账**：计算器键盘 + 连续记账模式
 - 🔔 **通知自动记账**：监听微信/支付宝/银行通知，自动识别并入账（项目核心差异化能力）
 - 📊 **统计分析**：趋势图 + 分类排行（原生 Canvas 绘制）
-- 📴 **离线可用**：无网络手动记账不中断，**落库即排入同步队列**，联网后 WorkManager 自动上传
+- 🎯 **记录以服务端为准**：服务端确认了才算记上（本地缓存只是它的副本）；没网或失败时当场告诉你没记上，不偷偷攒着稍后补传
 - 🌙 **深色模式**：跟随系统 / 浅色 / 深色
 - 🧠 **智能分类学习**：AI 解析后自动学习商家→分类，稳态 60-70% 命中跳过 AI
 - 🏠 **桌面小组件**：快速记账 + 月度汇总
@@ -25,7 +25,7 @@ AI 驱动的智能记账 Android 原生应用，复用 [AIBILL 后端](https://g
 | DI | Hilt（含 `@HiltWorker`） |
 | 本地存储 | Room v7（9 张表） + DataStore Preferences |
 | 网络 | Retrofit + OkHttp + Moshi（codegen） |
-| 后台 | WorkManager（5 个 Worker：Sync / RulesSync / UpdateCheck / NlsHealth / A11yHealth） |
+| 后台 | WorkManager（4 个 Worker：RulesSync / UpdateCheck / NlsHealth / A11yHealth） |
 | 通知监听 | NotificationListenerService + 无障碍 + SMS 三渠道 |
 | 图表 | 原生 Canvas 手绘（不引第三方图表库） |
 | 桌面 | Glance AppWidget |
@@ -73,9 +73,8 @@ app/src/main/java/com/aibill/android/
 
 | 文档 | 用途 |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统是什么：分层、模块、通知入账、API 契约、同步与会话、数据模型、术语、已知缺口 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统是什么：分层、模块、通知入账、API 契约、会话与本地数据、数据模型、术语、已知缺口 |
 | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | 怎么干活：开发流程、测试、代码与 UI 规范、发布、AI 协作 |
-| [docs/adr/](docs/adr/) | 架构决策记录（ADR）——重提某个「不做」的方案前先看这里 |
 
 改了什么看 git：`git log -- docs/`。
 

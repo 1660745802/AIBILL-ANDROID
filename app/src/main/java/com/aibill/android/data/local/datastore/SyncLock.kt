@@ -7,10 +7,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 同步锁：标记 SyncWorker 是否正在执行。
+ * 同步锁：标记后台同步循环是否正在执行。
  *
- * PR C1：解决「登录时 SyncWorker 在飞，跨账号写库」竞态。
- * - SyncWorker.doWork() 入口置 true，出口置 false（finally）
+ * PR C1：解决「登录时同步循环在飞，跨账号写库」竞态。
+ * - 同步循环入口置 true，出口置 false（finally）
  * - AuthRepositoryImpl.login/register 先 cancelUniqueWork 再 runBlocking 等待锁释放
  * - 即使 WorkManager cancel 异步生效，最坏情况下只丢一次循环，已有 transaction 不跨用户
  *

@@ -73,6 +73,6 @@ abstract class RepositoryModule {
     @Singleton
     abstract fun bindNotificationRecordRepository(impl: NotificationRecordRepositoryImpl): NotificationRecordRepository
 
-    // 离线队列（pending_transactions）的绑定不在这里：它归 `di/QueueModule` 的 SyncQueue。
+    // pending_transactions 的写入绑定不在这里：它归 `di/RecordWriteModule` 的 RecordWriter。
     // 收口前这里是 `bindPendingTransactionRepository`，一个 4 方法、每个方法一行转发的浅接口。
 }

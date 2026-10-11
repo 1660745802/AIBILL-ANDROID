@@ -59,7 +59,7 @@ object WidgetDataUpdater {
 
     /**
      * 更新月度数据并刷新 Widget
-     * 由 HomeViewModel.refresh() 或 SyncWorker 成功后调用
+     * 由 HomeViewModel.refresh() 或入账 module（服务端确认之后）调用
      */
     suspend fun updateMonthlySummary(
         context: Context,

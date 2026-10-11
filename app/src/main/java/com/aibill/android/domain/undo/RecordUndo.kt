@@ -18,32 +18,24 @@ package com.aibill.android.domain.undo
  * 把 [UndoOutcome.userMessage] 播成 Toast），判据与用户文案都在这里，
  * 纯 JVM 单测直接构造实现即可断言，不需要 Robolectric、不碰 `Dispatchers.Main`。
  *
- * ## 撤销真值表 —— **按已知同步状态分支；不确定状态默认不删**
+ * ## 撤销真值表 —— **按已知状态分支；不确定状态默认不删**
  *
- * | 本地行 | 服务端是否可能已有 | 处理 | [UndoOutcome] |
+ * 缓存里的每一行都是**已被服务端确认**的那一笔（写入时机见
+ * `data/record/RecordIntakeImpl`），所以 `sync_status='synced'` 的行删服务端是安全的。
+ *
+ * | 本地行 | 服务端是否已有 | 处理 | [UndoOutcome] |
  * |---|---|---|---|
  * | 不存在 | 未知 | 谁都不删（无凭据，不猜） | [UndoOutcome.LocalMissing] |
- * | `pending` | 通常没有；在途 SyncWorker 是已知竞态 | 删本地（保持既有语义） | [UndoOutcome.Undone] |
- * | `failed` + 401 (`ERROR_TOKEN_EXPIRED`) | 否（服务端明确拒绝） | 删本地 | [UndoOutcome.Undone] |
- * | `failed` + 其它 reason | **可能已经建了** | 谁都不删 | [UndoOutcome.ServerStateUnknown] |
  * | `synced` + 有 serverId | 是 | 删服务端；成功才删本地 | [UndoOutcome.Undone] / [UndoOutcome.ServerStillHasIt] |
  * | `synced` + 无 serverId | 是 | 谁都不删 | [UndoOutcome.ServerStillHasIt] |
+ * | 非 `synced`（老版本遗留的 `pending` / `failed`） | **未知** | 谁都不删 | [UndoOutcome.ServerStateUnknown] |
  * | 未知 status | 未知 | 谁都不删 | [UndoOutcome.ServerStateUnknown] |
  *
- * ### 为什么 `failed` 不能一律当「服务端没有」
+ * ### 为什么还要留「非 synced」这一档
  *
- * `SyncWorker` 的 markFailed 路径里，只有 401 能证明服务端拒绝：
- * - `SyncWorker.ERROR_TOKEN_EXPIRED`：响应是 401，服务端根本没创建 → 可安全删本地。
- * - `SyncWorker.ERROR_SERVER_ANOMALY`：**服务端可能已创建**，只是响应里
- *   `created[]`/`duplicates[]` 都没匹配上 clientId（漏字段/转换异常）。
- * - `SyncWorker.ERROR_MAX_RETRY_EXCEEDED`：本地重试数超限，**上一次请求可能
- *   已经成功、只是响应在网络上丢了**（提交后进程被杀/超时）。
- *   `ERROR_BUSINESS`（5xx）同理。
- *
- * 后三种删本地 = 服务端若已有这笔，就变成「本地删了、服务端还在」的幽灵账。
- * 不删本地的代价是本地那行会一直留着（Home 横幅会计它，且没有逐行删除入口），
- * 但**不能**因此改口说「去流水页删」——这三类里服务端是否真有这笔并不确定。
- * 后者的代价远小于前者，故一律走「不删 + 如实告知未删除任何数据」。
+ * 老版本写下的 `pending` / `failed` 行没有对应的确认事实：它们可能从没上过服务端，
+ * 也可能上过（响应丢了）。既不能当缓存用，也不能顺手删掉——删之前无法证明服务端没有这笔。
+ * 于是走「不删 + 如实告知未删除任何数据」，代价只是本地留一行没人读的旧数据。
  *
  * ### 为什么不能用 `!= synced` 判据
  *
@@ -51,15 +43,21 @@ package com.aibill.android.domain.undo
  * 也就是未来某天改列名/加状态时静默退化成 fail-open。改用白名单 `when`：
  * 未知值落 `else` 分支，默认不删。
  *
+ * ### 为什么 `synced` 却没有 serverId 也删不了
+ *
+ * [server_transaction_id](com.aibill.android.data.local.entity.PendingTransactionEntity)
+ * 是定位服务端那一行的**唯一**凭据。没有它就只能按 keyword 猜 id——
+ * 无排序保证、只取第 1 页、命中多条时删错账。宁可什么都不删。
+ *
  * ## 历史 bug（收口前修的，搬移时逐行保留）
  *
  * 1. 分支条件只判「本地行是否存在」而不看 `sync_status`，且 `cleanSyncedBefore`
  *    从未被调用（DAO 里定义了但零调用点）、synced 行无限留存，
- *    于是「已上传的账」几乎总是命中本地删除分支 → 服务端账目存活，用户却被告知
+ *    于是「已记上的账」几乎总是命中本地删除分支 → 服务端账目存活，用户却被告知
  *    「已撤销」（实际连回收站都没进）。
  * 2. 已同步时用 `TransactionQuery(keyword = clientId)` + `items.first()` 猜 serverId：
- *    无排序保证、只取第 1 页、命中多条时删错账。现在只认 `server_transaction_id`
- *    （`SyncWorker.markSynced` → `PendingTransactionDao.markSynced`），宁可失败也不猜。
+ *    无排序保证、只取第 1 页、命中多条时删错账。现在只认 `server_transaction_id`，
+ *    宁可失败也不猜。
  */
 interface RecordUndo {
 
@@ -77,8 +75,8 @@ interface RecordUndo {
  *
  * ## 为什么文案跟着判据走
  *
- * 文案本身是一条不变量：**不得指引用户无法执行的动作，也不得主张不确定的上传状态**
- * （与 Home 横幅同一约束）。文案若留在 receiver 里，就等于「判据被测了、文案靠 review」，
+ * 文案本身是一条不变量：**不得指引用户无法执行的动作，也不得主张不确定的上传状态**。
+ * 文案若留在 receiver 里，就等于「判据被测了、文案靠 review」，
  * 正是收口前的状态。因此文案随判据一起进本文件，由 `RecordUndoImplTest` 的
  * **字面量双写 + 禁词断言**钉死（分支直接断言到 [userMessage]，不改文案就变红）。
  */
@@ -87,7 +85,7 @@ sealed interface UndoOutcome {
     /** 真的要播给用户的那句话。原样透传给 Toast，不做二次加工。 */
     val userMessage: String
 
-    /** 真的删掉了（本地，或服务端成功后再删本地）。 */
+    /** 真的删掉了（服务端成功后再删本地）。 */
     data object Undone : UndoOutcome {
         override val userMessage: String = "已撤销"
     }
@@ -103,7 +101,7 @@ sealed interface UndoOutcome {
     }
 
     /**
-     * 服务端**确有**这笔（`synced` 是 `code==0` + clientId 匹配的产物），
+     * 服务端**确有**这笔（`synced` 是 `code==0` + `client_id` 匹配的产物），
      * 但本次没能删掉：要么服务端删除失败，要么 `synced` 却没记住 serverId。
      *
      * 必须指向流水页——流水页数据源是服务端，那里看得到、也删得掉。
@@ -114,8 +112,8 @@ sealed interface UndoOutcome {
     }
 
     /**
-     * 服务端**状态未知**（failed 非 401 / 未知 syncStatus）：什么都没删，
-     * 既不能主张它在服务器上，本地也没有删除入口。
+     * **服务端状态未知**（非 `synced` 的历史遗留行 / 未知 syncStatus）：
+     * 什么都没删，既不能主张它在服务器上，本地也没有删除入口。
      *
      * 因此不得指路、不得主张上传状态——见类 KDoc 的约束说明。
      */

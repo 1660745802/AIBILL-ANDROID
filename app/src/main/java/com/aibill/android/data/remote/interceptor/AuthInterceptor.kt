@@ -54,7 +54,7 @@ class AuthInterceptor @Inject constructor(
         val response = chain.proceed(request)
 
         // 401 全局处理：清当前会话（token + userId/username/nickname）。
-        // 保留 last_known_user_id 不变 —— 它是离线队列的归属判据，见 TokenManager.endSession。
+        // 保留 last_known_user_id 不变 —— 它是本地缓存的归属判据，见 TokenManager.endSession。
         if (response.code == 401) {
             // **只有携带了凭证的 401 才是「会话过期」**。
             // 未携带凭证也被拒（登录密码错误、首次安装未登录）属于预期内，
