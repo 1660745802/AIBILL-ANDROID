@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Test
 /**
  * 通知 AI 解析总闸的接线测试。
  *
- * `UserPreferences.aiParseEnabled` 被 `NotificationProcessor` 读取：false 时**整条通知入账被丢弃**。
+ * `UserPreferences.aiParseEnabled` 被 `NotificationInterpreter` 读取：false 时**整条通知入账被丢弃**。
  * 在这个开关接上设置页之前，它是一个用户永远改不了的闸门。本测试钉住：
  * 「设置页开关 → 写入偏好 → ViewModel 暴露的 StateFlow 读到新值」这条链路确实通了。
  *

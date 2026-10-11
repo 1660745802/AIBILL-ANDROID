@@ -2,6 +2,7 @@ package com.aibill.android.data.notification
 
 import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
+import com.aibill.android.domain.notification.AiCircuitBreaker
 import com.aibill.android.domain.notification.BlockReason
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.MarketingCriteria
@@ -12,7 +13,6 @@ import com.aibill.android.domain.notification.NotificationTextClassifier
 import com.aibill.android.domain.notification.PerPackageCriteria
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
-import com.aibill.android.service.NotificationProcessor
 import com.aibill.android.util.AppLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.ConcurrentHashMap
@@ -24,7 +24,7 @@ import javax.inject.Singleton
  *
  * 独占：全部文本判据（自身通知 / 空文本 / 系统摘要 / 日报汇总 / 促销句式 / 营销词 /
  * 账务判据）、内容级去重与记忆状态（内存 5s 内容去重、长窗 5min AI 内容记忆、DB 1s 去重）、
- * 单包 AI 熔断的查询、以及全部相关日志。
+ * 单包 AI 熔断的**查询**（状态归 `domain/notification/AiCircuitBreaker`）、以及全部相关日志。
  * 三个 adapter 只负责把平台对象翻译成 [Capture] 并在放行时调用 `process`。
  *
  * ## 判定顺序（顺序本身是行为，不要随手调）
@@ -48,7 +48,7 @@ import javax.inject.Singleton
  * 这四道闸是为 **NLS 的噪音** 发明的：资讯 App 把同一条推送反复 post、系统「正在运行」分组摘要
  * 单秒来 10 条、AI 对同一条新闻标题连续报 5001。它们压的都是「同一条内容被系统反复投递」。
  *
- * 而下游 `NotificationProcessor` 的设计原则明写着：**同渠道同包名同金额 = 两笔真实交易**
+ * 而下游 `ScoredAdmission` 的设计原则明写着：**同渠道同包名同金额 = 两笔真实交易**
  * （如 10s 内两杯 ¥15 咖啡）。SMS 与 A11Y 恰好落在这条原则覆盖的场景里：
  * 两杯瑞幸、分钟相同、短信正文逐字一样——对 SMS 是**两笔真账**，不是重复投递；
  * A11Y 的「支付成功 ¥15.00 瑞幸咖啡」同理。
@@ -67,7 +67,7 @@ class NotificationPrefilterImpl @Inject constructor(
     private val ruleSource: NotificationRuleSource,
     private val notificationRecordDao: NotificationRecordDao,
     private val appLogger: AppLogger,
-    private val processor: NotificationProcessor,
+    private val circuitBreaker: AiCircuitBreaker,
 ) : NotificationPrefilter {
 
     private val ownPackageName: String = context.packageName
@@ -214,7 +214,7 @@ class NotificationPrefilterImpl @Inject constructor(
             // 9. 单包 AI 熔断：非支付类包名连续 AI 失败 N 次后静音一段时间。
             //    只对「不在白名单」的包生效，银行/微信/支付宝永不被熔断，
             //    避免真交易因网络抖动被误杀。作用域见类 KDoc。
-            if (!knownSource && processor.isAiMuted(packageName, now)) {
+            if (!knownSource && circuitBreaker.isMuted(packageName, now)) {
                 return block(capture, BlockReason.AI_MUTED, "AI 熔断中（该包连续失败），跳过: pkg=$packageName")
             }
             aiCalledContentKeys[contentKey] = now

@@ -78,15 +78,7 @@ class SmsReceiverService : BroadcastReceiver() {
 
         appLogger.info("SMS", "预筛通过,交给Processor: sender=$sender len=${passed.fullText.length}")
 
-        // 直接交给 Processor（AI + 评分窗口 + 跨渠道金额去重）
-        notificationProcessor.process(
-            NotificationProcessor.Item(
-                packageName = passed.packageName,
-                title = passed.title,
-                fullText = passed.fullText,
-                channel = NotificationProcessor.Channel.SMS,
-                receivedAt = passed.receivedAt,
-            )
-        )
+        // 直接交给协调者（解析 → 评分窗口 + 跨渠道金额去重 → 入库/待审）
+        notificationProcessor.process(passed)
     }
 }

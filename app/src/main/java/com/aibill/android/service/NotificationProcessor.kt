@@ -4,349 +4,73 @@ import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
-import com.aibill.android.data.remote.api.AiApi
-import com.aibill.android.data.remote.dto.response.AiParsedItemDto
+import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.CaptureArchive
+import com.aibill.android.domain.notification.NotificationInterpreter
+import com.aibill.android.domain.notification.ParseOutcome
+import com.aibill.android.domain.notification.ParsedTransaction
+import com.aibill.android.domain.notification.ScoredAdmission
+import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.record.CapturedNotification
 import com.aibill.android.domain.record.RecordIntent
 import com.aibill.android.domain.record.RecordIntake
-import com.aibill.android.domain.usecase.CategoryLearningEngine
-import com.aibill.android.util.AiResultValidator
 import com.aibill.android.util.AppLogger
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationSourceMapping
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import retrofit2.HttpException
-import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 通知处理中心（v4）
+ * 通知入账的**协调者**（v5）。
  *
- * 三渠道统一入口（NLS / A11Y / SMS），流程：
- *   1. AI 解析（单条通知，短文本，不再合并）
- *   2. 解析成功后，按 (amount, type) + 60s 时间窗在 DB 层去重
- *   3. 去重通过 → 送服务端确认 → 落本地缓存/审计行 + 轻通知
- *     服务端没确认（没网 / 业务错误 / 鉴权）→ 降级进待审池，信息不丢
- *   4. 去重命中 → 静默丢弃
- *   5. AI 没能解析（除 401 外的一切失败）→ 通知原文落 `raw` 行，用户在通知中心看得见
- *     （401 另有待补偿队列，同号重登后重放）
+ * 三渠道统一入口（NLS / A11Y / SMS）。预筛放行后，本类只做接线，不持有任何判据或状态：
  *
- * 设计要点：
- * - 客户端不做文本合并，每条通知单独调 AI，避免「A11Y 全支付页 + NLS 短确认」合出 800 字把后端打挂
- * - 去重放在 AI 之后，用语义级（金额）做判重，避免「¥ vs ￥」这种字符级漏判
- * - 入库路径用 Mutex 串行化，杜绝 NLS/A11Y/SMS 同时调 AI 同时查 DB 同时 insert 的竞态
+ * ```
+ * process(capture)
+ *   → NotificationInterpreter.read         解析 + 校验，产出候选 / 明确失败原因
+ *       ├ Parsed        → ScoredAdmission.submit  窗口择优 + 跨渠道判重
+ *       │                    └ 产出 → commit      信息完整 → RecordIntake；否则 → 待审池
+ *       ├ Unparsed      → CaptureArchive.captureUnparsed   原文落 raw，通知中心可见
+ *       ├ AuthExpired   → CaptureArchive.captureAuthPending 落 auth_pending，重登后重放
+ *       └ NotATransaction / Disabled → 丢弃
+ * ```
+ *
+ * 每条策略都是独立 module（interface 在 `domain/notification/`、实现在 `data/notification/`），
+ * 各自有状态与时序、各自可单测：
+ * [com.aibill.android.domain.notification.NotificationInterpreter]（解析与校验）、
+ * [com.aibill.android.domain.notification.ScoredAdmission]（10s 窗口 + 60s 跨渠道判重）、
+ * [com.aibill.android.domain.notification.CaptureArchive]（原文留痕与 401 重放）、
+ * [com.aibill.android.domain.notification.AiCircuitBreaker]（AI 熔断，由预筛查询）。
+ *
+ * 本类保留的只有**路由**：谁产出了、下一步交给谁，以及「待审池写入 + 确认通知」
+ * 这个最终出口（它同时要读隐私设置与来源名映射，属于装配而非策略）。
  */
 @Singleton
 class NotificationProcessor @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val aiApi: AiApi,
-    private val aiResultValidator: AiResultValidator,
+    private val interpreter: NotificationInterpreter,
+    private val scoredAdmission: ScoredAdmission,
+    private val captureArchive: CaptureArchive,
     private val notificationRecordDao: NotificationRecordDao,
     private val recordIntake: RecordIntake,
     private val userPreferences: UserPreferences,
-    private val categoryLearningEngine: CategoryLearningEngine,
     private val appLogger: AppLogger,
     private val rulesManager: NotificationRulesManager,
 ) {
 
-    /** 可在测试中替换的调度器 */
-    @Volatile
-    var testDispatcher: kotlinx.coroutines.CoroutineDispatcher? = null
-
-    /** 来源渠道 */
-    enum class Channel { NLS, A11Y, SMS }
-
-    /** 单条通知的输入项。三渠道各自构造，扔进 [process] 即可 */
-    data class Item(
-        val packageName: String,
-        val title: String,
-        val fullText: String,
-        val channel: Channel = Channel.NLS,
-        val receivedAt: Long = System.currentTimeMillis(),
-    )
-
-    private val dedupWindowMs: Long
-        get() = rulesManager.getRules().processor.dedupWindowSeconds * 1000L
-
-    private val scoreWindowMs: Long
-        get() = rulesManager.getRules().processor.scoringWindowSeconds * 1000L
-
-    /** 入库路径串行化：dedup-check + insert 必须原子，否则会双写 */
-    private val insertMutex = Mutex()
-
-    /** 评分窗口池：10s 内收集同金额的 AI 结果，取最优 */
-    private data class ScoredCandidate(
-        val item: Item,
-        val amount: Int,
-        val type: String,
-        val categoryId: Int?,
-        val categoryName: String?,
-        val categoryIcon: String?,
-        val description: String?,
-        val score: Int,
-        val isComplete: Boolean,
-        val receivedAt: Long,
-    )
-    private val scoringPool = java.util.concurrent.ConcurrentHashMap<Int, ScoredCandidate>() // key=amount
-    private val scoringJobs = java.util.concurrent.ConcurrentHashMap<Int, kotlinx.coroutines.Job>()
-    // 不走 @ApplicationScope 注入：保留 testDispatcher 入口供单测替换（bdd19ec 加 NotificationProcessorTest 时设计）。
-    // 这里自建 SupervisorJob 且不提供 cancel()——与 NLS @Singleton @ApplicationScope 在 onDestroy 被误杀的 v1.5.9 风险点不同，
-    // processorScope 仅由本类单例持有，进程退出时随 JVM 一起释放，安全。
-    private val processorScope by lazy { CoroutineScope(SupervisorJob() + (testDispatcher ?: kotlinx.coroutines.Dispatchers.IO)) }
-
-    /** 内存级已入库记录（用于跨渠道去重，比 DB 查询更快更准） */
-    private data class ProcessedEntry(val amount: Int, val channel: Channel, val packageName: String, val time: Long)
-    private val recentProcessed = java.util.concurrent.ConcurrentLinkedDeque<ProcessedEntry>()
-
-    /** 单包 AI 熔断状态：连续失败次数 + 熔断到期时刻 */
-    private data class AiBreaker(
-        val failures: Int,
-        val lastFailureAt: Long,
-        val mutedUntil: Long,
-    )
-    private val aiBreakers = java.util.concurrent.ConcurrentHashMap<String, AiBreaker>()
-
     /**
-     * 该来源是否处于 AI 熔断静音期。
+     * 处理一条预筛放行的通知。
      *
-     * 资讯/推送类 App 会把同一条内容反复 post，而 payment_signal 正则
-     * （含裸「元」「消费」等）无法把新闻标题与真实账务区分开，于是
-     * 「同一条新闻标题 6 次调 AI、5 次 5001」。
-     *
-     * 熔断按来源计数：**仅由调用方对「不在白名单」的包查询**
-     * （见 NotificationMonitorService），银行/微信/支付宝永不被静音，
-     * 避免网络抖动导致真实账单被误杀。
+     * suspend 不等窗口：评分窗口内部异步产出，本方法只登记后返回。
      */
-    fun isAiMuted(packageName: String, now: Long = System.currentTimeMillis()): Boolean {
-        val breaker = aiBreakers[packageName] ?: return false
-        if (now < breaker.mutedUntil) return true
-        // 熔断已到期：清零后重新计数，避免一次抖动就永久静音
-        if (breaker.mutedUntil > 0L) {
-            aiBreakers.remove(packageName, breaker)
-        }
-        return false
-    }
-
-    /** 记录一次 AI 调用结果，用于驱动单包熔断。 */
-    fun recordAiOutcome(packageName: String, success: Boolean, now: Long = System.currentTimeMillis()) {
-        if (success) {
-            aiBreakers.remove(packageName)
-            return
-        }
-        val previous = aiBreakers[packageName]
-        val failures = (previous?.failures ?: 0) + 1
-        val mutedUntil = if (failures >= AI_FAIL_THRESHOLD) now + AI_BREAKER_COOLDOWN_MS else 0L
-        aiBreakers[packageName] = AiBreaker(failures, now, mutedUntil)
-        if (mutedUntil > 0L) {
-            appLogger.warn(
-                "NLS",
-                "AI 熔断开启: pkg=$packageName 连续失败 $failures 次，静音 ${AI_BREAKER_COOLDOWN_MS / 1000}s"
-            )
-        }
-        // 顺手清理长时间无失败记录的条目，防 map 无限增长
-        if (aiBreakers.size > MAX_BREAKER_ENTRIES) {
-            aiBreakers.entries.removeIf { now - it.value.lastFailureAt > AI_BREAKER_COOLDOWN_MS * 4 }
-        }
-    }
-
-    /**
-     * 跨渠道去重判断（内存级）：
-     * - 不同 channel 或不同包名 + 同金额 + 60s 内 → 重复
-     * - 同 channel 同包名 → 不去重（视为真实两笔交易）
-     */
-    private fun isDuplicateAcrossChannels(amount: Int, channel: Channel, packageName: String, now: Long): Boolean {
-        // 先清过期
-        val cutoff = now - dedupWindowMs
-        recentProcessed.removeIf { it.time < cutoff }
-        // 查重：不同渠道 或 不同包名（同金额N秒内）
-        return recentProcessed.any {
-            it.amount == amount &&
-            (it.channel != channel || it.packageName != packageName) &&
-            (now - it.time) <= dedupWindowMs
-        }
-    }
-
-    private fun markProcessed(amount: Int, channel: Channel, packageName: String) {
-        recentProcessed.addLast(ProcessedEntry(amount, channel, packageName, System.currentTimeMillis()))
-    }
-
-    /**
-     * 处理一条通知：调 AI → 校验 → 后置按金额去重 → 入库 / 入待审
-     */
-    suspend fun process(item: Item) {
-        val aiEnabled = userPreferences.aiParseEnabled.first()
-        if (!aiEnabled) {
-            appLogger.info("NLS", "AI关闭，丢弃: ${item.fullText.take(30)}")
-            return
-        }
-
-        val learnedCategoryId = run {
-            // 学习规则的 key 是「商家/描述」（learnFromCorrection 全部以 description 学入），
-            // 匹配必须在完整通知文本里做 contains 词边界匹配。
-            // 之前只用 title（常为"微信支付"等泛化词）匹配，学了也命中不了，
-            // 智能分类学习在通知链路形同虚设（PR review 修复）。
-            categoryLearningEngine.matchCategory(item.fullText)
-        }
-
-        try {
-            appLogger.info("NLS", "调AI: pkg=${item.packageName} text=${item.fullText}")
-            val cleanedText = cleanMarketingSuffix(item.fullText)
-            val response = aiApi.parse(mapOf("input" to cleanedText))
-            if (response.code != 0 || response.data == null) {
-                recordAiOutcome(item.packageName, success = false)
-                // 必须带 message：5001 既可能是模型拒答也可能是超时/超长，
-                // 只打 code 时排障完全无从下手（ApiResponse.message 一直有值）。
-                appLogger.warn(
-                    "NLS",
-                    "AI失败: code=${response.code} msg=${response.message} pkg=${item.packageName}"
-                )
-                enqueueUnparsed(item, "code=${response.code}")
-                return
-            }
-            recordAiOutcome(item.packageName, success = true)
-            val items = response.data.items
-            if (items.isEmpty()) {
-                appLogger.info("NLS", "AI判定非支付，丢弃")
-                return
-            }
-
-            val aiItem = items.maxByOrNull { aiItemScore(it) } ?: return
-
-            // H5: AI返回amount<=0无意义，直接丢弃
-            if (aiItem.amount <= 0) {
-                appLogger.debug("NLS", "AI返回amount<=0，丢弃")
-                return
-            }
-
-            // M3: type无效时 fallback 为 expense（防下游非空字段崩溃）
-            val safeType = if (aiItem.type in setOf("expense", "income", "transfer")) aiItem.type else "expense"
-
-            val validation = aiResultValidator.validate(
-                amount = aiItem.amount,
-                type = aiItem.type,
-                categoryId = aiItem.categoryId,
-                description = aiItem.description,
-                // 必传：校验 5 靠它拦「金额从群名误取」的幻觉（A1）。
-                // 用清洗前的 item.fullText，与实际送 AI 的文本一致。
-                sourceText = cleanedText,
-            )
-
-            val finalCategoryId = learnedCategoryId ?: aiItem.categoryId
-
-            val isComplete = aiItem.amount > 0 &&
-                safeType in setOf("expense", "income", "transfer") &&
-                validation.isValid &&
-                (learnedCategoryId != null || (
-                    aiItem.categoryId != null &&
-                    !aiItem.categoryName.isNullOrBlank() &&
-                    aiItem.categoryName.lowercase() !in setOf("其他", "其它", "未分类", "other")
-                ))
-
-            // 构建候选项，统一进入评分窗口
-            val candidate = ScoredCandidate(
-                item = item,
-                amount = aiItem.amount,
-                type = safeType,
-                categoryId = finalCategoryId,
-                categoryName = aiItem.categoryName,
-                categoryIcon = aiItem.categoryIcon,
-                description = (aiItem.description ?: aiItem.categoryName)
-                    ?.let { sanitizeEcommerceDescription(it) },
-                score = aiItemScore(aiItem),
-                isComplete = isComplete,
-                receivedAt = item.receivedAt,
-            )
-            tryCommit(candidate)
-        } catch (e: HttpException) {
-            // B2：鉴权失败不能丢交易。
-            // 2026-10-04：token 过期时 AI 抛 401，旧实现与其他异常一并
-            // 「记一行日志就丢」，导致招行 20.00 / 交通卡 1.80 两笔真实交易
-            // 静默消失，用户无感知。改为落库标记，用户重新登录后重放。
-            recordAiOutcome(item.packageName, success = false)
-            if (e.code() == 401) {
-                enqueueAuthPending(item)
-                appLogger.warn(
-                    "NLS",
-                    "AI 鉴权失败(401)，交易转入待补偿: pkg=${item.packageName} text=${item.fullText.take(60)}"
-                )
-            } else {
-                appLogger.error("NLS", "AI HTTP 异常 ${e.code()}: ${e.message()}")
-                Timber.w(e, "AI HTTP 失败，落原文: ${item.packageName}")
-                enqueueUnparsed(item, "http=${e.code()}")
-            }
-        } catch (e: Exception) {
-            recordAiOutcome(item.packageName, success = false)
-            appLogger.error("NLS", "AI异常: ${e.message}")
-            Timber.w(e, "AI 解析失败，落原文: ${item.packageName}")
-            enqueueUnparsed(item, e.javaClass.simpleName)
-        }
-    }
-
-    /**
-     * 解析失败（非 401）时把通知原文落一行 [STATUS_RAW]。
-     *
-     * ## 为什么不是丢
-     *
-     * 「不漏账」的漏点从来不是「无网时捕获不到」——支付本身需要网络，通知在支付后
-     * 几秒到达，那时网络可用。真正的漏点是**解析失败**：旧实现里超时 / 5xx / 5001
-     * （服务端 AI 解析失败）/ 网络异常一律 `log + 丢弃`，真实交易通知静默消失，
-     * 用户毫无感知（差评「明明付了钱怎么没记上」最可能来自这里）。
-     *
-     * 因此这里只做**捕获**，不做自动重放：这类失败罕见，建调度器是为低频场景造机制。
-     * 用户在通知中心看得见这一行（列表查 `status IN ('raw','parsed')`），
-     * 单条确认走编辑对话框可手动填金额。
-     *
-     * 401 不走这里：它另有语义（进待补偿、同号重登后重放），见 [enqueueAuthPending]。
-     */
-    private suspend fun enqueueUnparsed(item: Item, reason: String) {
-        try {
-            notificationRecordDao.insert(
-                NotificationRecordEntity(
-                    packageName = item.packageName,
-                    title = item.title.ifBlank { null },
-                    content = item.fullText,
-                    status = STATUS_RAW,
-                    receivedAt = item.receivedAt,
-                )
-            )
-            appLogger.warn(
-                "NLS",
-                "AI 未解析，落原文待人工确认: reason=$reason pkg=${item.packageName} text=${item.fullText.take(60)}"
-            )
-        } catch (e: Exception) {
-            // 落库失败也不能让异常向上抛崩协程
-            appLogger.error("NLS", "原文捕获写入失败: ${e.message}")
-        }
-    }
-
-    /**
-     * 把因 401 未能解析的通知存入待补偿队列。
-     *
-     * 复用 [NotificationRecordEntity]（content 已存全文，status 是自由字符串），
-     * 状态用 `auth_pending`，不新建表 → 无需 Room migration。
-     */
-    private suspend fun enqueueAuthPending(item: Item) {
-        try {
-            notificationRecordDao.insert(
-                NotificationRecordEntity(
-                    packageName = item.packageName,
-                    title = item.title.ifBlank { null },
-                    content = item.fullText,
-                    status = STATUS_AUTH_PENDING,
-                    receivedAt = item.receivedAt,
-                )
-            )
-        } catch (e: Exception) {
-            // 落库失败也不能让异常向上抛崩协程
-            appLogger.error("NLS", "待补偿队列写入失败: ${e.message}")
+    suspend fun process(capture: Capture) {
+        when (val outcome = interpreter.read(capture)) {
+            is ParseOutcome.Disabled, is ParseOutcome.NotATransaction -> Unit
+            is ParseOutcome.Unparsed -> captureArchive.captureUnparsed(capture, outcome.reason)
+            is ParseOutcome.AuthExpired -> captureArchive.captureAuthPending(capture)
+            is ParseOutcome.Parsed -> scoredAdmission.submit(outcome.transaction) { commit(it) }
         }
     }
 
@@ -358,191 +82,70 @@ class NotificationProcessor @Inject constructor(
      * 本地数据一张未动）之后调用；换号/首次登录拿到的是 `Cleared`，队列已被一起清掉
      * ——那是另一个用户的数据，本来就不该重放。
      *
-     * 逐条重新走 [process]，解析成功会正常入库并转 confirmed/parsed；
-     * 仍失败则删除，避免死循环。
+     * 逐条重新走 [process]，解析成功会正常入库并转 confirmed/parsed；失败则留痕为 `raw`。
+     * 终态标记与「不再无限重试」由 [CaptureArchive.replay] 处理。
      */
     suspend fun replayAuthPending() {
-        val since = System.currentTimeMillis() - AUTH_PENDING_TTL_MS
-        val pending = notificationRecordDao.findAuthPending(since)
-        if (pending.isEmpty()) return
-        appLogger.info("NLS", "重放待补偿交易: ${pending.size} 条（登录已恢复）")
-        for (record in pending) {
-            try {
-                process(
-                    Item(
-                        packageName = record.packageName,
-                        title = record.title.orEmpty(),
-                        fullText = record.content,
-                        channel = Channel.NLS,
-                        receivedAt = record.receivedAt,
-                    )
+        captureArchive.replay { pending ->
+            process(
+                Capture(
+                    channel = SourceChannel.NLS,
+                    packageName = pending.packageName,
+                    title = pending.title,
+                    fullText = pending.content,
+                    receivedAt = pending.receivedAt,
                 )
-            } catch (e: Exception) {
-                appLogger.error("NLS", "待补偿重放异常: ${e.message}")
-            }
-            // 重放后无论成败都清掉这条队列记录：
-            // 成功 → 新的 confirmed/parsed 记录已建立；失败 → 不再无限重试
-            notificationRecordDao.updateStatus(record.id, STATUS_AUTH_REPLAYED, null)
-        }
-    }
-
-    companion object {
-        /** 连续失败多少次后对该来源静音 */
-        private const val AI_FAIL_THRESHOLD = 3
-
-        /** 熔断静音时长 */
-        private const val AI_BREAKER_COOLDOWN_MS = 5 * 60_000L
-
-        /** 熔断表条数上限，超过后触发过期清理 */
-        private const val MAX_BREAKER_ENTRIES = 64
-
-        /**
-         * 捕获到但没能解析的状态：通知原文已落库，金额/分类留空，等用户在通知中心手动补。
-         * 既有语义（表默认值与列表查询都在用），不是新状态。
-         */
-        const val STATUS_RAW = "raw"
-
-        /** 待补偿记录的状态：AI 因 401 未能解析，等重登录后重放 */
-        const val STATUS_AUTH_PENDING = "auth_pending"
-
-        /** 重放后的终态（不再参与重放） */
-        private const val STATUS_AUTH_REPLAYED = "auth_replayed"
-
-        /** 待补偿保留时长：超过 24h 的交易 AI 分类已过时，不再自动重放 */
-        private const val AUTH_PENDING_TTL_MS = 24 * 60 * 60 * 1000L
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // 评分窗口 + 去重 + 入库（统一抽象）
-    // ═══════════════════════════════════════════════════════════════
-
-    /**
-     * 10s 评分窗口：同金额的 AI 结果进来后比较 score，保留最优。
-     * 10s 到期后执行 commitBest()。
-     * 10s-60s 之间再来的同金额直接被 isDuplicateAcrossChannels 拦住。
-     */
-    private fun tryCommit(candidate: ScoredCandidate) {
-        val key = candidate.amount
-        val existing = scoringPool[key]
-
-        if (existing != null && (candidate.receivedAt - existing.receivedAt) <= scoreWindowMs) {
-            val sameSource = existing.item.channel == candidate.item.channel &&
-                existing.item.packageName == candidate.item.packageName
-            if (sameSource) {
-                // 同渠道同包名同金额 = 两笔真实交易（如 10s 内两杯 ¥15 咖啡）。
-                // 评分窗口的本意是合并「同一笔交易的跨渠道多视图」，不能把
-                // 同来源的两笔合并丢一笔：立即提交前一笔，为新交易开新窗口。
-                // （同一交易的重复通知更早会被内存 hash 去重 / DB 1s 去重拦掉）
-                appLogger.debug("NLS", "同来源同金额，视为两笔交易: amount=$key pkg=${candidate.item.packageName}")
-                scoringJobs[key]?.cancel()
-                scoringJobs.remove(key)
-                scoringPool.remove(key)
-                processorScope.launch {
-                    try {
-                        commitBest(existing)
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        // flush 路径异常兑底：未捕获异常会崩掉进程，必须与窗口路径同级兑底
-                        appLogger.error("NLS", "同源立即提交异常: amount=$key err=${e.message}")
-                        Timber.e(e, "NotificationProcessor same-source flush failed: amount=$key")
-                    }
-                }
-                openScoringWindow(candidate)
-                return
-            }
-            // 跨渠道同金额：同一笔交易的两个视图，比较 score 保留更好的
-            if (candidate.score > existing.score) {
-                scoringPool[key] = candidate
-                appLogger.debug("NLS", "评分替换: amount=$key newScore=${candidate.score} > oldScore=${existing.score}")
-            } else {
-                appLogger.debug("NLS", "评分丢弃: amount=$key score=${candidate.score} ≤ existing=${existing.score}")
-            }
-        } else {
-            // 首条或超过评分窗口的新交易
-            openScoringWindow(candidate)
-        }
-    }
-
-    /** 开一个新的评分窗口：N 秒后取池中候选执行 commitBest */
-    private fun openScoringWindow(candidate: ScoredCandidate) {
-        val key = candidate.amount
-        scoringPool[key] = candidate
-        scoringJobs[key]?.cancel()
-        appLogger.debug("NLS", "评分窗口启动: amount=$key score=${candidate.score} isComplete=${candidate.isComplete} channel=${candidate.item.channel}")
-        scoringJobs[key] = processorScope.launch {
-            try {
-                delay(scoreWindowMs)
-                val best = scoringPool.remove(key) ?: run {
-                    appLogger.warn("NLS", "评分窗口到期但池中无数据: amount=$key")
-                    return@launch
-                }
-                commitBest(best)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // PR 修复：commitBest 异常路径兜底。
-                // 原代码若 commitBest 抛异常会被外层 catch 静默吞掉，且
-                // scoringPool.remove(key) 在 commitBest 之前执行，所以残留
-                // 概率极低；此处加显式清理 + 日志，确保任何 future 修改
-                // （如 scoringPool.get/set 后再 commitBest）也不会留下脏数据。
-                appLogger.error("NLS", "评分提交异常: amount=$key err=${e.message}")
-                Timber.e(e, "NotificationProcessor scoring commit failed: amount=$key")
-                scoringPool.remove(key)
-            } finally {
-                scoringJobs.remove(key)
-            }
-        }
-    }
-
-    /**
-     * 10s 到期，执行去重 + 入库/待审。统一路径。
-     *
-     * ## 两段式：去重判定在锁内，写库（含一次网络往返）在锁外
-     *
-     * [insertMutex] 只保护**判定段**——去重查询 + 认领必须原子，否则同一笔交易的跨渠道
-     * 视图会被放行两次（两笔重复账）。
-     *
-     * 写库必须挪到锁外：[directInsert] 要先拿服务端确认，一次 POST 最长 15s。
-     * 若把它关在锁里，这段时间内**所有**其它通知的判定都只能排队——而通知入账是每天
-     * 几十次的核心循环，一条慢请求不该让整条流水线停摆。
-     *
-     * ## 为什么把 markProcessed 也放进判定段
-     *
-     * 标记就是「这一笔已被认领」。放在 POST **之后**会出现这样的窗口：
-     * 第一笔的 POST 还在飞、DB 里还没有 confirmed 行，此时同一笔的另一个渠道视图进来，
-     * 内存与 DB 都查不到它 → 两笔重复账。放进判定段，跨渠道视图在这段窗口内依然被拦下。
-     *
-     * ⚠️ 同渠道同包名同金额**不是**重复（两杯咖啡）：判定段会同时放行两条，
-     * 它们各有自己的 `clientId`，各自 POST 互不影响。这条边界由
-     * `NotificationProcessorTest` 的「网络期间不阻塞另一条通知」钉住。
-     */
-    private suspend fun commitBest(candidate: ScoredCandidate) {
-        appLogger.debug("NLS", "commitBest: amount=${candidate.amount} score=${candidate.score} isComplete=${candidate.isComplete}")
-
-        // ── 判定段（锁内）：去重 + 认领，必须原子 ──
-        val admitted = insertMutex.withLock {
-            // 跨渠道去重（内存）
-            if (isDuplicateAcrossChannels(candidate.amount, candidate.item.channel, candidate.item.packageName, candidate.receivedAt)) {
-                appLogger.debug("NLS", "去重(内存): channel=${candidate.item.channel} amount=${candidate.amount}")
-                return@withLock false
-            }
-            // 跨渠道去重（DB 兜底）
-            val dbDuplicate = notificationRecordDao.findRecentConfirmedFromOtherChannel(
-                candidate.amount, candidate.receivedAt - dedupWindowMs, candidate.item.packageName
             )
-            if (dbDuplicate != null) {
-                appLogger.debug("NLS", "去重(DB): amount=${candidate.amount}")
-                return@withLock false
-            }
-            markProcessed(candidate.amount, candidate.item.channel, candidate.item.packageName)
-            true
         }
-        if (!admitted) return
+    }
 
-        // ── 写入段（锁外）：含一次网络往返，不能占着锁 ──
-        if (candidate.isComplete && directInsert(
-                item = candidate.item,
+    /**
+     * 窗口产出 → 入库或待审。
+     *
+     * 信息完整 → 送服务端确认（[RecordIntake]）；**信息完整但服务端没确认**（没网 /
+     * 业务错误 / 鉴权）与信息不完整走同一条降级路：通知原文进待审池，信息不丢。
+     */
+    private suspend fun commit(candidate: ParsedTransaction) {
+        if (candidate.isComplete && directInsert(candidate)) {
+            appLogger.info(
+                "NLS",
+                "✓入库: ¥${"%.2f".format(candidate.amount / 100.0)} ${candidate.description} " +
+                    "type=${candidate.type} score=${candidate.score} channel=${candidate.capture.channel}"
+            )
+            // 分类学习已下沉到入账 module（RecordIntent.NotificationAuto 的学习步骤）：
+            // 学习必须在「服务端确认之后」才发生，而成败只有 module 内部知道。
+        } else {
+            if (candidate.isComplete) {
+                appLogger.warn("NLS", "→服务端未确认，降级待审: amount=${candidate.amount} score=${candidate.score}")
+            } else {
+                appLogger.info(
+                    "NLS",
+                    "→待审: amount=${candidate.amount} type=${candidate.type} " +
+                        "cat=${candidate.categoryName} score=${candidate.score}"
+                )
+            }
+            insertPendingReview(candidate)
+        }
+    }
+
+    /**
+     * 信息完整，直接入库 + 发轻通知。
+     *
+     * 本函数只剩「把候选翻译成入账意图」：clientId 生成、entity 装配、送服务端确认、
+     * 跨表写入、刷 streak / widget、隐私档与回执、分类学习全部由 [RecordIntake] 承担。
+     * 想看入账行为请看 `data/record/RecordIntakeImpl`。
+     *
+     * @return `true` = 服务端确认、本地已落；`false` = 没记上，调用方必须降级进待审池
+     */
+    private suspend fun directInsert(candidate: ParsedTransaction): Boolean {
+        val outcome = recordIntake.intake(
+            RecordIntent.NotificationAuto(
+                captured = CapturedNotification(
+                    packageName = candidate.capture.packageName,
+                    title = candidate.capture.title,
+                    content = candidate.capture.fullText,
+                    receivedAt = candidate.capture.receivedAt,
+                ),
                 amount = candidate.amount,
                 type = candidate.type,
                 categoryId = candidate.categoryId,
@@ -550,140 +153,22 @@ class NotificationProcessor @Inject constructor(
                 categoryIcon = candidate.categoryIcon,
                 description = candidate.description,
             )
-        ) {
-            appLogger.info("NLS", "✓入库: ¥${"%.2f".format(candidate.amount/100.0)} ${candidate.description} type=${candidate.type} score=${candidate.score} channel=${candidate.item.channel}")
-            // 分类学习已下沉到入账 module（RecordIntent.NotificationAuto 的学习步骤）：
-            // 学习必须在「服务端确认之后」才发生，而成败只有 module 内部知道。
-        } else {
-            // 信息不完整 → 待审；**信息完整但服务端没确认**（没网 / 业务错误 / 鉴权）
-            // 也走同一条路：一个字节都没落库，通知原文还在，用户在通知中心看得见、
-            // 能手动确认，信息不丢。
-            if (candidate.isComplete) {
-                appLogger.warn("NLS", "→服务端未确认，降级待审: amount=${candidate.amount} score=${candidate.score}")
-            } else {
-                appLogger.info("NLS", "→待审: amount=${candidate.amount} type=${candidate.type} cat=${candidate.categoryName} score=${candidate.score}")
-            }
-            insertPendingReview(candidate.item, candidate.amount, candidate.type, candidate.categoryName, candidate.description)
-        }
-    }
-
-    /**
-     * 清理通知文本中的营销后缀，避免 AI 误识别。
-     * 支付宝"交易提醒"格式：真实交易信息 + "点击领取XX" 营销。
-     * 截掉"点击"之后的所有内容。
-     */
-    private fun cleanMarketingSuffix(text: String): String {
-        val rules = rulesManager.getRules().processor
-        // 1. 直接截断的营销前缀（从云控规则读取）
-        for (cutoff in rules.marketingSuffixCutoffs) {
-            val idx = text.indexOf(cutoff)
-            if (idx > 0) return text.substring(0, idx).trim()
-        }
-        // 2. 营销词首次出现处截断。
-        //    原实现要求「逗号**之后**才看营销词」，而营销文案的分隔符常常是换行/空格：
-        //    「…12包抽纸0元领千份放量！\n实付159元再享40元红包返利>」里的 \n 不是「，」
-        //    → commaIdx = -1 → 整段营销文案原样送 AI，把促销推送记成真实支出。
-        for (keyword in rules.marketingCommaKeywords) {
-            val idx = text.indexOf(keyword)
-            if (idx > 0) return text.substring(0, idx).trim()
-        }
-        return text
-    }
-
-    /**
-     * 电商平台购物描述脱敏：将包含商品详情的描述简化为"XX购物"。
-     * 避免具体购买商品名暴露在记账记录中。
-     */
-    private fun sanitizeEcommerceDescription(description: String): String {
-        val ecommerceMap = mapOf(
-            "拼多多" to "拼多多购物",
-            "淘宝" to "淘宝购物",
-            "天猫" to "天猫购物",
-            "京东" to "京东购物",
-            "闲鱼" to "闲鱼购物",
-            "唯品会" to "唯品会购物",
-            "得物" to "得物购物",
-            "抖音商城" to "抖音购物",
-            "抖音电商" to "抖音购物",
-        )
-        for ((keyword, replacement) in ecommerceMap) {
-            if (description.contains(keyword)) {
-                return replacement
-            }
-        }
-        return description
-    }
-
-    /**
-     * AI 返回多条时选最优：按信息完整度评分。
-     */
-    private fun aiItemScore(item: AiParsedItemDto): Int {
-        var score = 0
-        if (item.amount > 0) score += 1
-        if (item.type in setOf("expense", "income", "transfer")) score += 1
-        if (item.categoryId != null && !item.categoryName.isNullOrBlank() &&
-            item.categoryName.lowercase() !in setOf("其他", "其它", "未分类", "other")) score += 2
-        if (!item.description.isNullOrBlank()) score += 1
-        return score
-    }
-
-    /**
-     * 信息完整，直接入库 + 发轻通知
-     *
-     * 本函数只剩「把 AI 候选项翻译成入账意图」：clientId 生成、entity 装配、
-     * 送服务端确认、跨表写入、刷 streak / widget、隐私档与回执、分类学习全部由
-     * [RecordIntake] 承担（架构候选 1 收口）。想看入账行为请看 `data/record/RecordIntakeImpl`。
-     *
-     * @return `true` = 服务端确认、本地已落；`false` = 没记上，调用方必须降级进待审池
-     */
-    private suspend fun directInsert(
-        item: Item,
-        amount: Int,
-        type: String,
-        categoryId: Int?,
-        categoryName: String? = null,
-        categoryIcon: String? = null,
-        description: String?,
-    ): Boolean {
-        val outcome = recordIntake.intake(
-            RecordIntent.NotificationAuto(
-                captured = CapturedNotification(
-                    packageName = item.packageName,
-                    title = item.title,
-                    content = item.fullText,
-                    receivedAt = item.receivedAt,
-                ),
-                amount = amount,
-                type = type,
-                categoryId = categoryId,
-                categoryName = categoryName,
-                categoryIcon = categoryIcon,
-                description = description,
-            )
         )
         return outcome.recorded
     }
 
-    /**
-     * AI 有结果但信息不完整 → 进待审池 + 发确认通知
-     */
-    private suspend fun insertPendingReview(
-        item: Item,
-        amount: Int,
-        type: String,
-        categoryName: String?,
-        description: String?,
-    ) {
+    /** AI 有结果但信息不完整（或服务端未确认）→ 进待审池 + 发确认通知 */
+    private suspend fun insertPendingReview(candidate: ParsedTransaction) {
         val recordId = notificationRecordDao.insert(
             NotificationRecordEntity(
-                packageName = item.packageName,
-                title = item.title.ifBlank { null },
-                content = item.fullText,
-                parsedAmount = amount.takeIf { it > 0 },
-                parsedType = type.takeIf { it in setOf("expense", "income", "transfer") },
-                parsedDescription = description ?: categoryName,
-                status = "parsed",
-                receivedAt = item.receivedAt,
+                packageName = candidate.capture.packageName,
+                title = candidate.capture.title.ifBlank { null },
+                content = candidate.capture.fullText,
+                parsedAmount = candidate.amount.takeIf { it > 0 },
+                parsedType = candidate.type.takeIf { it in setOf("expense", "income", "transfer") },
+                parsedDescription = candidate.description ?: candidate.categoryName,
+                status = STATUS_PARSED,
+                receivedAt = candidate.capture.receivedAt,
             )
         )
 
@@ -691,10 +176,15 @@ class NotificationProcessor @Inject constructor(
         NotificationHelper.showConfirmNotification(
             context = context,
             recordId = recordId,
-            amount = amount.takeIf { it > 0 } ?: 0,
-            description = description ?: categoryName,
-            source = NotificationSourceMapping.friendlyName(item.packageName, rulesManager),
+            amount = candidate.amount.takeIf { it > 0 } ?: 0,
+            description = candidate.description ?: candidate.categoryName,
+            source = NotificationSourceMapping.friendlyName(candidate.capture.packageName, rulesManager),
             privacyMode = privacyMode,
         )
+    }
+
+    private companion object {
+        /** AI 有结果、待用户确认（通知中心列表读 `status IN ('raw','parsed')`）。 */
+        const val STATUS_PARSED = "parsed"
     }
 }

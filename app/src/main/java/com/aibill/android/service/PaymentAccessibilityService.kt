@@ -552,15 +552,7 @@ class PaymentAccessibilityService : AccessibilityService() {
                     return@launch
                 }
                 val passed = (verdict as Verdict.Pass).capture
-                notificationProcessor.process(
-                    NotificationProcessor.Item(
-                        packageName = passed.packageName,
-                        title = passed.title,
-                        fullText = passed.fullText,
-                        channel = NotificationProcessor.Channel.A11Y,
-                        receivedAt = passed.receivedAt,
-                    )
-                )
+                notificationProcessor.process(passed)
             }
         } finally {
             // rootNode 不再需要手动 recycle (Android 14+ deprecated)

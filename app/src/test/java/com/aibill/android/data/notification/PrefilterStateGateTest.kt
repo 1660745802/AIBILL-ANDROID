@@ -8,7 +8,7 @@ import com.aibill.android.domain.notification.NotificationRuleSnapshot
 import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
-import com.aibill.android.service.NotificationProcessor
+import com.aibill.android.domain.notification.AiCircuitBreaker
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -53,8 +53,8 @@ class PrefilterStateGateTest {
 
     private fun prefilter(
         dao: NotificationRecordDao = PrefilterTestHarness.emptyDao(),
-        processor: NotificationProcessor = mockk(relaxed = true),
-    ): NotificationPrefilterImpl = PrefilterTestHarness.newPrefilter(rules, dao = dao, processor = processor)
+        circuitBreaker: AiCircuitBreaker = mockk(relaxed = true),
+    ): NotificationPrefilterImpl = PrefilterTestHarness.newPrefilter(rules, dao = dao, circuitBreaker = circuitBreaker)
             as NotificationPrefilterImpl
 
     private fun reason(verdict: Verdict): BlockReason {
@@ -205,9 +205,9 @@ class PrefilterStateGateTest {
     @Test
     @DisplayName("熔断只拦 NLS 的未知来源；已知支付 App 与 SMS/A11Y 不受影响")
     fun `熔断作用域`() = runTest {
-        val processor = mockk<NotificationProcessor>(relaxed = true)
-        every { processor.isAiMuted(any(), any()) } returns true
-        val prefilter = prefilter(processor = processor)
+        val circuitBreaker = mockk<AiCircuitBreaker>(relaxed = true)
+        every { circuitBreaker.isMuted(any(), any()) } returns true
+        val prefilter = prefilter(circuitBreaker = circuitBreaker)
 
         // NLS + 未知来源 → 拦
         assertEquals(
@@ -234,9 +234,9 @@ class PrefilterStateGateTest {
     @Test
     @DisplayName("未熔断时不影响放行")
     fun `未熔断不拦`() = runTest {
-        val processor = mockk<NotificationProcessor>(relaxed = true)
-        every { processor.isAiMuted(any(), any()) } returns false
-        assertTrue(prefilter(processor = processor).evaluate(capture(now = 1_000L)) is Verdict.Pass)
+        val circuitBreaker = mockk<AiCircuitBreaker>(relaxed = true)
+        every { circuitBreaker.isMuted(any(), any()) } returns false
+        assertTrue(prefilter(circuitBreaker = circuitBreaker).evaluate(capture(now = 1_000L)) is Verdict.Pass)
     }
 
     // ── 规则来源可注入：判据链每次都问注入的源，云控代际变化才能即时生效 ──

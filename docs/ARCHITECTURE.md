@@ -76,6 +76,10 @@ com.aibill/android/
 | **LocalDataOwnership**（本地归属） | 哪些表归 server × account、三种处置 | `currentOwnership` / `dispose(intent)` |
 | **RecordUndo**（撤销） | 「这笔还撤不撤得掉」的判据与文案 | `undo(clientId): UndoOutcome` |
 
+> 通知核心循环另有 4 个**策略 module**（解析与校验 / 评分窗口与判重 / 捕获与补偿 / AI 熔断）。
+> 它们不是「收口」（没有分散的重复入口），而是把原先挤在 `NotificationProcessor` 一个类里的
+> 独立策略各自拆出来，形状与归属见 §2.4。
+
 **跨表写入**（`data/record/RecordWriter.kt`）：`RoomRecordWriter`（生产，Room 真事务）/
 `DirectRecordWriter`（单测）。两个 adapter 是为了换回可测性——mockk 跑不动 `withTransaction` 的
 suspend lambda。**测试里跑的是 `DirectRecordWriter`，不提供原子性，禁止接到生产**。
@@ -103,27 +107,44 @@ AI 自动入账的 `source_detail` 走云控来源名映射、其余走硬编码
 ### 2.4 通知入账（核心差异化能力）
 
 ```
-信号源 + 平台翻译（adapter 只做这件事）
+捕获层（adapter 只做平台翻译）
   NLS: StatusBarNotification.extras → 清洗/拼全文 → Capture
   SMS: SmsMessage[] 拼接 → Capture
   A11Y: 节点树三重条件 + 8s 防抖 + 金额|商家|页面 冷却 → Capture
         ↓
-L1 预筛（三渠道同一套文本判据）
+L1 预筛 NotificationPrefilter（三渠道同一套文本判据 + 每源状态）
   0 自身通知 → 1 内存去重(5s)【NLS】 → 2 空文本 → 3 系统分组摘要
   → 4 日报汇总 → 5 促销句式 → 6 营销词 → 7 账务判据
-  → 8 长窗内容记忆(5min)【NLS】 → 9 AI 熔断【NLS】 → 10 DB 1s 去重【NLS】
+  → 8 长窗内容记忆(5min)【NLS】 → 9 AI 熔断【NLS，仅查 AiCircuitBreaker】 → 10 DB 1s 去重【NLS】
         ↓
-L2 评分窗口 + 跨渠道去重（NotificationProcessor，60s 窗口）
-  10s 内同金额择优；同渠道同包名同金额 = 两笔真交易
+L2 解析与校验 NotificationInterpreter
+  CategoryLearningEngine 命中 → 直接给分类；否则 AI /api/ai/parse
+  → AiResultValidator 校验 → 产出候选，或明确返回 Unparsed / AuthExpired / NotATransaction
         ↓
-L3 解析：CategoryLearningEngine 命中 → 直接给分类；否则 AI /api/ai/parse
-  → AiResultValidator 校验 → 401 则落 auth_pending 等同号重登重放
+L3 评分窗口 + 跨渠道判重 ScoredAdmission（60s 窗口）
+  10s 内同金额择优；同渠道同包名同金额 = 两笔真交易；跨渠道 60s 只留最优
         ↓
-L4 入库策略：信息完整 → 送服务端确认 → 入账 + 回执（带撤销）；
-   缺信息**或服务端没确认**（没网 / 业务错误 / 鉴权）→ 待审池 + 确认通知；
-   AI 判定非账（空 items）→ 丢弃；**AI 没能解析**（超时 / 5xx / 5001 / 网络异常）
-   → 原文落 `raw` 行（通知中心看得见、可手动补金额；不做自动重放）
+L4 路由 NotificationProcessor（协调者）
+  信息完整 → RecordIntake 送服务端确认 → 入账 + 回执（带撤销）
+  缺信息**或服务端没确认**（没网 / 业务错误 / 鉴权）→ 待审池 + 确认通知
+  AI 判定非账（空 items）→ 丢弃
+  **AI 没能解析**（超时 / 5xx / 5001 / 网络异常）→ CaptureArchive.captureUnparsed
+    → 原文落 `raw` 行（通知中心看得见、可手动补金额；不做自动重放）
+  401 → CaptureArchive.captureAuthPending → 同号重登后 CaptureArchive.replay 重放
 ```
+
+**核心循环的 4 个策略 module**（interface 在 `domain/notification/`、实现在 `data/notification/`；
+`NotificationProcessor` 只负责按上面的顺序接线并路由）：
+
+| module | 独占什么 | interface |
+|---|---|---|
+| **NotificationInterpreter** | 调 AI、`AiResultValidator`、营销后缀截断、电商描述脱敏、候选评分、分类学习命中、AI 总闸 | `read(capture): ParseOutcome` |
+| **ScoredAdmission** | 同金额候选的时间窗择优、60s 跨渠道判重、认领 | `submit(candidate, onAdmitted)` |
+| **CaptureArchive** | 未解析原文的落库语义、401 重放、终态 | `captureUnparsed` / `captureAuthPending` / `replay` |
+| **AiCircuitBreaker** | 每来源连续失败计数与静音窗口（白名单判据与**查询时机**仍在预筛） | `isMuted(source, now)` / `recordOutcome(source, ok, now)` |
+
+**时间常数与顺序逐字不变**：评分窗口 10s、跨渠道去重 60s、熔断 3 次 / 5min、内容去重 5s、
+长窗记忆 5min、DB 1s（后四道只在 NLS）。
 
 **判定顺序本身是行为**：日报/促销必须早于营销词（它们含「支出」会触发强交易特征豁免，词表拦不住）。
 

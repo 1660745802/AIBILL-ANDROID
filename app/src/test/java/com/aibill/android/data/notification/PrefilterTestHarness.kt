@@ -2,12 +2,12 @@ package com.aibill.android.data.notification
 
 import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
+import com.aibill.android.domain.notification.AiCircuitBreaker
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.service.A11yRules
 import com.aibill.android.service.AlipayRules
 import com.aibill.android.service.NlsRules
-import com.aibill.android.service.NotificationProcessor
 import com.aibill.android.service.NotificationRules
 import com.aibill.android.service.PerPackageRule
 import com.aibill.android.service.ProcessorRules
@@ -48,13 +48,13 @@ internal object PrefilterTestHarness {
         rules: NotificationRules,
         ownPackage: String = OWN_PACKAGE,
         dao: NotificationRecordDao = emptyDao(),
-        processor: NotificationProcessor = mockk(relaxed = true),
+        circuitBreaker: AiCircuitBreaker = mockk(relaxed = true),
         generation: Int = 0,
     ): NotificationPrefilter = newPrefilterWithSource(
         source = InMemoryNotificationRuleSource(rules, generation),
         ownPackage = ownPackage,
         dao = dao,
-        processor = processor,
+        circuitBreaker = circuitBreaker,
     )
 
     /** 直接注入任意规则源（用于「云控换代后判据立刻变」这类用例）。 */
@@ -62,7 +62,7 @@ internal object PrefilterTestHarness {
         source: NotificationRuleSource,
         ownPackage: String = OWN_PACKAGE,
         dao: NotificationRecordDao = emptyDao(),
-        processor: NotificationProcessor = mockk(relaxed = true),
+        circuitBreaker: AiCircuitBreaker = mockk(relaxed = true),
     ): NotificationPrefilter {
         val context = mockk<Context>(relaxed = true)
         every { context.packageName } returns ownPackage
@@ -71,7 +71,7 @@ internal object PrefilterTestHarness {
             ruleSource = source,
             notificationRecordDao = dao,
             appLogger = AppLogger(mockk(relaxed = true)),
-            processor = processor,
+            circuitBreaker = circuitBreaker,
         )
     }
 

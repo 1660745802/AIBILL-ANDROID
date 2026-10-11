@@ -141,18 +141,9 @@ class NotificationMonitorService : NotificationListenerService() {
         )
 
         if (verdict !is Verdict.Pass) return
-        val passed = verdict.capture
 
-        // 交给 Processor（AI + 评分窗口 + 跨渠道金额去重）
-        notificationProcessor.process(
-            NotificationProcessor.Item(
-                packageName = passed.packageName,
-                title = passed.title,
-                fullText = passed.fullText,
-                channel = NotificationProcessor.Channel.NLS,
-                receivedAt = passed.receivedAt,
-            )
-        )
+        // 交给协调者（解析 → 评分窗口 + 跨渠道金额去重 → 入库/待审）
+        notificationProcessor.process(verdict.capture)
     }
 
     /**

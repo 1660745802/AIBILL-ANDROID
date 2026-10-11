@@ -19,8 +19,9 @@ package com.aibill.android.domain.notification
  * - 本 module 回答「**要不要写**」，实现 `data/notification/NotificationPrefilterImpl`；
  * - 入账 module（[com.aibill.android.domain.record.RecordIntake]）回答「**怎么写**」。
  *
- * 下游（AI 解析、评分窗口、跨渠道去重、`AiResultValidator`、`auth_pending` 重放）
- * 属于 [com.aibill.android.service.NotificationProcessor]，本 module 一律不碰。
+ * 下游（AI 解析与校验、评分窗口、跨渠道去重、未解析原文捕获、`auth_pending` 重放）
+ * 各是一个独立 module，由 [com.aibill.android.service.NotificationProcessor] 接线调度，本 module 一律不碰。
+ * 熔断也只在这里**查询**，状态由 `domain/notification/AiCircuitBreaker` 独占。
  *
  * ## 作用域：判据三渠道一致，状态闸只对 NLS
  *
@@ -74,7 +75,7 @@ data class Capture(
 /** 判定结果。放行时原样回传 [Capture]，调用方不必自己留着。 */
 sealed interface Verdict {
 
-    /** 值得当账，交给下游 `NotificationProcessor.process`。 */
+    /** 值得当账，交给下游 [com.aibill.android.service.NotificationProcessor.process]。 */
     data class Pass(val capture: Capture) : Verdict
 
     /** 不值得当账。[reason] 供测试与日志定位，[detail] 是人读的现场信息。 */
