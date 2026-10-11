@@ -307,12 +307,19 @@ sealed class AuthEvent {
             ├─ YES → 直接调 API 入库 + 写本地缓存 (syncStatus = "synced")
             └─ NO  → 存 Room (syncStatus = "pending", 生成 client_id)
                               ↓
-                    NetworkMonitor 监听到「离线→在线」→ 排入 SyncWorker
+                    ★ 落库那一刻立刻排一次 SyncWorker（见下「触发时机」）
                               ↓
                     逐条 POST /api/transactions (幂等)
                               ↓
                     成功 → "synced" / 401 → 中断等重登（剩余保持 pending）/ 其他失败 → "failed"
 ```
+
+> **触发时机不止一条**（完整清单见 [§6.3](#63-workmanager-调度)）。其中「落库即排」是主路径：
+> 记账请求因网络失败而落离线时，本进程的网络**并未发生跳变**，此时若只靠
+> `NetworkMonitor` 的跳变监听，这笔账会一直躺在队列里，直到用户手动点同步或进程重启
+> ——而 README 与 Home 待同步横幅都在承诺「联网后会自动补传」。
+> 其余触发点（网络跳变、App 启动、通知入账、通知中心确认、401 后同账号重登）
+> 是**兜底**，用于覆盖进程被杀期间的积压。完整取舍见 `createTransactionOffline` 的 KDoc。
 
 ### 6.2 SyncWorker 要点
 
@@ -348,6 +355,37 @@ sealed class AuthEvent {
 > （`SyncQueueStatus` → `bannerVariantOf`，Failed 档无按钮）——
 > 指引一个用户做不到的动作就是新的谎报。处置能力待后续
 > 「failed 明细页（逐行重试/删除）」切片解锁，届时该档才应拿到按钮并升级为 danger 警告色。
+
+> **⚠️ 已知缺口：`synced` 行只增不减，存储无上限。**
+> `PendingTransactionDao.cleanSyncedBefore(before)` 已在 DAO 定义，但**零调用点**
+> ——从没有接线。每笔同步成功的记录永久留在 `pending_transactions` 表里。
+> 该方法原先也被视为「撤销三态修好之后再接线」的候选项，因为过早启用可能激活历史
+> `keyword` 兜底路径（见 `AutoRecordActionReceiver` KDoc 提及）；该前提现已满足
+> （撤销三态与 R-Y/R-Z 补偿均已在 `804a23d` 修好），但**本次未接线**——
+> 仅陈述该存储事实，接线时需确认清理窗口（多久前的 `synced` 可删）与
+> 不误删在途补偿场景。类似地 `NotificationRecordDao.cleanIgnoredBefore` /
+> `cleanAuthPendingBefore` 亦为定义未调用。
+
+### 6.3 WorkManager 调度
+
+| Worker | 类型 | 调度 | 触发时机 |
+|---|---|---|---|
+| SyncWorker | **OneTime** | NetworkType.CONNECTED + APPEND_OR_REPLACE | **① 落离线时即刻排**（`createTransactionOffline` / `ExternalActionReceiver.handleAutoConfirmRecord` 写完 pending 后）；② `NetworkMonitor` 监听「离线→在线」跳变；③ App 启动（`AiBillApp.scheduleWorkers`）；④ 通知自动记账（`NotificationProcessor`）；⑤ 通知中心确认（`NotificationCenterViewModel`）；⑥ `NotificationActionReceiver` 处理待确认通知；⑦ 用户手动点同步（`TransactionRepository.syncPending`）；⑧ 同账号重新登录后（`onSameAccountRelogin` 重置 401 记录并主动排） |
+| RulesSyncWorker | Periodic | NetworkType.CONNECTED | 拉取云端规则（ETag/304） |
+| UpdateCheckWorker | Periodic | NetworkType.CONNECTED | GitHub Release 检查 |
+| NlsHealthCheckWorker | Periodic | 通知监听断连恢复 |
+| A11yHealthCheckWorker | Periodic | 无障碍服务健康检查 |
+
+> ⚠️ **SyncWorker 是 OneTime，不是 Periodic，也没有定时兜底。**
+> 离线队列完全依赖上表列出的触发点，其中最关键的是 `NetworkMonitor`
+> （由 `AiBillApp` 在启动时注入以触发 NetworkCallback 注册）。
+> `registerNetworkCallback` 会**立即**回调一次当前网络状态，因此「App 启动时已联网」
+> 也能把积压的 pending 队列排空。
+> 若 `NetworkMonitor` 未被注入，离线记账将**永远不会**自动同步。
+
+**Application 启动调度幂等**：`AiBillApp.scheduleWorkers()` 调用多次不会重复创建任务（各 Worker 用 `KEEP` 策略）。
+
+---
 
 ### 6.4 登录 / 换号时的本地数据处置（数据安全关键路径）
 
@@ -386,27 +424,6 @@ sealed class AuthEvent {
 > `NetworkMonitor` 会在 App 启动时排同步（这是预期行为），若不加此守卫，
 > 未登录状态下每条 pending 都会拿到 401 被误标 `failed`，
 > 而它们本来可以在用户登录后继续上传。
-
-### 6.3 WorkManager 调度
-
-| Worker | 类型 | 调度 | 触发时机 |
-|---|---|---|---|
-| SyncWorker | **OneTime** | NetworkType.CONNECTED + APPEND_OR_REPLACE | `NetworkMonitor` 监听到「离线→在线」跳变；通知自动记账；通知中心确认；用户手动点同步；同账号重新登录后 |
-| RulesSyncWorker | Periodic | NetworkType.CONNECTED | 拉取云端规则（ETag/304） |
-| UpdateCheckWorker | Periodic | NetworkType.CONNECTED | GitHub Release 检查 |
-| NlsHealthCheckWorker | Periodic | 通知监听断连恢复 |
-| A11yHealthCheckWorker | Periodic | 无障碍服务健康检查 |
-
-> ⚠️ **SyncWorker 是 OneTime，不是 Periodic，也没有定时兜底。**
-> 离线队列完全依赖上表列出的触发点，其中最关键的是 `NetworkMonitor`
-> （由 `AiBillApp` 在启动时注入以触发 NetworkCallback 注册）。
-> `registerNetworkCallback` 会**立即**回调一次当前网络状态，因此「App 启动时已联网」
-> 也能把积压的 pending 队列排空。
-> 若 `NetworkMonitor` 未被注入，离线记账将**永远不会**自动同步。
-
-**Application 启动调度幂等**：`AiBillApp.scheduleWorkers()` 调用多次不会重复创建任务（各 Worker 用 `KEEP` 策略）。
-
----
 
 ## 七、数据模型
 
@@ -532,3 +549,33 @@ sealed class AuthEvent {
 成功 = Toast / 数据刷新 / 页面跳转；失败 = Snackbar + 错误信息 + 重试按钮；破坏性操作（删除/退出）= 确认弹窗或撤销机制；加载中 = `LoadingState`；空列表 = `EmptyState`（矢量图标 + 邀请行动文案）。
 
 **UI 层的实现约定详见 [UI-DESIGN.md](UI-DESIGN.md)**：设计令牌、语义色（红=支出/绿=收入，明暗自适应）、等宽数字排版、共享组件清单、卡片数量上限、动态取色为何默认关闭。
+
+---
+
+## 十一、已知缺口与技术债
+
+本节集中记录**已知但未修**的问题，避免它们散落在各处 KDoc 里无人发现。
+每条都给出触发条件与「为何暂不修」，新增时请一并补上代码侧交叉引用。
+
+### 11.1 用户可见的缺口
+
+| # | 缺口 | 触发条件 | 现状判定 | 出处 |
+|---|---|---|---|---|
+| 1 | `failed` 行无任何逐行 UI 处置入口（不可查看/删除/重试） | 队列里存在 `failed` | 横幅只作状态陈述、不指引；待「failed 明细页」切片 | §6.2 |
+| 2 | 补偿删除失败无重试队列 | 撤销时服务端删除失败 | 仅 error 日志对账，可能留服务端孤儿账 | `AutoRecordActionReceiver` |
+| 3 | 跨服务器 `userId` 命名空间碰撞 | 登出态换服务器 + 两端 userId 相同（自建部署常见） | 已做的都是症状级处理（补表/补警告），**根因**（身份与本地缓存无 server 作用域）未修 | §6.4 |
+| 4 | `ServerConfigUiState.unsyncedCount` 是 `init` 快照 | 进入页面时队列为空、期间后台落 pending、用户点保存 | 有竞态窗口可致「无警告即清空」；按钮需 `isConnected` 才可点，窗口极窄，定为低优先 | `ServerConfigViewModel` |
+
+### 11.2 认知陷阱（不改会误导后来者）
+
+- `PendingTransactionDao.getPendingCount()` **生产零调用**——它只数 `pending`，是全仓最容易被误用的方法。需要 `pending + failed` 时用 `getAnyUnsyncedCount()`（`ServerConfigViewModel` 用例）与 `SyncQueueStatus`（横幅用）。
+- `SyncWorker` 尾部注释「检查剩余 pending（含 failed 状态）数……则 retry」易被误读成 `failed` 会被重试。实际 `getAllPending()` 只捞 `pending`，且空队列时 `doWork` 在计算该计数**之前**就早退 `Result.success()`。
+- `TransactionRepository.syncPending()` 返回的 `Success` **只代表已入队**，不代表已上传；`SyncScheduler.scheduleSyncIfNeeded` 同理。不得据此写「已同步/已上传」。
+
+### 11.3 测试基建的技术债
+
+- `PendingTransactionDao.cleanSyncedBefore` 等三个「清理」方法定义未调用（存储无上限，见 §6.2）。
+- `HomeViewModelTest` 用 5 个非 relaxed mock 打桩 `init` 的四路 `refresh()`；`init` 再新增任何调用都会让全部用例因 `no answer found` 变红（红因与被测行为无关）。
+- **Hilt 门禁挡住 receiver/service 的可测性**：`Hilt_*` 生成类在 `onReceive` / `goAsync()` 均 `inject()`，而本工程 Robolectric 给不出 `@HiltAndroidApp` 的 `Application`（`Application::class` 抛 Hilt 前置条件；`AiBillApp::class` 抛 `AndroidKeyStore not found`）。为此 `ExternalActionReceiver` 把 autoConfirm 块提取为 `internal suspend fun` 才能测（先例：`AutoRecordActionReceiver.handleUndo`）。根治需引入 `hilt-android-testing` + `HiltTestApplication`（新增依赖，需单独立项）。
+- `AutoRecordActionReceiverUndoTest` 的约束断言（禁「上传/服务器/流水页」）未覆盖 `MSG_NOT_FOUND` 分支；现状文案合规，等值双写断言兜底。
+- `ExternalActionReceiver` 的「权限被拒」与「autoConfirm=false」两条「不排同步」分支仍不可测（本切片未改动，靠 review 把守）。
