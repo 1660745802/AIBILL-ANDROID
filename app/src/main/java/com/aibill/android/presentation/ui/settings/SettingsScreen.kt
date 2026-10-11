@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Dns
@@ -91,6 +92,7 @@ fun SettingsScreen(
     val notificationPrivacy by viewModel.notificationPrivacy.collectAsStateWithLifecycle()
     val appLockEnabled by viewModel.appLockEnabled.collectAsStateWithLifecycle()
     val quickEntryEnabled by viewModel.quickEntryEnabled.collectAsStateWithLifecycle()
+    val aiParseEnabled by viewModel.aiParseEnabled.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
 
@@ -184,6 +186,14 @@ fun SettingsScreen(
                     subtitle = "通知中金额显示为 ¥***",
                     checked = notificationPrivacy,
                     onCheckedChange = { viewModel.onNotificationPrivacyChanged(it) },
+                )
+                GroupedDivider()
+                SwitchRow(
+                    icon = Icons.Default.AutoAwesome,
+                    title = "通知 AI 解析",
+                    subtitle = "关闭后停止通知自动记账，通知原文不再送服务端解析",
+                    checked = aiParseEnabled,
+                    onCheckedChange = { viewModel.onAiParseChanged(it) },
                 )
                 GroupedDivider()
                 SwitchRow(

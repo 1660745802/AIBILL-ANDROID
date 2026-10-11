@@ -89,6 +89,16 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**
+     * 通知 AI 解析总闸（隐私选项，默认开启）。
+     *
+     * 关闭后 [com.aibill.android.service.NotificationProcessor] 对**每一条**通知直接返回，
+     * 即不再自动记账（AI 是通知解析的必要环节），同时通知原文不再送往服务端 AI。
+     * 文案必须如实说明这个后果，不能写成「关闭 AI 优化」。
+     */
+    val aiParseEnabled: StateFlow<Boolean> = userPreferences.aiParseEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    /**
      * Material You 动态取色（Android 12+ 跟随壁纸）。
      *
      * 默认关闭：记账 App 的 primary（品牌青绿）与「支出红 / 收入绿」是一整套语义契约，
@@ -137,6 +147,13 @@ class SettingsViewModel @Inject constructor(
             userPreferences.setQuickEntryEnabled(enabled)
             if (enabled) QuickEntryService.start(context) else QuickEntryService.stop(context)
         }
+    }
+
+    /**
+     * 切换通知 AI 解析总闸。关闭 = 停止通知自动记账，且通知原文不再送服务端解析。
+     */
+    fun onAiParseChanged(enabled: Boolean) {
+        viewModelScope.launch { userPreferences.setAiParseEnabled(enabled) }
     }
 
     fun onChangePassword(oldPassword: String, newPassword: String) {
