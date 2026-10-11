@@ -152,17 +152,17 @@ fun ServerConfigScreen(
         }
     }
 
-    // PR #42：切换服务器前若有待同步交易，弹 AlertDialog 让用户选择
+    // PR #42：保存前若本地仍有未同步数据（含 failed），弹 AlertDialog 让用户选择
     if (pendingClearConfirm) {
         AlertDialog(
             onDismissRequest = { pendingClearConfirm = false },
-            title = { Text("切换服务器") },
+            title = { Text("清空本地缓存") },
             text = {
-                Text("当前有 ${uiState.pendingCount} 条未同步交易。\n切换到新服务器将清空本地缓存。\n确定继续吗？")
+                Text("当前有 ${uiState.unsyncedCount} 条未同步交易（含同步失败）。\n保存服务器设置将清空本地缓存，此操作不可恢复。\n确定继续吗？")
             },
             confirmButton = {
                 AppTextButton(
-                    text = "切换并清空",
+                    text = "保存并清空",
                     onClick = {
                         pendingClearConfirm = false
                         viewModel.onSave(clearLocalCache = true)
