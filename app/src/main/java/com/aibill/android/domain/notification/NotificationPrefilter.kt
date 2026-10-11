@@ -22,6 +22,14 @@ package com.aibill.android.domain.notification
  * 下游（AI 解析、评分窗口、跨渠道去重、`AiResultValidator`、`auth_pending` 重放）
  * 属于 [com.aibill.android.service.NotificationProcessor]，本 module 一律不碰。
  *
+ * ## 作用域：判据三渠道一致，状态闸只对 NLS
+ *
+ * 文本判据（自身通知 / 空文本 / 系统摘要 / 日报汇总 / 促销句式 / 营销词 / 账务判据）
+ * 三渠道完全一致；**内容级状态闸**（[BlockReason.DUPLICATE_CONTENT] / [BlockReason.AI_MEMORY] /
+ * [BlockReason.AI_MUTED] / [BlockReason.DB_DUPLICATE]）只在 NLS 开启——
+ * 下游明写「同渠道同包名同金额 = 两笔真实交易」，对 SMS/A11Y 闸住同文本的第二条就是丢账。
+ * 理由与历史依据见 `data/notification/NotificationPrefilterImpl` 的类 KDoc。
+ *
  * ## 时间口径
  *
  * 判定链里的所有窗口都以 [Capture.receivedAt] 为「现在」——候选进入本 module 的那一刻。
@@ -83,7 +91,7 @@ enum class BlockReason {
     /** 本 App 自己的通知被自己的监听读回来（自动入库回执 / 待审确认弹窗） */
     SELF_NOTIFICATION,
 
-    /** 内存内容去重：同包名 + 同内容在 5s 内重复投递 */
+    /** 内存内容去重：同包名 + 同内容在 5s 内重复投递（**仅 NLS**） */
     DUPLICATE_CONTENT,
 
     /** 正文为空 */
@@ -104,12 +112,12 @@ enum class BlockReason {
     /** 账务判据不通过（per_package / default_rule / 旧硬编码兜底） */
     NOT_FINANCIAL,
 
-    /** 长窗内容记忆：同内容 5 分钟内不重复调 AI */
+    /** 长窗内容记忆：同内容 5 分钟内不重复调 AI（**仅 NLS**） */
     AI_MEMORY,
 
-    /** 单包 AI 熔断中（连续失败 N 次），见 [NotificationPrefilterImpl] 的作用域说明 */
+    /** 单包 AI 熔断中（连续失败 N 次），**仅 NLS**，见 [NotificationPrefilterImpl] 的作用域说明 */
     AI_MUTED,
 
-    /** DB 1s 去重命中（同包名 + 同内容刚写过） */
+    /** DB 1s 去重命中（同包名 + 同内容刚写过，**仅 NLS**） */
     DB_DUPLICATE,
 }

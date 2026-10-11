@@ -4,7 +4,6 @@ import android.app.Application
 import com.aibill.android.data.remote.api.NotificationRulesApi
 import com.aibill.android.data.remote.dto.response.NotificationRulesDto
 import com.aibill.android.data.remote.dto.response.NotificationRulesData
-import com.aibill.android.domain.notification.MarketingCriteria
 import com.aibill.android.util.NotificationSourceMapping
 import com.squareup.moshi.Moshi
 import timber.log.Timber
@@ -20,6 +19,11 @@ import javax.inject.Singleton
  *
  * 规则版本代际（generation）：每次内存缓存变更时递增，供消费者判断
  * 是否需要刷新本地派生值（Regex、Set 等），避免重复遍历。
+ *
+ * ⚠️ 本类**只管规则数据的存取**，不含任何判据：放行/拦截判定全在
+ * [com.aibill.android.domain.notification.NotificationPrefilter]（预筛 module）。
+ * 原来的 `isLikelyMarketing` 已随预筛收口删除（收口后零调用点）；
+ * 「营销词 + 强交易特征豁免」的判据在 `domain/notification/MarketingCriteria`。
  */
 @Singleton
 class NotificationRulesManager @Inject constructor(
@@ -127,22 +131,6 @@ class NotificationRulesManager @Inject constructor(
      * 优先级：内存缓存 → SharedPreferences → 硬编码默认值
      */
     fun getRules(): NotificationRules = getSnapshot().rules
-
-    /**
-     * 营销内容判定：**所有判据都从 [com.aibill.android.domain.notification.NotificationPrefilter]
-     * 走，本方法只是词表的取用入口**（判据本身在 `MarketingCriteria`）。
-     *
-     * 保留它是因为 `NotificationProcessor` 的 `cleanMarketingSuffix` 等处仍按需取词表，
-     * 而「营销判定语义」只有一处实现。
-     *
-     * 设计原则与账务判据一致：极保守，宁可多放不漏。
-     * 形似真实交易（尾号/卡号/入账…）的文本即使含"办理/开通/贷款"等词
-     * 也交由 AI 判定，避免误杀如"您尾号1234信用卡办理的分期入账3500元"。
-     */
-    fun isLikelyMarketing(text: String): Boolean {
-        val rules = getRules()
-        return MarketingCriteria.isMarketingByWords(text, rules.sms.spamKeywords + rules.nls.defaultExcludeContent)
-    }
 
     private fun loadInitialRules(): RulesSnapshot {
         val json = prefs.getString(KEY_JSON, null)

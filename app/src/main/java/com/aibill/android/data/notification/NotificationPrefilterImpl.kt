@@ -23,16 +23,16 @@ import javax.inject.Singleton
  * 预筛 module 的实现：判据链 + 每源状态。
  *
  * 独占：全部文本判据（自身通知 / 空文本 / 系统摘要 / 日报汇总 / 促销句式 / 营销词 /
- * 账务判据）、去重与记忆状态（内存 5s 内容去重、长窗 5min AI 内容记忆、DB 1s 去重）、
+ * 账务判据）、内容级去重与记忆状态（内存 5s 内容去重、长窗 5min AI 内容记忆、DB 1s 去重）、
  * 单包 AI 熔断的查询、以及全部相关日志。
  * 三个 adapter 只负责把平台对象翻译成 [Capture] 并在放行时调用 `process`。
  *
  * ## 判定顺序（顺序本身是行为，不要随手调）
  *
  * ```
- * 0 自身通知   → 1 内存内容去重(5s) → 2 空文本 → 3 系统分组摘要
+ * 0 自身通知   → 1 内存内容去重(5s)【仅 NLS】→ 2 空文本 → 3 系统分组摘要
  * → 4 日报汇总 → 5 促销句式 → 6 营销词 → 7 账务判据
- * → 8 长窗 AI 内容记忆(5min) → 9 单包 AI 熔断 → 10 DB 1s 去重
+ * → 8 长窗 AI 内容记忆(5min)【仅 NLS】→ 9 单包 AI 熔断【仅 NLS】→ 10 DB 1s 去重【仅 NLS】
  * ```
  *
  * - **1 必须排在所有早退分支之前**：系统「正在运行」分组摘要会以完全相同的文本
@@ -41,18 +41,25 @@ import javax.inject.Singleton
  *   （实测 1403 条 AI 日志里被误记 2 次）；促销句式同理（2026-10-09 双11漏记）；
  * - **7 的「宁可不漏」优先于「拦得干净」**：强交易特征豁免是这条链的核心取舍。
  *
- * ## 熔断为什么只对 NLS 生效（刻意的差异，不要顺手统一）
+ * ## 为什么 1/8/9/10 四道闸只对 NLS 生效（刻意的差异，不要顺手统一）
  *
- * 熔断状态由 **AI 调用结果** 驱动（连续 3 次失败 → 静音 5min），而失败的处置在下游：
- * - NLS：被拦的只是重复调用，AI 侧没有别的补偿路径；
- * - SMS：401 失败会由 `NotificationProcessor.enqueueAuthPending` 落库，
- *   等同号重登后重放——**熔断拦在预筛就会让第 4 条起的银行短信既不入队也不入库**，
- *   等于凭空造出「交易静默消失」；
- * - A11Y：包名多为已知支付 App/内嵌支付 App，熔断命中就是直接丢真交易。
+ * **文本判据（0/2/3/4/5/6/7）三渠道一致；状态闸（内容去重 / 内容记忆 / AI 熔断 / DB 去重）只对 NLS。**
  *
- * 放行口径不变的前提下，统一熔断的代价是不对称的（丢真交易 vs 多调几次 AI），
- * 因此本 module 保留 NLS-only。其余状态闸（内容去重 / 内容记忆 / DB 去重）三渠道一致：
- * 它们压制的是「同一条内容被反复投递」，不产生新的丢账场景。
+ * 这四道闸是为 **NLS 的噪音** 发明的：资讯 App 把同一条推送反复 post、系统「正在运行」分组摘要
+ * 单秒来 10 条、AI 对同一条新闻标题连续报 5001。它们压的都是「同一条内容被系统反复投递」。
+ *
+ * 而下游 `NotificationProcessor` 的设计原则明写着：**同渠道同包名同金额 = 两笔真实交易**
+ * （如 10s 内两杯 ¥15 咖啡）。SMS 与 A11Y 恰好落在这条原则覆盖的场景里：
+ * 两杯瑞幸、分钟相同、短信正文逐字一样——对 SMS 是**两笔真账**，不是重复投递；
+ * A11Y 的「支付成功 ¥15.00 瑞幸咖啡」同理。
+ * 闸一旦对它们生效，就是**静默丢真交易**（第二笔连待审都进不去，用户毫无感知）。
+ *
+ * A11Y 自己已有 8s 内容防抖 + 金额|商家|页面 冷却，那是**平台事实的既定口径**，
+ * 不该在预筛再叠一层 5min 的更长的。SMS 侧历史上本就没有任何内容级去重，
+ * 收口前只过支付特征 + 营销词就进 `process`——本次把它还原，不做扩权。
+ *
+ * 取舍与熔断同源：**误杀（丢真交易）> 多调一次 AI**，而这四道闸在 NLS 之外的任何渠道
+ * 都只有后者那一种收益。
  */
 @Singleton
 class NotificationPrefilterImpl @Inject constructor(
@@ -65,12 +72,14 @@ class NotificationPrefilterImpl @Inject constructor(
 
     private val ownPackageName: String = context.packageName
 
-    /** 内存级内容去重：防系统短时间内对同一内容多次投递。key = `包名:内容hash`。 */
+    /** 内存级内容去重：防 NLS 系统短时间内对同一内容多次投递。key = `包名:内容hash`。 */
     private val recentContentKeys = ConcurrentHashMap<String, Long>()
 
     /**
      * 已送 AI 的内容指纹（长窗）。放在过滤层之后：只挡「同一条内容被反复 post」
      * 导致的重复 AI 调用，不会影响不同内容的正常交易通知。
+     *
+     * 仅 NLS 写入与查询：SMS/A11Y 不查内容级闸（理由见类 KDoc）。
      */
     private val aiCalledContentKeys = ConcurrentHashMap<String, Long>()
 
@@ -82,6 +91,11 @@ class NotificationPrefilterImpl @Inject constructor(
         val fullText = capture.fullText
         val now = capture.receivedAt
         val tag = capture.channel.logTag
+
+        // 内容级状态闸（1/8/10）与 AI 熔断（9）都只为 NLS 开启：
+        // 它们压的是「同一条内容被系统反复投递」，而 SMS/A11Y 的同源同文本两条
+        // 可能是两笔真实交易（下游同源同额原则），闸在预筛就是丢账。理由见类 KDoc。
+        val contentGates = capture.channel == SourceChannel.NLS
 
         // 0. 自身通知必须丢弃（2026-10-01 日志回归）。
         // 本 App 自己会发两类通知：自动入库的「已记账 · …」和待审的
@@ -96,23 +110,24 @@ class NotificationPrefilterImpl @Inject constructor(
 
         val rules = ruleSource.snapshot()
 
-        // 1. 内存级去重（用内容 hash，防系统重复触发 + 协程竞态）。
-        val contentKey = "$packageName:${fullText.hashCode()}"
-        val lastSeen = recentContentKeys.put(contentKey, now)
-        if (lastSeen != null && (now - lastSeen) < CONTENT_DEDUP_WINDOW_MS) {
-            // 去重是常态（微信视频通话、系统服务会刷出大量重复通知），
-            // 每次都写日志会瞬间冲掉账务结果行（曾出现单秒 6 条）→ 采样。
-            if (now - (lastDedupLoggedAt[packageName] ?: 0L) > DEDUP_LOG_SAMPLE_MS) {
-                lastDedupLoggedAt[packageName] = now
-                appLogger.debug(tag, "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName")
+        // 1. 内存级去重（用内容 hash，防系统重复触发 + 协程竞态）。仅 NLS。
+        if (contentGates) {
+            val lastSeen = recentContentKeys.put(contentKeyOf(packageName, fullText), now)
+            if (lastSeen != null && (now - lastSeen) < CONTENT_DEDUP_WINDOW_MS) {
+                // 去重是常态（微信视频通话、系统服务会刷出大量重复通知），
+                // 每次都写日志会瞬间冲掉账务结果行（曾出现单秒 6 条）→ 采样。
+                if (now - (lastDedupLoggedAt[packageName] ?: 0L) > DEDUP_LOG_SAMPLE_MS) {
+                    lastDedupLoggedAt[packageName] = now
+                    appLogger.debug(tag, "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName")
+                }
+                return Verdict.Block(
+                    BlockReason.DUPLICATE_CONTENT,
+                    "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName",
+                )
             }
-            return Verdict.Block(
-                BlockReason.DUPLICATE_CONTENT,
-                "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName",
-            )
+            // 每次清理过期 key（>10s），防泄漏
+            recentContentKeys.entries.removeIf { now - it.value > 10_000L }
         }
-        // 每次清理过期 key（>10s），防泄漏
-        recentContentKeys.entries.removeIf { now - it.value > 10_000L }
 
         // 2. 空文本
         if (fullText.isBlank()) {
@@ -180,31 +195,35 @@ class NotificationPrefilterImpl @Inject constructor(
             "✓通过过滤: pkg=$packageName title=${capture.title.take(30)} fullText=${fullText.take(80)}"
         )
 
-        // 8. 长窗内容记忆：同一条内容 5 分钟内不重复调 AI。
+        // 8. 长窗内容记忆：同一条内容 5 分钟内不重复调 AI。仅 NLS。
         //    资讯类 App 会把同一条推送反复 post（实测 6 次调 AI / 5 次 5001），
         //    5s 短窗拦不住，长窗把重复调用压到 1 次。
-        aiCalledContentKeys.entries.removeIf { now - it.value > AI_CONTENT_MEMORY_MS }
-        val lastAiCall = aiCalledContentKeys[contentKey]
-        if (lastAiCall != null && (now - lastAiCall) < AI_CONTENT_MEMORY_MS) {
-            return block(
-                capture,
-                BlockReason.AI_MEMORY,
-                "长窗内容记忆(${AI_CONTENT_MEMORY_MS / 60_000}min)，跳过重复调AI: pkg=$packageName",
-            )
-        }
+        //    ⚠️ SMS/A11Y 不查：同源同文本的两条可能是两笔真交易（见类 KDoc）。
+        if (contentGates) {
+            val contentKey = contentKeyOf(packageName, fullText)
+            aiCalledContentKeys.entries.removeIf { now - it.value > AI_CONTENT_MEMORY_MS }
+            val lastAiCall = aiCalledContentKeys[contentKey]
+            if (lastAiCall != null && (now - lastAiCall) < AI_CONTENT_MEMORY_MS) {
+                return block(
+                    capture,
+                    BlockReason.AI_MEMORY,
+                    "长窗内容记忆(${AI_CONTENT_MEMORY_MS / 60_000}min)，跳过重复调AI: pkg=$packageName",
+                )
+            }
 
-        // 9. 单包 AI 熔断：非支付类包名连续 AI 失败 N 次后静音一段时间。
-        //    只对「不在白名单」的包生效，银行/微信/支付宝永不被熔断，
-        //    避免真交易因网络抖动被误杀。作用域见类 KDoc。
-        if (capture.channel == SourceChannel.NLS && !knownSource && processor.isAiMuted(packageName, now)) {
-            return block(capture, BlockReason.AI_MUTED, "AI 熔断中（该包连续失败），跳过: pkg=$packageName")
-        }
-        aiCalledContentKeys[contentKey] = now
+            // 9. 单包 AI 熔断：非支付类包名连续 AI 失败 N 次后静音一段时间。
+            //    只对「不在白名单」的包生效，银行/微信/支付宝永不被熔断，
+            //    避免真交易因网络抖动被误杀。作用域见类 KDoc。
+            if (!knownSource && processor.isAiMuted(packageName, now)) {
+                return block(capture, BlockReason.AI_MUTED, "AI 熔断中（该包连续失败），跳过: pkg=$packageName")
+            }
+            aiCalledContentKeys[contentKey] = now
 
-        // 10. DB 1s 内容去重（防同一条通知被系统多次分发）
-        val duplicate = notificationRecordDao.findDuplicate(packageName, fullText, now - DB_DEDUP_WINDOW_MS)
-        if (duplicate != null) {
-            return block(capture, BlockReason.DB_DUPLICATE, "DB去重(1s): pkg=$packageName")
+            // 10. DB 1s 内容去重（防同一条通知被系统多次分发）
+            val duplicate = notificationRecordDao.findDuplicate(packageName, fullText, now - DB_DEDUP_WINDOW_MS)
+            if (duplicate != null) {
+                return block(capture, BlockReason.DB_DUPLICATE, "DB去重(1s): pkg=$packageName")
+            }
         }
 
         return Verdict.Pass(capture)
@@ -298,6 +317,10 @@ class NotificationPrefilterImpl @Inject constructor(
         appLogger.debug(capture.channel.logTag, message)
         return Verdict.Block(reason, message)
     }
+
+    /** 内容级去重的键：包名 + 正文 hash（内容相同即视为同一次投递）。 */
+    private fun contentKeyOf(packageName: String, fullText: String): String =
+        "$packageName:${fullText.hashCode()}"
 
     private companion object {
         const val DB_DEDUP_WINDOW_MS = 1_000L

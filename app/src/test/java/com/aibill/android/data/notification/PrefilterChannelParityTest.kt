@@ -123,8 +123,13 @@ class PrefilterChannelParityTest {
     }
 
     private companion object {
-        const val PAYMENT_SIGNAL =
-            "[¥￥$]|RMB|CNY|人民币|元|支付|已付|付款|实付|付出|刷卡|收款|收入|到账|入账|转入|转出|转账|汇款|消费|交易|扣款|扣费|代扣|缴费|充值|提现|退款|退货|红包|余额|账单|还款|欠款|尾号|卡号|信用卡|储蓄卡|银行卡|收益|利息|分期|贷款|工资|薪资|报销"
+        /**
+         * fixture：模拟云控下发的 `nls.payment_signal_regex`。
+         *
+         * 直接用生产兜底常量（`internal`，单测可见）而不是再抄一份字面量——
+         * 抄一份就多一个「看起来在锁实现、实际会漂移」的副本。
+         */
+        const val PAYMENT_SIGNAL = FALLBACK_PAYMENT_SIGNAL_PATTERN
 
         val SPAM_KEYWORDS = listOf("订购", "办理", "开通", "贷款", "借款", "提额", "邀请", "恭喜", "中奖")
 
