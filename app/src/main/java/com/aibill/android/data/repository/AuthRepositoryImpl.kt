@@ -10,6 +10,7 @@ import com.aibill.android.data.local.work.WorkManagerProvider
 import com.aibill.android.data.remote.api.AuthApi
 import com.aibill.android.data.remote.dto.request.LoginRequest
 import com.aibill.android.data.remote.dto.request.RegisterRequest
+import com.aibill.android.data.remote.interceptor.SessionEndReason
 import com.aibill.android.data.remote.interceptor.TokenManager
 import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.Result
@@ -171,12 +172,19 @@ class AuthRepositoryImpl @Inject constructor(
         }
     }
 
+    /**
+     * 显式登出：**只结束会话，不删本地数据**。
+     *
+     * - `last_known_user_id` 刻意保留：它是 pending 队列的归属判据。
+     *   若删掉，用户登出再登回同一账号时 `login()` 会因 `previousUserId == null`
+     *   走 `clearLocalCache()`，把离线记的账物理删除——而 `ProfileScreen` 的
+     *   登出确认弹窗向用户承诺「本地未同步的数据不会丢失」。
+     * - 换号防护不受影响：`login()` 靠 `previousUserId != incomingUserId` 判定换号，
+     *   登出后换号依然会清空本地缓存。
+     */
     override suspend fun logout() {
-        // PR M1：一次性清空 token + session，避免漏删；
-        // 登出还要连 last_known_user_id 一起清（显式登出 = 真的换人用了），
-        // 保证下次登录必然走「首次登录」路径，不误保留上一个账号的离线队列。
-        tokenManager.clearSessionAndIdentity()
-        userPreferences.clear()
+        tokenManager.endSession(SessionEndReason.SIGNED_OUT)
+        userPreferences.clearUserInfo()
     }
 
     override fun isLoggedIn(): Boolean = tokenManager.hasToken()

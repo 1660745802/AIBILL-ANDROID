@@ -184,8 +184,19 @@ class UserPreferences @Inject constructor(
         dataStore.edit { it[Keys.AUTOMATION_LEVEL] = level }
     }
 
-    // --- Clear All (logout) ---
-    suspend fun clear() {
-        dataStore.edit { it.clear() }
+    /**
+     * 登出：只清除**用户身份信息**。
+     *
+     * ⚠️ 不要改成 `dataStore.edit { it.clear() }`：那会把 [Keys.SERVER_URL] 一起抹掉，
+     * 导致 `ServerUrlInterceptor` 回落到占位地址 `http://localhost:3000/api/`，
+     * **登出后无法再登录**。设备级设置（主题 / 通知隐私 / 应用锁 / AI 开关）也不属于
+     * 用户身份，退登后应继续生效。
+     */
+    suspend fun clearUserInfo() {
+        dataStore.edit { prefs ->
+            prefs.remove(Keys.USER_ID)
+            prefs.remove(Keys.USERNAME)
+            prefs.remove(Keys.NICKNAME)
+        }
     }
 }

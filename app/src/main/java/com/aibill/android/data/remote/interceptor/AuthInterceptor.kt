@@ -8,6 +8,7 @@ import okhttp3.Response
 import javax.inject.Inject
 import javax.inject.Singleton
 
+
 /**
  * 全局认证事件
  */
@@ -43,19 +44,28 @@ class AuthInterceptor @Inject constructor(
         val originalRequest = chain.request()
 
         // 附加 Token
-        val request = tokenManager.getToken()?.let { token ->
+        val token = tokenManager.getToken()
+        val request = token?.let {
             originalRequest.newBuilder()
-                .addHeader("Authorization", "Bearer $token")
+                .addHeader("Authorization", "Bearer $it")
                 .build()
         } ?: originalRequest
 
         val response = chain.proceed(request)
 
-        // 401 全局处理：清整个会话（token + userId/username/nickname），
-        // 避免只清 token 导致用户信息残留在 EncryptedSharedPreferences（与登出行为一致）
+        // 401 全局处理：清当前会话（token + userId/username/nickname）。
+        // 保留 last_known_user_id 不变 —— 它是离线队列的归属判据，见 TokenManager.endSession。
         if (response.code == 401) {
-            appLogger.error("AUTH", "401 Token过期, 触发跳转登录: url=${originalRequest.url}")
-            tokenManager.clearSession()
+            // **只有携带了凭证的 401 才是「会话过期」**。
+            // 未携带凭证也被拒（登录密码错误、首次安装未登录）属于预期内，
+            // 若也标成 TOKEN_EXPIRED，用户下次冷启动会被误告知「登录已过期」。
+            val reason = if (token != null) {
+                SessionEndReason.TOKEN_EXPIRED
+            } else {
+                SessionEndReason.SIGNED_OUT
+            }
+            appLogger.error("AUTH", "401 会话结束(${reason.storedValue}), 触发跳转登录: url=${originalRequest.url}")
+            tokenManager.endSession(reason)
             authEventBus.emit(AuthEvent.TokenExpired)
         }
 

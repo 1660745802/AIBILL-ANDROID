@@ -13,7 +13,9 @@ import com.aibill.android.data.remote.dto.request.RegisterRequest
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.data.remote.dto.response.AuthResponse
 import com.aibill.android.data.remote.dto.response.UserDto
+import com.aibill.android.data.remote.interceptor.SessionEndReason
 import com.aibill.android.data.remote.interceptor.TokenManager
+import com.aibill.android.service.SyncWorker
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
@@ -41,6 +43,9 @@ import org.junit.jupiter.api.Test
  * 4. login/register 失败 → 不调 saveSession、不调 clearLocalCache
  * 5. 换号路径下 clearLocalCache 顺序在 saveSession 之前（避免 user B 拿到 user A 的脏数据）
  * 6. login 前必调 WorkManagerProvider.cancelSyncWorker
+ * 7. **B6**：logout 不得删除 `last_known_user_id` —— 否则「登出→登回同账号」
+ *    退化为「首次登录」并清空离线队列，违反登出弹窗对用户的承诺。
+ *    但保留它也不得削弱换号防护（见下面两个 B6 用例）
  */
 class AuthRepositoryImplTest {
 
@@ -240,16 +245,76 @@ class AuthRepositoryImplTest {
     }
 
     @Test
-    fun `logout - clearSession (not just clearToken) - M1 atomic`() = runTest {
-        // PR M1：登出要清整个 session（token + userId + username + nickname），
-        // 之前只 clearToken() 会留下 DataStore 中旧 userInfo
+    fun `logout - endSession SIGNED_OUT + clearUserInfo, does NOT wipe all preferences`() = runTest {
         newRepo().logout()
 
-        // 显式登出必须连 last_known_user_id 一起清，
-        // 否则下次登录会被误判成「同账号重登」而保留上一个账号的离线队列
-        coVerify(exactly = 1) { tokenManager.clearSessionAndIdentity() }
-        // 旧的 clearToken 不应被调
-        coVerify(exactly = 0) { tokenManager.clearToken() }
-        coVerify(exactly = 1) { userPreferences.clear() }
+        // 只结束会话：token / userId / username / nickname 清掉，
+        // last_known_user_id 保留（它是 pending 队列的归属判据）。
+        coVerify(exactly = 1) { tokenManager.endSession(SessionEndReason.SIGNED_OUT) }
+        // 用户偏好只清身份三项，**不**清 serverUrl / 主题 / 通知隐私等设备设置
+        coVerify(exactly = 1) { userPreferences.clearUserInfo() }
+    }
+
+    // ==================== B6：登出不得成为数据丢失的入口 ====================
+
+    /**
+     * B6 回归：登出后再登回**同一账号**，离线记账必须保留。
+     *
+     * 历史 bug：`logout()` 调 `clearSessionAndIdentity()` 把 `last_known_user_id` 一起删了，
+     * 于是下次登录 `previousUserId == null` → `sameAccount = false` → `clearLocalCache()`
+     * → 物理删除用户离线记的账，而登出弹窗向用户承诺过「本地未同步的数据不会丢失」。
+     */
+    @Test
+    fun `logout then SAME account login - pending preserved, revived and rescheduled`() = runTest {
+        every { syncLock.isActive() } returns false
+        // 登出保留了 last_known_user_id
+        every { tokenManager.getLastKnownUserId() } returns 42
+        coEvery { pendingDao.resetFailedMatching(any(), any()) } returns 2
+        coEvery { authApi.login(LoginRequest("alice", "pass")) } returns ApiResponse(
+            code = 0, data = makeAuthResponse(), message = "ok"
+        )
+
+        newRepo().logout()
+        val result = newRepo().login("alice", "pass")
+
+        assertTrue(result is com.aibill.android.domain.model.Result.Success)
+        // 核心：离线队列一个字节都不能少
+        coVerify(exactly = 0) { pendingDao.deleteAll() }
+        coVerify(exactly = 0) { categoryDao.deleteAll() }
+        coVerify(exactly = 0) { accountDao.deleteAll() }
+        coVerify(exactly = 0) { notificationDao.deleteAll() }
+        // 401 卡住的记录被复活，并主动排同步
+        coVerify(exactly = 1) {
+            pendingDao.resetFailedMatching(
+                errorPattern = SyncWorker.ERROR_TOKEN_EXPIRED_PATTERN,
+                now = any(),
+            )
+        }
+        coVerify(exactly = 1) { workManagerProvider.scheduleSync() }
+    }
+
+    /**
+     * B6 的另一半：**保留身份不等于放弃换号防护**。
+     * 登出后换成另一个账号，仍然必须清空本地缓存。
+     */
+    @Test
+    fun `logout then DIFFERENT account login - still clears local cache`() = runTest {
+        every { syncLock.isActive() } returns false
+        // 登出保留了 last_known_user_id = 7，新登录拿到 42 → 换号
+        every { tokenManager.getLastKnownUserId() } returns 7
+        coEvery { authApi.login(LoginRequest("bob", "pass")) } returns ApiResponse(
+            code = 0, data = makeAuthResponse(), message = "ok"
+        )
+
+        newRepo().logout()
+        val result = newRepo().login("bob", "pass")
+
+        assertTrue(result is com.aibill.android.domain.model.Result.Success)
+        // 跨账号防护不得因为保留 last_known_user_id 而削弱
+        coVerify(exactly = 1) { pendingDao.deleteAll() }
+        coVerify(exactly = 1) { categoryDao.deleteAll() }
+        coVerify(exactly = 1) { accountDao.deleteAll() }
+        coVerify(exactly = 1) { notificationDao.deleteAll() }
+        coVerify(exactly = 0) { pendingDao.resetFailedMatching(any(), any()) }
     }
 }

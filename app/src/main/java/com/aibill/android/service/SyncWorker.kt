@@ -47,44 +47,73 @@ class SyncWorker @AssistedInject constructor(
             appLogger.info("SYNC", "同步开始: ${pendingList.size}条待同步")
             var unauthorizedSeen = false
 
-            for (entity in pendingList) {
+            for ((index, entity) in pendingList.withIndex()) {
                 if (entity.retryCount >= MAX_RETRY_COUNT) {
                     appLogger.warn("SYNC", "超过最大重试: clientId=${entity.clientId}")
-                    markFailed(entity.clientId, "Max retry count exceeded")
+                    markFailed(entity.clientId, ERROR_MAX_RETRY_EXCEEDED)
+                    continue
+                }
+
+                // R-Z：快照（getAllPending）与 POST 之间行可能已被用户撤销删除。
+                // 此时先补检查一次——不 POST、不 markFailed、不 markSynced、不计失败。
+                // 与 R-Y 补偿互补：R-Y 关的是「POST 后、回写前」（服务端已建，
+                // 用 markSynced 返回 0 行发现）；R-Z 关的是「回写前、POST 前」，
+                // 直接把幽灵账扼杀在发送之前。
+                // 刻意不看 live.syncStatus：此刻只要行还在，该发就发。
+                val live = pendingTransactionDao.findByClientId(entity.clientId)
+                if (live == null) {
+                    appLogger.warn("SYNC", "行已被撤销删除，跳过不 POST: clientId=${entity.clientId}")
                     continue
                 }
 
                 val (result, serverId) = syncTransaction(entity)
                 when (result) {
                     SyncResult.SUCCESS -> {
-                        markSynced(entity.clientId, serverId)
-                        appLogger.info("SYNC", "同步成功: clientId=${entity.clientId} serverId=$serverId")
+                        val persisted = markSynced(entity.clientId, serverId)
+                        if (serverId != null && !persisted) {
+                            // TOCTOU 补偿：doWork 开头就把 pending 队列读进了内存，
+                            // 期间用户可能点了通知里的「撤销」——pending 分支只删本地。
+                            // 于是服务端这笔已经建好、本地却没人要了（幽灵账）。
+                            // markSynced 影响 0 行就是这条 pending 已被删的证据，
+                            // 拿它手里的 serverId 反向删服务端，让两边回到一致。
+                            compensateUserUndo(entity.clientId, serverId)
+                        } else {
+                            appLogger.info("SYNC", "同步成功: clientId=${entity.clientId} serverId=$serverId")
+                        }
                     }
                     SyncResult.UNAUTHORIZED -> {
-                        // Token 过期：标记当前记录失败，避免下次 worker 重复触发 401 循环；
+                        // Token 过期：标记当前记录失败并中断本轮遍历。
                         // AuthEventBus 已被 AuthInterceptor emit，由 MainActivity 触发跳登录。
-                        // 写入的错误串与 ERROR_TOKEN_EXPIRED_PATTERN 配对——用户同账号重新登录后
-                        // AuthRepositoryImpl 会按该模式把这些记录重置回 pending 续传。
+                        // reason 必须经 markFailed 原子写入 last_error——它与
+                        // ERROR_TOKEN_EXPIRED_PATTERN 配对，用户同账号重新登录后
+                        // AuthRepositoryImpl 按该模式把这些记录重置回 pending 续传。
                         markFailed(entity.clientId, ERROR_TOKEN_EXPIRED)
                         unauthorizedSeen = true
                         appLogger.error("SYNC", "401 Token过期: clientId=${entity.clientId}")
+
+                        // 立即中断遍历：AuthInterceptor 在第一个 401 就清了 session，
+                        // 继续逐条发只会把剩余 N-1 条 pending 也污染成 failed，
+                        // 并对同一个原因重复发 N 次请求。它们保持 'pending'，
+                        // 等用户重新登录后由 onSameAccountRelogin 排的 SyncWorker 续传。
+                        val remaining = pendingList.size - index - 1
+                        if (remaining > 0) {
+                            appLogger.warn("SYNC", "401 中断遍历，剩余 $remaining 条 pending 保持待同步")
+                        }
+                        break
                     }
                     // PR H2：服务端 code==0 但 created[]/duplicates[] 都没有匹配
                     // 的 clientId（服务端漏字段/转换异常），不标 SUCCESS 否则
                     // 后续无 serverId 无法编辑/删除（僵尸记录）。
                     SyncResult.SERVER_ANOMALY -> {
-                        markFailed(
-                            clientId = entity.clientId,
-                            error = "Server response missing clientId match (created/duplicates both empty)",
-                        )
+                        markFailed(entity.clientId, ERROR_SERVER_ANOMALY)
                         appLogger.error("SYNC", "服务端异常(无clientId匹配): clientId=${entity.clientId}")
                     }
                     SyncResult.BUSINESS_ERROR -> {
-                        markFailed(entity.clientId, "Business error")
+                        markFailed(entity.clientId, ERROR_BUSINESS)
                         appLogger.warn("SYNC", "业务错误: clientId=${entity.clientId}")
                     }
                     SyncResult.NETWORK_ERROR -> {
-                        incrementRetry(entity.clientId, "Network error")
+                        incrementRetry(entity.clientId, ERROR_NETWORK)
                         appLogger.warn("SYNC", "网络错误,将重试: clientId=${entity.clientId} retry=${entity.retryCount + 1}")
                     }
                 }
@@ -145,30 +174,86 @@ class SyncWorker @AssistedInject constructor(
     }
 
     /**
-     * 标记同步成功并写入服务端返回的 transaction id，便于后续编辑/删除追溯
+     * 标记同步成功并写入服务端返回的 transaction id，便于后续编辑/删除追溯。
+     *
+     * @return true = 本地这行被成功回写；false = **影响 0 行**，即这条 pending 已被删除。
      */
-    private suspend fun markSynced(clientId: String, serverId: Int?) {
-        if (serverId != null) {
+    private suspend fun markSynced(clientId: String, serverId: Int?): Boolean {
+        return if (serverId != null) {
             pendingTransactionDao.markSynced(
                 clientId = clientId,
                 serverId = serverId,
                 status = STATUS_SYNCED,
                 updatedAt = System.currentTimeMillis()
-            )
+            ) > 0
         } else {
             pendingTransactionDao.updateSyncStatus(
                 clientId = clientId,
                 status = STATUS_SYNCED,
                 updatedAt = System.currentTimeMillis()
             )
+            // 没有 serverId 就无从补偿（也正因为如此，正常路径不该走到这里），
+            // 降级行为与历史实现保持一致。
+            true
         }
     }
 
+    /**
+     * 撤销补偿：用户已删掉本地 pending，但服务端这笔已经建好，删掉它让两边一致。
+     *
+     * 复用 worker 已持有的 [transactionApi]，**不**注入 TransactionRepository——
+     * worker 的依赖图越小越好，且这里只需原始 code 判定，不需要 Result 封装。
+     *
+     * 失败处理原则（宁可留证据，不可静默丢失）：
+     * - 补成功 → 顺手 [PendingTransactionDao.deleteByClientId] 清理可能残留的本地行。
+     * - 补失败/抛异常 → **绝不写成功态、绝不删本地行**，
+     *   只把 clientId + serverId 打进 error 日志作为事后排查证据。
+     *
+     * 整个方法包在 try/catch 里：补偿失败绝不能让 doWork 崩溃或影响后续 pending。
+     */
+    private suspend fun compensateUserUndo(clientId: String, serverId: Int) {
+        try {
+            val response = transactionApi.deleteTransaction(serverId)
+            if (response.code == 0) {
+                pendingTransactionDao.deleteByClientId(clientId)
+                appLogger.info(
+                    "SYNC",
+                    "撤销补偿: 本地已被用户撤销，已同步删除服务端 " +
+                        "clientId=$clientId serverId=$serverId",
+                )
+            } else {
+                appLogger.error(
+                    "SYNC",
+                    "撤销补偿失败: 服务端 code=${response.code} message=${response.message} " +
+                        "clientId=$clientId serverId=$serverId",
+                )
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 补偿是挂起调用：worker 被取消（换号 awaitSyncIdle / 系统回收）时
+            // 必须让取消正常传播，不能当成「补偿异常」吞掉，否则破坏结构化并发。
+            throw e
+        } catch (e: Exception) {
+            appLogger.error(
+                "SYNC",
+                "撤销补偿异常: clientId=$clientId serverId=$serverId error=${e.message}",
+            )
+        }
+    }
+
+    /**
+     * 标记为终态失败。
+     *
+     * 必须走 [PendingTransactionDao.markFailed]（同一条 UPDATE 写
+     * sync_status + last_error + updated_at），**不可**改用
+     * [PendingTransactionDao.updateSyncStatus]——后者不写 last_error，
+     * 会让 [PendingTransactionDao.resetFailedMatching] 恒匹配不到，
+     * 使 401 这类可恢复失败变成真终态、离线记账永久卡死。
+     */
     private suspend fun markFailed(clientId: String, error: String) {
         Timber.w("SyncWorker: 标记为失败 clientId=%s reason=%s", clientId, error)
-        pendingTransactionDao.updateSyncStatus(
+        pendingTransactionDao.markFailed(
             clientId = clientId,
-            status = STATUS_FAILED,
+            error = error,
             updatedAt = System.currentTimeMillis()
         )
     }
@@ -212,10 +297,9 @@ class SyncWorker @AssistedInject constructor(
         private const val MAX_RETRY_COUNT = 5
         private const val HTTP_UNAUTHORIZED = 401
         private const val STATUS_SYNCED = "synced"
-        private const val STATUS_FAILED = "failed"
 
         /**
-         * 401 失败原因（写入 last_error）。
+         * 401 失败原因（原子写入 `last_error`）。
          * 与 [ERROR_TOKEN_EXPIRED_PATTERN] 配对使用，改一处必须改另一处。
          */
         const val ERROR_TOKEN_EXPIRED = "Token expired, need re-login"
@@ -225,5 +309,19 @@ class SyncWorker @AssistedInject constructor(
          * AuthRepositoryImpl 登录成功（同账号）后用它把 401 记录重置为 pending。
          */
         const val ERROR_TOKEN_EXPIRED_PATTERN = "%Token expired%"
+
+        /**
+         * 以下三个是**不可恢复**失败原因：不能被 [ERROR_TOKEN_EXPIRED_PATTERN] 命中，
+         * 否则会被重登时无限重置成死循环。提取为常量是为了让
+         * `SyncWorkerSyncTransactionTest` 能断言「reason 被精确传入 DAO」，
+         * 而不是断言一个重复两遍的字符串字面量。
+         */
+        const val ERROR_MAX_RETRY_EXCEEDED = "Max retry count exceeded"
+        const val ERROR_SERVER_ANOMALY =
+            "Server response missing clientId match (created/duplicates both empty)"
+        const val ERROR_BUSINESS = "Business error"
+
+        /** 唯一可重试原因（走 incrementRetryCount，不改 sync_status） */
+        const val ERROR_NETWORK = "Network error"
     }
 }

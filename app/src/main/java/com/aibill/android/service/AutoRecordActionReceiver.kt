@@ -6,8 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import com.aibill.android.data.local.dao.PendingTransactionDao
+import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.di.ApplicationScope
-import com.aibill.android.domain.repository.TransactionQuery
+import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.presentation.MainActivity
 import com.aibill.android.util.AppLogger
@@ -22,7 +23,7 @@ import javax.inject.Inject
 /**
  * 自动记账 Heads-up 通知的撤销/查看 Action 处理。
  *
- * - ACTION_UNDO：撤销刚记的账（本地未同步则删本地，已同步则调服务端删除）
+ * - ACTION_UNDO：撤销刚记的账（见 [handleUndo] 的状态真值表）
  * - ACTION_VIEW：打开 App 流水页
  */
 @AndroidEntryPoint
@@ -40,6 +41,19 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
         const val ACTION_VIEW = "com.aibill.android.ACTION_AUTO_RECORD_VIEW"
         const val EXTRA_CLIENT_ID = "extra_client_id"
         const val EXTRA_NOTIFICATION_ID = "extra_notification_id"
+
+        /** `PendingTransactionEntity.syncStatus` 取值 */
+        private const val SYNC_STATUS_PENDING = "pending"
+        private const val SYNC_STATUS_FAILED = "failed"
+        private const val SYNC_STATUS_SYNCED = "synced"
+
+        /** 真的删掉了（本地或服务端）才允许播报这条 */
+        private const val MSG_UNDONE = "已撤销"
+
+        /** 撤销没生效：必须让用户知道还能去哪里手动删 */
+        private const val MSG_FAILED_MANUAL =
+            "撤销失败，请稍后在流水页手动删除"
+        private const val MSG_NOT_FOUND = "撤销失败，记录未找到"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -69,54 +83,134 @@ class AutoRecordActionReceiver : BroadcastReceiver() {
         }
     }
 
-    private suspend fun handleUndo(context: Context, clientId: String) {
+    /**
+     * 撤销真值表 —— **按已知同步状态分支；不确定状态默认不删。**
+     *
+     * | 本地行 | 服务端是否可能已有 | 处理 | 用户看到 |
+     * |---|---|---|---|
+     * | 不存在 | 未知 | 谁都不删（无凭据，不猜） | 记录未找到 |
+     * | `pending` | 通常没有；在途 SyncWorker 是已知竞态 | 删本地（保持既有语义） | 已撤销 |
+     * | `failed` + 401 (`ERROR_TOKEN_EXPIRED`) | 否（服务端明确拒绝） | 删本地 | 已撤销 |
+     * | `failed` + 其它 reason | **可能已经建了** | 谁都不删 | 失败 |
+     * | `synced` + 有 serverId | 是 | 删服务端；成功才删本地 | 已撤销 / 失败 |
+     * | `synced` + 无 serverId | 是 | 谁都不删 | 失败 |
+     * | 未知 status | 未知 | 谁都不删 | 失败 |
+     *
+     * ## 为什么 `failed` 不能一律当「服务端没有」
+     *
+     * `SyncWorker` 的三条 markFailed 路径里，只有 401 能证明服务端拒绝：
+     * - [SyncWorker.ERROR_TOKEN_EXPIRED]：响应是 401，服务端根本没创建 → 可安全删本地。
+     * - [SyncWorker.ERROR_SERVER_ANOMALY]：**服务端可能已创建**，只是响应里
+     *   `created[]`/`duplicates[]` 都没匹配上 clientId（漏字段/转换异常）。
+     * - [SyncWorker.ERROR_MAX_RETRY_EXCEEDED]：本地重试数超限，**上一次请求可能
+     *   已经成功、只是响应在网络上丢了**（提交后进程被杀/超时）。
+     *   `ERROR_BUSINESS`（5xx）同理。
+     *
+     * 后三种删本地 = 服务端留一笔幽灵账；不删本地 = 用户在流水页仍能看到并手动处理。
+     * 后者的代价远小于前者，故一律走「不删 + 提示手动删」。
+     *
+     * ## 为什么不能用 `!= synced` 判据
+     *
+     * 任何**新增或拼写错误**的 status 都会被 `!= "synced"` 当成「未上传」而删本地，
+     * 也就是未来某天改列名/加状态时静默退化成 fail-open。改用白名单 `when`：
+     * 未知值落 `else` 分支，默认不删。
+     *
+     * ## 历史 bug（本次修复）
+     *
+     * 1. 分支条件只判「本地行是否存在」而不看 `sync_status`，且
+     *    `cleanSyncedBefore` 从未被调用（DAO 里定义了但零调用点）、synced 行无限留存，
+     *    于是「已上传的账」几乎总是命中本地删除分支 → 服务端账目存活，用户却被告知
+     *    「已撤销」（实际连回收站都没进）。
+     * 2. 已同步时用 `TransactionQuery(keyword = clientId)` + `items.first()` 猜 serverId：
+     *    无排序保证、只取第 1 页、命中多条时删错账。现在只认 `server_transaction_id`
+     *    （`SyncWorker.markSynced` → `PendingTransactionDao.markSynced`），宁可失败也不猜。
+     *
+     * internal 而非 private：便于直接单元测试，绕开 `goAsync()` / ApplicationScope 的时序噪声。
+     */
+    internal suspend fun handleUndo(context: Context, clientId: String) {
         val localRecord = pendingTransactionDao.findByClientId(clientId)
 
-        if (localRecord != null) {
-            // Still pending locally — just delete from local DB
+        if (localRecord == null) {
+            appLogger.warn("AutoRecordActionReceiver", "Undo: 本地无此记录 clientId=$clientId")
+            showToast(context, MSG_NOT_FOUND)
+            return
+        }
+
+        when (localRecord.syncStatus) {
+            SYNC_STATUS_PENDING -> deleteLocalOnly(context, clientId, localRecord.syncStatus)
+
+            SYNC_STATUS_FAILED -> {
+                // 只有 401 能证明服务端拒绝且未落库；其余 reason 一律不敢动。
+                // 用精确相等而非 LIKE 模式：宁可漏删（还能手动处理），不可误删。
+                if (localRecord.lastError == SyncWorker.ERROR_TOKEN_EXPIRED) {
+                    deleteLocalOnly(context, clientId, localRecord.syncStatus)
+                } else {
+                    appLogger.warn(
+                        "AutoRecordActionReceiver",
+                        "Undo: failed 但 reason 非 401，服务端可能已创建 " +
+                            "clientId=$clientId reason=${localRecord.lastError}",
+                    )
+                    showToast(context, MSG_FAILED_MANUAL)
+                }
+            }
+
+            SYNC_STATUS_SYNCED -> undoOnServer(context, clientId, localRecord)
+
+            else -> {
+                // fail-closed：未知 status 不做任何删除。
+                appLogger.warn(
+                    "AutoRecordActionReceiver",
+                    "Undo: 未知 syncStatus，不删除 clientId=$clientId status=${localRecord.syncStatus}",
+                )
+                showToast(context, MSG_FAILED_MANUAL)
+            }
+        }
+    }
+
+    /**
+     * 仅删本地：用于本地 `pending` 或明确被 401 拒绝的 `failed`。
+     * `pending` 与在途 SyncWorker 的竞态不由本 helper 解决，见 [handleUndo] 真值表。
+     */
+    private suspend fun deleteLocalOnly(context: Context, clientId: String, status: String) {
+        pendingTransactionDao.deleteByClientId(clientId)
+        appLogger.info(
+            "AutoRecordActionReceiver",
+            "Undo: 已删除本地未上传记录 clientId=$clientId status=$status",
+        )
+        showToast(context, MSG_UNDONE)
+    }
+
+    /** 已上传：删服务端，成功才删本地；失败则保留本地行供用户重试。 */
+    private suspend fun undoOnServer(
+        context: Context,
+        clientId: String,
+        localRecord: PendingTransactionEntity,
+    ) {
+        val serverId = localRecord.serverTransactionId
+        if (serverId == null) {
+            // 已上传却没记住 serverId：没有任何可靠凭据能定位服务端那条。
+            // 这里绝不能删本地（否则本地/服务端双留，用户在流水页再也看不到它）。
+            appLogger.warn("AutoRecordActionReceiver", "Undo: synced 但缺 serverId clientId=$clientId")
+            showToast(context, MSG_FAILED_MANUAL)
+            return
+        }
+
+        if (transactionRepository.deleteTransaction(serverId) is Result.Success) {
             pendingTransactionDao.deleteByClientId(clientId)
-            appLogger.info("AutoRecordActionReceiver", "Undo: deleted local pending record clientId=$clientId")
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "已撤销，可在回收站中恢复", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            // Already synced to server — query server by keyword (clientId) to find serverId, then delete
-            val searchResult = transactionRepository.getTransactions(
-                TransactionQuery(keyword = clientId),
+            appLogger.info(
+                "AutoRecordActionReceiver",
+                "Undo: 已删除服务端记录 serverId=$serverId clientId=$clientId",
             )
-            when {
-                searchResult is com.aibill.android.domain.model.Result.Success && searchResult.data.items.isNotEmpty() -> {
-                    val serverId = searchResult.data.items.first().id
-                    if (serverId != null) {
-                        when (transactionRepository.deleteTransaction(serverId)) {
-                            is com.aibill.android.domain.model.Result.Success -> {
-                                appLogger.info("AutoRecordActionReceiver", "Undo: deleted server record serverId=$serverId, clientId=$clientId")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "已撤销，可在回收站中恢复", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                            is com.aibill.android.domain.model.Result.Error -> {
-                                appLogger.warn("AutoRecordActionReceiver", "Undo: server delete failed for serverId=$serverId")
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "撤销失败，请稍后在流水页手动删除", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                            else -> Unit
-                        }
-                    } else {
-                        appLogger.warn("AutoRecordActionReceiver", "Undo: server record has null id for clientId=$clientId")
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "撤销失败", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-                else -> {
-                    appLogger.warn("AutoRecordActionReceiver", "Undo: record not found for clientId=$clientId")
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "撤销失败，记录未找到", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
+            showToast(context, MSG_UNDONE)
+        } else {
+            appLogger.warn("AutoRecordActionReceiver", "Undo: 服务端删除失败 serverId=$serverId")
+            showToast(context, MSG_FAILED_MANUAL)
+        }
+    }
+
+    private suspend fun showToast(context: Context, message: String) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
     }
 

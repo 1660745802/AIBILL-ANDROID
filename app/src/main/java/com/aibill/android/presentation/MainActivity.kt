@@ -15,6 +15,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.aibill.android.data.remote.interceptor.AuthEvent
 import com.aibill.android.data.remote.interceptor.AuthEventBus
+import com.aibill.android.data.remote.interceptor.SessionEndReason
+import com.aibill.android.data.remote.interceptor.TokenManager
 import com.aibill.android.presentation.navigation.AiBillNavHost
 import com.aibill.android.presentation.theme.AiBillTheme
 import com.aibill.android.presentation.ui.auth.AppLockScreen
@@ -30,7 +32,7 @@ class MainActivity : FragmentActivity() {
     lateinit var authEventBus: AuthEventBus
 
     @Inject
-    lateinit var tokenManager: com.aibill.android.data.remote.interceptor.TokenManager
+    lateinit var tokenManager: TokenManager
 
     @Inject
     lateinit var appLogger: com.aibill.android.util.AppLogger
@@ -48,7 +50,7 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         navigateTo = resolveNavigateTo(intent)
         observeAuthEvents()
-        notifyIfSessionExpiredSilently()
+        notifyIfSessionExpiredInBackground()
         appLogger.autoCleanOldLogs(this)
 
         // ★ 同步初始化锁定态（解决 PR #41 覆盖不到的冷启动 race）
@@ -149,18 +151,33 @@ class MainActivity : FragmentActivity() {
      * 背景：`AuthEventBus` 是无 replay 的 SharedFlow，而这里只在 `STARTED`
      * 期间 collect。当 401 发生在**后台**（典型场景：通知监听服务调 AI 时
      * token 过期）时，MainActivity 不在前台 → 事件被丢弃，但
-     * `AuthInterceptor` 已经调了 `clearSession()`。用户下次打开 App 只能看到
-     * 登录页，完全不知道「什么时候、被什么踢的」。
+     * `AuthInterceptor` 已经结束会话。用户下次打开 App 只能看到登录页，
+     * 完全不知道「什么时候、被什么踢的」。
      *
-     * 这里在冷启动时主动查一次：**曾经登录过（lastKnownUserId 存在）但当前
-     * 没有 token** → 判定为 token 过期而非首次安装，给出明确说明。
+     * 这里在冷启动时主动读一次**持久化的会话结束原因**
+     * （[TokenManager.getSessionEndReason]，由 `endSession` 写入、`saveSession` 清除）：
+     *
+     * - [SessionEndReason.TOKEN_EXPIRED] → 真的被过期踢掉，给出说明
+     * - [SessionEndReason.SIGNED_OUT] → 用户自己退出的，属于预期内，**不打扰**
+     * - `null` → 无已知的会话结束（首次安装 / 已重新登录），不提示
+     *
+     * ⚠️ 不可回退到 `lastKnownUserId != null && !hasToken()` 这种猜测：
+     * 登出保留 `last_known_user_id` 之后（B6 修复），主动登出也会命中那个条件，
+     * 从而把「我自己退出的」误报成「登录已过期」。
      */
-    private fun notifyIfSessionExpiredSilently() {
-        val wasLoggedInBefore = tokenManager.getLastKnownUserId() != null
-        val hasSession = tokenManager.hasToken()
-        if (wasLoggedInBefore && !hasSession) {
-            appLogger.info("AUTH", "检测到登录态被静默清除（疑似后台 401），展示过期提示")
-            Toast.makeText(this, "登录已过期，请重新登录", Toast.LENGTH_LONG).show()
+    private fun notifyIfSessionExpiredInBackground() {
+        if (tokenManager.hasToken()) return
+        when (tokenManager.getSessionEndReason()) {
+            SessionEndReason.TOKEN_EXPIRED -> {
+                appLogger.info("AUTH", "检测到会话被后台 401 结束，展示过期提示")
+                Toast.makeText(this, "登录已过期，请重新登录", Toast.LENGTH_LONG).show()
+            }
+            SessionEndReason.SIGNED_OUT -> {
+                // 用户主动退出或未带凭证被拒：不提示
+            }
+            null -> {
+                // 首次安装或已重新登录：没有会话结束记录
+            }
         }
     }
 }

@@ -33,11 +33,44 @@ interface PendingTransactionDao {
     @Query("SELECT COUNT(*) FROM pending_transactions WHERE sync_status = 'pending'")
     fun observePendingCount(): Flow<Int>
 
+    /**
+     * 只用于**成功**路径（无 serverId 时降级标 synced）。
+     *
+     * ⚠️ **禁止用于失败路径**：本方法不写 `last_error`，用它标 failed 会让
+     * [resetFailedMatching] 的 WHERE 条件（`last_error LIKE :errorPattern`）永远匹配不到，
+     * 401 这类**可恢复**失败就会变成真终态、离线记账永久卡死在本地。
+     * 失败一律走 [markFailed]。
+     */
     @Query("UPDATE pending_transactions SET sync_status = :status, updated_at = :updatedAt WHERE client_id = :clientId")
     suspend fun updateSyncStatus(clientId: String, status: String, updatedAt: Long = System.currentTimeMillis())
 
+    /**
+     * 标记为**终态失败**，并在**同一条 UPDATE** 中原子写入 `sync_status` + 失败原因 + 时间戳。
+     *
+     * 为什么必须一条 SQL：分成「先 updateSyncStatus 再写 last_error」两步会在中间留下
+     * 一个 `sync_status='failed'` 但 `last_error IS NULL` 的窗口——此时
+     * [resetFailedMatching] 匹配不上，这条可恢复失败就被永久判死。
+     *
+     * @param error 失败原因，须与 [SyncWorker.ERROR_TOKEN_EXPIRED_PATTERN] 等恢复判据可匹配。
+     */
+    @Query(
+        """
+        UPDATE pending_transactions
+        SET sync_status = 'failed', last_error = :error, updated_at = :updatedAt
+        WHERE client_id = :clientId
+        """
+    )
+    suspend fun markFailed(clientId: String, error: String, updatedAt: Long = System.currentTimeMillis())
+
+    /**
+     * 标记同步成功并写入服务端 transaction id。
+     *
+     * @return 受影响行数：**0 = 这条 pending 在同步期间已被删除**（用户撤销）。
+     * [com.aibill.android.service.SyncWorker] 用它判断「服务端已建好、但本地没人要了」，
+     * 从而触发补偿删除。SQL 不变，Room 对 UPDATE 语句自动返回受影响行数。
+     */
     @Query("UPDATE pending_transactions SET sync_status = :status, server_transaction_id = :serverId, updated_at = :updatedAt WHERE client_id = :clientId")
-    suspend fun markSynced(clientId: String, serverId: Int, status: String = "synced", updatedAt: Long = System.currentTimeMillis())
+    suspend fun markSynced(clientId: String, serverId: Int, status: String = "synced", updatedAt: Long = System.currentTimeMillis()): Int
 
     @Query("UPDATE pending_transactions SET retry_count = retry_count + 1, last_error = :error, updated_at = :updatedAt WHERE client_id = :clientId")
     suspend fun incrementRetryCount(clientId: String, error: String?, updatedAt: Long = System.currentTimeMillis())
@@ -54,6 +87,12 @@ interface PendingTransactionDao {
      *
      * 只按 [errorPattern] 精确匹配 last_error（而非重置全部 failed），
      * 避免把「业务错误 / 服务端异常 / 超过最大重试」这些不可恢复的失败也重置成无限重试。
+     *
+     * ⚠️ 本查询**完全依赖** [markFailed] 确实写入了 `last_error`。历史上
+     * SyncWorker.markFailed 误用 [updateSyncStatus]（不写 last_error），
+     * 导致本方法恒返回 0 —— 401 恢复是死代码。现已由
+     * `SyncWorkerSyncTransactionTest`（reason 断言）+ `PendingTransactionDaoMarkFailedTest`
+     * （写入→重置的端到端不变量）双重锁住。
      */
     @Query(
         """
