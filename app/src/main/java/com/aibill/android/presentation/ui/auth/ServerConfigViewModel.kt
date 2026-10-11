@@ -24,8 +24,13 @@ data class ServerConfigUiState(
     val isTesting: Boolean = false,
     val isConnected: Boolean = false,
     val error: String? = null,
-    /** 待同步离线交易数量，UI 用于切换服务器前提示 */
-    val pendingCount: Int = 0,
+    /**
+     * 未同步条数（含 failed），UI 用于切换服务器前的二次确认。
+     *
+     * **快照**：仅在 `init` 里取一次，之后不随队列变化刷新。
+     * 口径见 [PendingTransactionRepository.getAnyUnsyncedCount]。
+     */
+    val unsyncedCount: Int = 0,
 )
 
 /**
@@ -47,11 +52,11 @@ class ServerConfigViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             val savedUrl = userPreferences.serverUrl.first()
-            val count = pendingTransactionRepository.getPendingCount()
+            val count = pendingTransactionRepository.getAnyUnsyncedCount()
             _uiState.update {
                 it.copy(
                     serverUrl = savedUrl.orEmpty(),
-                    pendingCount = count,
+                    unsyncedCount = count,
                 )
             }
         }
@@ -89,7 +94,19 @@ class ServerConfigViewModel @Inject constructor(
     }
 
     /**
-     * @param clearLocalCache true 清空 pending/categories/accounts；首次配置可传 false。
+     * 保存服务器地址；`clearLocalCache` 为 true 时同时清空 pending/categories/accounts。
+     *
+     * 事实性说明（**不是**可选入口）：UI 的两处调用点——直接保存与二次确认——
+     * 都固定传 `true`，当前**没有**任何调用方传 `false`。参数保留是为了让
+     * 「首配置/不希望清空」的语义在签名上仍有表达力；新增调用方若要传 `false`，
+     * 必须先想清楚它与 [hasPendingData] 的弹框逻辑如何配合，不要默认复用。
+     * 清空范围固定为三张表（pending/categories/accounts），**不含** notification_records。
+     *
+     * ⚠️ 这与 `AuthRepositoryImpl.clearLocalCache()`（清 4 张，含 `notificationRecordDao`）
+     * **不一致**：换服务器后，上一台服务器捕获的通知记录会留在本地并继续展示。
+     * 该差异属**既有行为，本轮（纯注释 + 测试修正）未评审**——「切换服务器时是否应当
+     * 一并清空通知记录」保留为**显式待决问题**，本注释既不主张该清、也不主张不该清。
+     * 谁要动它，请单独立项并覆盖 UI 对本地通知记录的预期。
      */
     fun onSave(clearLocalCache: Boolean = true) {
         viewModelScope.launch {
@@ -98,13 +115,14 @@ class ServerConfigViewModel @Inject constructor(
                 pendingTransactionRepository.deleteAll()
                 categoryRepository.deleteAll()
                 accountRepository.deleteAll()
-                _uiState.update { it.copy(pendingCount = 0) }
+                _uiState.update { it.copy(unsyncedCount = 0) }
             }
             userPreferences.setServerUrl(url)
         }
     }
 
-    fun hasPendingData(): Boolean = _uiState.value.pendingCount > 0
+    /** 是否存在「切换服务器时会被一并清空」的未同步数据（pending + failed）。 */
+    fun hasPendingData(): Boolean = _uiState.value.unsyncedCount > 0
 
     private fun normalizeUrl(input: String): String {
         var url = input.trim()

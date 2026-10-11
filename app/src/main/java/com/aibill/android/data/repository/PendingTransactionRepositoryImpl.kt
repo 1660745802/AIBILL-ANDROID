@@ -11,7 +11,7 @@ class PendingTransactionRepositoryImpl @Inject constructor(
     private val dao: PendingTransactionDao,
 ) : PendingTransactionRepository {
     override suspend fun insert(entity: PendingTransactionEntity) = dao.insert(entity)
-    override suspend fun getPendingCount(): Int = dao.getPendingCount()
+    override suspend fun getAnyUnsyncedCount(): Int = dao.getAnyUnsyncedCount()
     override suspend fun deleteAll() = dao.deleteAll()
     override suspend fun findByClientId(clientId: String): PendingTransactionEntity? =
         dao.findByClientId(clientId)
