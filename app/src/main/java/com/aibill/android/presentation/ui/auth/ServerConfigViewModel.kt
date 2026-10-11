@@ -103,8 +103,14 @@ class ServerConfigViewModel @Inject constructor(
      * 清空范围固定为三张表（pending/categories/accounts），**不含** notification_records。
      *
      * ⚠️ 这与 `AuthRepositoryImpl.clearLocalCache()`（清 4 张，含 `notificationRecordDao`）
-     * **不一致**：换服务器后，上一台服务器捕获的通知记录会留在本地并继续展示。
-     * 该差异属**既有行为，本轮（纯注释 + 测试修正）未评审**——「切换服务器时是否应当
+     * **不一致**：换服务器后，上一台服务器捕获的通知记录会**残留在本地**。
+     *
+     * 但「残留」≠「用户看得见」：保存后强制回登录页（`NavHost` 的 `onConfigured`
+     * → `navigateToLoginAfterServerConfig`），下次登录若判为**换号**会走
+     * `clearLocalCache()` 把它们一并清掉，全程不可见；只有判为**同账号**
+     * （新旧 userId 数字相同，即跨服务器 id 碰撞，自建部署常见）才保留并展示。
+     *
+     * 该差异属**既有行为，本轮未评审**——「切换服务器时是否应当
      * 一并清空通知记录」保留为**显式待决问题**，本注释既不主张该清、也不主张不该清。
      * 谁要动它，请单独立项并覆盖 UI 对本地通知记录的预期。
      */
