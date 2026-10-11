@@ -36,6 +36,8 @@ import javax.inject.Singleton
  *   3. 去重通过 → 送服务端确认 → 落本地缓存/审计行 + 轻通知
  *     服务端没确认（没网 / 业务错误 / 鉴权）→ 降级进待审池，信息不丢
  *   4. 去重命中 → 静默丢弃
+ *   5. AI 没能解析（除 401 外的一切失败）→ 通知原文落 `raw` 行，用户在通知中心看得见
+ *     （401 另有待补偿队列，同号重登后重放）
  *
  * 设计要点：
  * - 客户端不做文本合并，每条通知单独调 AI，避免「A11Y 全支付页 + NLS 短确认」合出 800 字把后端打挂
@@ -206,6 +208,7 @@ class NotificationProcessor @Inject constructor(
                     "NLS",
                     "AI失败: code=${response.code} msg=${response.message} pkg=${item.packageName}"
                 )
+                enqueueUnparsed(item, "code=${response.code}")
                 return
             }
             recordAiOutcome(item.packageName, success = true)
@@ -276,12 +279,51 @@ class NotificationProcessor @Inject constructor(
                 )
             } else {
                 appLogger.error("NLS", "AI HTTP 异常 ${e.code()}: ${e.message()}")
-                Timber.w(e, "AI HTTP 失败，丢弃: ${item.packageName}")
+                Timber.w(e, "AI HTTP 失败，落原文: ${item.packageName}")
+                enqueueUnparsed(item, "http=${e.code()}")
             }
         } catch (e: Exception) {
             recordAiOutcome(item.packageName, success = false)
             appLogger.error("NLS", "AI异常: ${e.message}")
-            Timber.w(e, "AI 解析失败，丢弃: ${item.packageName}")
+            Timber.w(e, "AI 解析失败，落原文: ${item.packageName}")
+            enqueueUnparsed(item, e.javaClass.simpleName)
+        }
+    }
+
+    /**
+     * 解析失败（非 401）时把通知原文落一行 [STATUS_RAW]。
+     *
+     * ## 为什么不是丢
+     *
+     * 「不漏账」的漏点从来不是「无网时捕获不到」——支付本身需要网络，通知在支付后
+     * 几秒到达，那时网络可用。真正的漏点是**解析失败**：旧实现里超时 / 5xx / 5001
+     * （服务端 AI 解析失败）/ 网络异常一律 `log + 丢弃`，真实交易通知静默消失，
+     * 用户毫无感知（差评「明明付了钱怎么没记上」最可能来自这里）。
+     *
+     * 因此这里只做**捕获**，不做自动重放：这类失败罕见，建调度器是为低频场景造机制。
+     * 用户在通知中心看得见这一行（列表查 `status IN ('raw','parsed')`），
+     * 单条确认走编辑对话框可手动填金额。
+     *
+     * 401 不走这里：它另有语义（进待补偿、同号重登后重放），见 [enqueueAuthPending]。
+     */
+    private suspend fun enqueueUnparsed(item: Item, reason: String) {
+        try {
+            notificationRecordDao.insert(
+                NotificationRecordEntity(
+                    packageName = item.packageName,
+                    title = item.title.ifBlank { null },
+                    content = item.fullText,
+                    status = STATUS_RAW,
+                    receivedAt = item.receivedAt,
+                )
+            )
+            appLogger.warn(
+                "NLS",
+                "AI 未解析，落原文待人工确认: reason=$reason pkg=${item.packageName} text=${item.fullText.take(60)}"
+            )
+        } catch (e: Exception) {
+            // 落库失败也不能让异常向上抛崩协程
+            appLogger.error("NLS", "原文捕获写入失败: ${e.message}")
         }
     }
 
@@ -353,6 +395,12 @@ class NotificationProcessor @Inject constructor(
 
         /** 熔断表条数上限，超过后触发过期清理 */
         private const val MAX_BREAKER_ENTRIES = 64
+
+        /**
+         * 捕获到但没能解析的状态：通知原文已落库，金额/分类留空，等用户在通知中心手动补。
+         * 既有语义（表默认值与列表查询都在用），不是新状态。
+         */
+        const val STATUS_RAW = "raw"
 
         /** 待补偿记录的状态：AI 因 401 未能解析，等重登录后重放 */
         const val STATUS_AUTH_PENDING = "auth_pending"

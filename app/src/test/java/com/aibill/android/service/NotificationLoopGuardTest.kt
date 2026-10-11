@@ -217,7 +217,7 @@ class NotificationLoopGuardTest {
     }
 
     @Test
-    fun `B2 回归：非 401 的 HTTP 错误不入待补偿队列`() = runTest {
+    fun `B2 回归：非 401 的 HTTP 错误不入待补偿队列，但原文落 raw`() = runTest {
         val dao = mockk<NotificationRecordDao>(relaxed = true)
         val inserted = mutableListOf<NotificationRecordEntity>()
         coEvery { dao.insert(capture(inserted)) } returns 1L
@@ -232,5 +232,12 @@ class NotificationLoopGuardTest {
             inserted.none { it.status == NotificationProcessor.STATUS_AUTH_PENDING },
             "500 不应入待补偿队列（重登也救不回来）",
         )
+        // 但也不能丢：「不漏账」的落点是原文留痕，用户在通知中心看得见、手动补金额
+        assertEquals(
+            1,
+            inserted.count { it.status == NotificationProcessor.STATUS_RAW },
+            "500 必须落一行 raw，实际写入=$inserted",
+        )
+        assertEquals("扣款50.00元", inserted.single().content)
     }
 }

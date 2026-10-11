@@ -37,9 +37,13 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import okhttp3.ResponseBody.Companion.toResponseBody
+import retrofit2.HttpException
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -205,6 +209,36 @@ class NotificationProcessorTest {
     private fun setupValidatorInvalid() {
         coEvery { aiResultValidator.validate(any(), any(), any(), any(), any()) } returns
             AiResultValidator.ValidationResult(isValid = false, errors = listOf("invalid"))
+    }
+
+    /** 构造指定 HTTP 状态码的 HttpException */
+    private fun httpErr(code: Int): HttpException =
+        HttpException(retrofit2.Response.error<Any>(code, "{}".toResponseBody(null)))
+
+    /** 把这一轮写进 `notification_records` 的所有行收上来（按调用顺序）。 */
+    private fun captureInserted(): List<NotificationRecordEntity> {
+        val inserted = mutableListOf<NotificationRecordEntity>()
+        coEvery { notificationRecordDao.insert(capture(inserted)) } answers { inserted.size + 1L }
+        return inserted
+    }
+
+    /**
+     * 「没解析出来」绝不许伴随任何回执。
+     *
+     * 捕获原文是让用户自己看见，不是替系统宣布记上了——PRODUCT §五.4：
+     * 不主张不确定的状态。
+     */
+    private fun verifyNoReceipt() {
+        io.mockk.verify(exactly = 0) {
+            com.aibill.android.util.NotificationHelper.showAutoRecordedNotification(
+                any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        }
+        io.mockk.verify(exactly = 0) {
+            com.aibill.android.util.NotificationHelper.showConfirmNotification(
+                any(), any(), any(), any(), any(), any(), any(),
+            )
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -648,9 +682,11 @@ class NotificationProcessorTest {
 
         advanceTimeBy(11_000)
 
-        // 不应有任何 DB 操作
-        coVerify(exactly = 0) { notificationRecordDao.insert(any()) }
+        // 2026-11 修正：解析失败不再丢弃，原文落一行 raw —— 「不漏账」的漏点在这里，
+        // 跟有没有网无关。旧的断言是「一行都不许写」，那正是用户差评的成因。
+        coVerify(exactly = 1) { notificationRecordDao.insert(match { it.status == NotificationProcessor.STATUS_RAW }) }
         coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
+        verifyNoReceipt()
     }
 
     @Test
@@ -666,7 +702,74 @@ class NotificationProcessorTest {
 
         advanceTimeBy(11_000)
 
+        // AI 明确判定「不是支付」才是丢弃；解析不出东西 ≠ 判定不是账
         coVerify(exactly = 0) { notificationRecordDao.insert(any()) }
         coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 解析失败 → 捕获原文（产品缺口「不漏账」的落点）
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("10. AI 抛 5xx → 落一行 raw（金额留空），不发任何回执")
+    fun `server error captures raw row`() = runTest(testDispatcher) {
+        coEvery { aiApi.parse(any()) } throws httpErr(500)
+        val inserted = captureInserted()
+
+        processor.process(makeItem(fullText = "支付成功 ¥32.00 午餐", receivedAt = 1_700_000L))
+
+        val captured = inserted.filter { it.status == NotificationProcessor.STATUS_RAW }
+        assertEquals(1, captured.size, "5xx 必须捕获原文，实际=$captured")
+        assertEquals("微信支付", captured.first().title)
+        assertEquals("支付成功 ¥32.00 午餐", captured.first().content)
+        assertNull(captured.first().parsedAmount, "没解析出金额时必须留空，不能编一个")
+        assertNull(captured.first().parsedType)
+        assertEquals(1_700_000L, captured.first().receivedAt)
+        // 不是账，更不许假装记上了
+        coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
+        verifyNoReceipt()
+    }
+
+    @Test
+    @DisplayName("10b. AI 抛 IOException（网络异常）→ 落一行 raw")
+    fun `network failure captures raw row`() = runTest(testDispatcher) {
+        coEvery { aiApi.parse(any()) } throws IOException("timeout")
+        val inserted = captureInserted()
+
+        processor.process(makeItem(fullText = "支付成功 ¥1.80 交通卡"))
+
+        assertEquals(1, inserted.count { it.status == NotificationProcessor.STATUS_RAW })
+        verifyNoReceipt()
+    }
+
+    @Test
+    @DisplayName("10c. AI 返回业务码 5001（服务端解析失败）→ 落一行 raw")
+    fun `business code 5001 captures raw row`() = runTest(testDispatcher) {
+        coEvery { aiApi.parse(any()) } returns ApiResponse(code = 5001, data = null, message = "AI 解析失败")
+        val inserted = captureInserted()
+
+        processor.process(makeItem(fullText = "支付成功 ¥20.00 招行"))
+
+        val captured = inserted.filter { it.status == NotificationProcessor.STATUS_RAW }
+        assertEquals(1, captured.size, "5001 是最常见的解析失败，不能静默消失")
+        assertEquals("支付成功 ¥20.00 招行", captured.first().content)
+        verifyNoReceipt()
+    }
+
+    @Test
+    @DisplayName("10d. 401 仍走待补偿：只落 auth_pending，不落 raw")
+    fun `auth failure stays in auth pending`() = runTest(testDispatcher) {
+        coEvery { aiApi.parse(any()) } throws httpErr(401)
+        val inserted = captureInserted()
+
+        processor.process(makeItem(fullText = "支付成功 ¥20.00 招行"))
+
+        assertEquals(
+            1,
+            inserted.count { it.status == NotificationProcessor.STATUS_AUTH_PENDING },
+            "401 的既有语义不动：进待补偿等重登重放",
+        )
+        assertEquals(0, inserted.count { it.status == NotificationProcessor.STATUS_RAW })
     }
 }
