@@ -1,7 +1,9 @@
 package com.aibill.android.presentation.ui.auth
 
+import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.UserPreferences
+import com.aibill.android.data.repository.NotificationRecordRepositoryImpl
 import com.aibill.android.data.repository.PendingTransactionRepositoryImpl
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
@@ -36,6 +38,11 @@ import org.junit.jupiter.api.Test
  * 「domain 承诺 pending+failed，实现却委托 `dao.getPendingCount()`」
  * 若在接口层打桩，mock 会**遮住**这次委托，变异永远不会被发现。
  * 只有让被测链路穿过真实 impl，才能钉住那行委托。
+ *
+ * `NotificationRecordRepository` **同样走真实 impl + mockk<NotificationRecordDao>**
+ * （G-3 新增的第 4 张表）：若改用 `mockk<NotificationRecordRepository>()`，
+ * 「`Impl.deleteAll()` 实际委托错了 DAO 方法」这一历史形态的 bug 就无从发现，
+ * 变异测试会变绿。因此 `onSave` 的断言一律落在 **DAO** 层，与 pending 那条同构。
  *
  * ## SQL 层口径另有覆盖，本文件只锁委托层与 ViewModel 决策
  *
@@ -72,6 +79,7 @@ class ServerConfigViewModelTest {
     private val pendingDao = mockk<PendingTransactionDao>()
     private val categoryRepository = mockk<CategoryRepository>()
     private val accountRepository = mockk<AccountRepository>()
+    private val notificationDao = mockk<NotificationRecordDao>()
 
     @BeforeEach
     fun setUp() {
@@ -88,6 +96,7 @@ class ServerConfigViewModelTest {
 
         coEvery { categoryRepository.deleteAll() } just runs
         coEvery { accountRepository.deleteAll() } just runs
+        coEvery { notificationDao.deleteAll() } just runs
     }
 
     @AfterEach
@@ -104,6 +113,7 @@ class ServerConfigViewModelTest {
         pendingTransactionRepository = PendingTransactionRepositoryImpl(pendingDao),
         categoryRepository = categoryRepository,
         accountRepository = accountRepository,
+        notificationRecordRepository = NotificationRecordRepositoryImpl(notificationDao),
     )
 
     @Test
@@ -134,7 +144,7 @@ class ServerConfigViewModelTest {
     }
 
     @Test
-    fun `onSave with clearLocalCache - clears exactly three tables and resets the count`() =
+    fun `onSave with clearLocalCache - clears exactly four tables and resets the count`() =
         runTest {
             coEvery { pendingDao.getAnyUnsyncedCount() } returns 3
 
@@ -146,6 +156,8 @@ class ServerConfigViewModelTest {
             coVerify(exactly = 1) { pendingDao.deleteAll() }
             coVerify(exactly = 1) { categoryRepository.deleteAll() }
             coVerify(exactly = 1) { accountRepository.deleteAll() }
+            // G-3：第 4 张表（断言落在 DAO，同时锁住 Impl 的委托）
+            coVerify(exactly = 1) { notificationDao.deleteAll() }
             coVerify(exactly = 1) { userPreferences.setServerUrl(SERVER_URL) }
             // 清空后计数归零，二次确认不会再触发。
             assertEquals(false, viewModel.hasPendingData())
@@ -163,6 +175,8 @@ class ServerConfigViewModelTest {
             coVerify(exactly = 0) { pendingDao.deleteAll() }
             coVerify(exactly = 0) { categoryRepository.deleteAll() }
             coVerify(exactly = 0) { accountRepository.deleteAll() }
+            // 不清空路径连第 4 张表也不能碰
+            coVerify(exactly = 0) { notificationDao.deleteAll() }
             coVerify(exactly = 1) { userPreferences.setServerUrl(SERVER_URL) }
             // 不清空 ⇒ 计数原样保留。
             assertEquals(2, viewModel.uiState.value.unsyncedCount)

@@ -155,6 +155,10 @@ class AuthRepositoryImpl @Inject constructor(
      * PR #44：**换号**时清空 pending/categories/accounts/notifications。
      * 仅由「首次登录 / 真正换号 / userId 未知」路径调用；
      * 同账号重登走 [onSameAccountRelogin]，不清 pending（避免丢失离线记账）。
+     *
+     * **表集合与 `ServerConfigViewModel.onSave(clearLocalCache = true)` 必须一致（都是 4 张）**：
+     * 改这里必须同步改那边，反之亦然；两边各由自己的测试钉住 4 表
+     * （`AuthRepositoryImplTest` / `ServerConfigViewModelTest`）。
      */
     private suspend fun clearLocalCache() {
         pendingTransactionDao.deleteAll()

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
+import com.aibill.android.domain.repository.NotificationRecordRepository
 import com.aibill.android.domain.repository.PendingTransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +45,7 @@ class ServerConfigViewModel @Inject constructor(
     private val pendingTransactionRepository: PendingTransactionRepository,
     private val categoryRepository: CategoryRepository,
     private val accountRepository: AccountRepository,
+    private val notificationRecordRepository: NotificationRecordRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerConfigUiState())
@@ -94,25 +96,21 @@ class ServerConfigViewModel @Inject constructor(
     }
 
     /**
-     * 保存服务器地址；`clearLocalCache` 为 true 时同时清空 pending/categories/accounts。
+     * 保存服务器地址；`clearLocalCache` 为 true 时同时清空 pending/categories/accounts/notification_records。
      *
      * 事实性说明（**不是**可选入口）：UI 的两处调用点——直接保存与二次确认——
      * 都固定传 `true`，当前**没有**任何调用方传 `false`。参数保留是为了让
      * 「首配置/不希望清空」的语义在签名上仍有表达力；新增调用方若要传 `false`，
      * 必须先想清楚它与 [hasPendingData] 的弹框逻辑如何配合，不要默认复用。
-     * 清空范围固定为三张表（pending/categories/accounts），**不含** notification_records。
+     * 清空范围固定为 4 张表（pending/categories/accounts/notification_records），
+     * 与 `AuthRepositoryImpl.clearLocalCache()` **逐表一致**；两边必须同步改，
+     * 各自的测试分别钉住 4 表（`ServerConfigViewModelTest` / `AuthRepositoryImplTest`）。
+     * 新增第 5 张表时两处都要动——已知单点，尚未抽公共 cleaner。
      *
-     * ⚠️ 这与 `AuthRepositoryImpl.clearLocalCache()`（清 4 张，含 `notificationRecordDao`）
-     * **不一致**：换服务器后，上一台服务器捕获的通知记录会**残留在本地**。
-     *
-     * 但「残留」≠「用户看得见」：保存后强制回登录页（`NavHost` 的 `onConfigured`
-     * → `navigateToLoginAfterServerConfig`），下次登录若判为**换号**会走
-     * `clearLocalCache()` 把它们一并清掉，全程不可见；只有判为**同账号**
-     * （新旧 userId 数字相同，即跨服务器 id 碰撞，自建部署常见）才保留并展示。
-     *
-     * 该差异属**既有行为，本轮未评审**——「切换服务器时是否应当
-     * 一并清空通知记录」保留为**显式待决问题**，本注释既不主张该清、也不主张不该清。
-     * 谁要动它，请单独立项并覆盖 UI 对本地通知记录的预期。
+     * G-3：历史上此处只清 3 张、通知记录会残留。现已补齐第 4 张，与 [AuthRepositoryImpl.clearLocalCache] 逐表一致。
+     * 代价：A→B→A 换回原服务器时，中间捕获的通知记录一并丢失——通知记录是**设备侧**捕获
+     * 的审计数据，不带服务器归属，按「换服务器 = 换命名空间」处理，接受该丢失。
+     * `ServerConfig` 仅从登录页可达，故不存在「用户在线时被误清」。
      */
     fun onSave(clearLocalCache: Boolean = true) {
         viewModelScope.launch {
@@ -121,6 +119,7 @@ class ServerConfigViewModel @Inject constructor(
                 pendingTransactionRepository.deleteAll()
                 categoryRepository.deleteAll()
                 accountRepository.deleteAll()
+                notificationRecordRepository.deleteAll()
                 _uiState.update { it.copy(unsyncedCount = 0) }
             }
             userPreferences.setServerUrl(url)

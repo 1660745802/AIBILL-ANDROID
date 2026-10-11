@@ -359,6 +359,7 @@ sealed class AuthEvent {
 | **同账号重登**（Token 过期或**显式登出后**重登，典型场景） | `oldId != null && oldId == newId` | **保留**；并把 `last_error LIKE '%Token expired%'` 的记录重置回 `pending`（`resetFailedMatching`），再主动排一次同步 | 保留（server 派生缓存，`HomeViewModel.refresh()` 会重新拉；清掉会造成登录后短暂空白） |
 | **换号** | `oldId != null && oldId != newId` | 清空 | 清空 |
 | **首次登录 / 旧版本无 userId** | `oldId == null` | 清空（保守，无法判断是否换号） | 清空 |
+| **切换服务器**（`ServerConfig` 页保存，`clearLocalCache = true`） | 用户主动保存（不走 `oldId` 判定） | 清空 | 清空（含 `notification_records`，与上面两类登录路径**逐表一致**，都是 4 张；两边测试各钉 4 表） |
 
 > ⚠️ 历史 bug（1）：早期实现**无条件** `clearLocalCache()`。Token 30 天过期（无 refresh
 > token）恰恰是离线数据最容易堆积的时刻，用户重登后所有未同步的记账被物理删除。
