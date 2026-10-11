@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
 
+    <!-- RECEIVE_SMS 会让 Play/系统认为本 App 必需电话硬件，从而在无短信能力的设备
+         （平板 / ChromeOS）上被判定为不兼容。声明为不需要即可，短信渠道自然降级。 -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+
     <!-- PR 安全加固：仅同签名 App 可调用 ExternalActionReceiver 静默入账，
          避免第三方伪造 Intent 任意记账（auto_confirm=true 路径）。
          仅"打开 App 预填"分支（auto_confirm=false）保留对任意调用方开放。 -->

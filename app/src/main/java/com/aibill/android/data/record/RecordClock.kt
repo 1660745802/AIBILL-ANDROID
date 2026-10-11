@@ -49,11 +49,18 @@ data class RecordMoment(
         /** 系统时钟：与迁移前的 `LocalDate.now()` / `LocalTime.now()` / `Instant.now()` 同源同口径 */
         fun system(): RecordMoment = of(Instant.now(), ZoneId.systemDefault())
 
-        fun of(instant: Instant, zone: ZoneId): RecordMoment = RecordMoment(
-            instant = instant,
-            localDate = LocalDate.ofInstant(instant, zone),
-            localTime = LocalTime.ofInstant(instant, zone),
-            localDateTime = LocalDateTime.ofInstant(instant, zone),
-        )
+        fun of(instant: Instant, zone: ZoneId): RecordMoment {
+            // ⚠️ 不能用 LocalDate.ofInstant / LocalTime.ofInstant —— 它们是 API 34 才有的，
+            // 在 minSdk 26 的设备上会 NoSuchMethodError（记录路径每次入账都要过这里）。
+            // atZone(zone).toLocalDate()/toLocalTime() 是 API 26 起可用的等价写法。
+            // 单测跑在 JVM 上 java.time 齐全，照不出这个差异，靠 lint 的 NewApi 守着。
+            val zoned = instant.atZone(zone)
+            return RecordMoment(
+                instant = instant,
+                localDate = zoned.toLocalDate(),
+                localTime = zoned.toLocalTime(),
+                localDateTime = LocalDateTime.ofInstant(instant, zone),
+            )
+        }
     }
 }
