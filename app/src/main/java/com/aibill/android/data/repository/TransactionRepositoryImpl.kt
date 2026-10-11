@@ -19,6 +19,7 @@ import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.service.SyncScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,6 +39,41 @@ class TransactionRepositoryImpl @Inject constructor(
         }
     }
 
+    /**
+     * 落离线一笔，并在**写库之后**立刻排一次同步。
+     *
+     * ## 它已不再是「纯写库」
+     *
+     * 历史上这里只 `insert`，排同步全靠兜底：`NetworkMonitor` 的「不可用→可用」
+     * 跳变、App 启动那一次、以及用户手动点同步。WiFi 常连时的瞬时失败记账会一直躺着，
+     * 直到下一次跳变——而 `README.md` 与 Home 待同步横幅都在承诺「联网后会自动补传」。
+     * 既然写库的那一刻就知道「这笔需要上传」，就该在这一刻排。
+     *
+     * ## 语义边界：Success 只代表「已入队」
+     *
+     * [SyncScheduler.scheduleSyncIfNeeded] 只是把 [SyncWorker] 入队
+     * （`NetworkType.CONNECTED` 约束 + unique work 串行），**不代表已上传**。
+     * 真实结果由队列状态与横幅呈现；调用方不得据此改写成「已同步/已上传」。
+     *
+     * ## 失败策略：只记日志，绝不回滚、绝不抛出
+     *
+     * 入队失败（WorkManager 抛异常）时这笔账**已经落库**，回滚等于丢用户数据；
+     * 抛给调用方则会让异常逃出 `viewModelScope`——本工程**没有**全局
+     * `CoroutineExceptionHandler`，未捕获异常走线程默认处理器 = **直接崩溃进程**；
+     * 即便假设它被吞，`ManualRecordViewModel` 末尾的 `isSaving` 复位也会被异常跳过，
+     * 按钮永久卡在「保存中」。剩余兜底仍有：
+     * 网络跳变、启动排同步、Home 横幅的手动同步按钮。
+     *
+     * ## 副作用：批量离线记账会排出多个 worker
+     *
+     * [SyncScheduler.scheduleSyncIfNeeded] 用 `APPEND_OR_REPLACE`，连录 N 笔
+     * 离线账就入队 N 个 worker；第 1 个跑完 `getAllPending()` 清空队列后，
+     * 第 2…N 个各自再取一次空队列并 `Result.success()` 早退。**不造成重复上传**
+     * （队列已空，且服务端按 `clientId` 的 `duplicates[]` 幂等），只是多几次
+     * 取空队列与抢锁的开销。批量导入场景若嫌浪费，可在此按需节流。
+     *
+     * 当前唯一调用者：`ManualRecordViewModel`（仅网络错误分支）。
+     */
     override suspend fun createTransactionOffline(transaction: Transaction) {
         val entity = PendingTransactionEntity(
             clientId = transaction.clientId,
@@ -59,6 +95,14 @@ class TransactionRepositoryImpl @Inject constructor(
             syncStatus = "pending",
         )
         pendingTransactionDao.insert(entity)
+        // 顺序不变量：**先写库、后排调度**。反过来可能让 worker 早于本行提交
+        // 就跑到空队列（白跑一轮，还要等下一次跳变才补传）。
+        // ⚠️ 这只是**入队**，不代表已上传。
+        try {
+            SyncScheduler.scheduleSyncIfNeeded(context)
+        } catch (e: Exception) {
+            Timber.w(e, "离线入库成功，但排同步失败 clientId=%s", entity.clientId)
+        }
     }
 
     override suspend fun getTransactions(query: TransactionQuery): Result<TransactionPage> {
