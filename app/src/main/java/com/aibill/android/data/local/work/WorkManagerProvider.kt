@@ -10,10 +10,13 @@ import javax.inject.Singleton
 /**
  * WorkManager 抽象层，封装 cancelUniqueWork 调用。
  *
- * 存在原因：AuthRepositoryImpl.awaitSyncIdle() 需要在 login/register
- * 前取消在飞的 SyncWorker。直接调 WorkManager.getInstance() 是静态
- * 调用，无法在单元测试中 mockk（mockkStatic + Android framework class
+ * 存在原因：本地数据归属 module（`LocalDataOwnership.awaitSyncQuiescence()`）
+ * 需要在 login/register 前取消在飞的 SyncWorker。直接调 WorkManager.getInstance()
+ * 是静态调用，无法在单元测试中 mockk（mockkStatic + Android framework class
  * 会触发 AbstractMethodError）。
+ *
+ * ⚠️ **唯一调用方是 `LocalDataOwnershipImpl`**（架构候选 4 收口前是
+ * `AuthRepositoryImpl.awaitSyncIdle()`）。
  *
  * 通过这个接口，测试可以传入 mock 实现，不需要触发真实 WorkManager。
  *

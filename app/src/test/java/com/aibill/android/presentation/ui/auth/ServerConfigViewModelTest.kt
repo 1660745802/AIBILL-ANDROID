@@ -1,13 +1,12 @@
 package com.aibill.android.presentation.ui.auth
 
-import com.aibill.android.data.local.dao.NotificationRecordDao
-import com.aibill.android.data.local.dao.PendingTransactionDao
 import android.content.Context
+import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.queue.SyncQueueImpl
-import com.aibill.android.data.repository.NotificationRecordRepositoryImpl
-import com.aibill.android.domain.repository.AccountRepository
-import com.aibill.android.domain.repository.CategoryRepository
+import com.aibill.android.domain.ownership.DisposalIntent
+import com.aibill.android.domain.ownership.DisposalOutcome
+import com.aibill.android.domain.ownership.LocalDataOwnership
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -28,21 +27,20 @@ import org.junit.jupiter.api.Test
 
 /**
  * `ServerConfigViewModel` 的回归测试，锁住「切换服务器前的二次确认」三件事：
- * 口径（含 failed）、弹框判定、以及 `onSave` 的清空行为。
+ * 口径（含 failed）、弹框判定、以及 `onSave` 的处置意图。
  *
- * ## 测试边界为什么是 DAO 而不是 queue interface
+ * ## 测试边界为什么一半是 DAO、一半是 mock（架构候选 4 之后）
  *
- * 本类用**真实** `SyncQueueImpl` + `mockk<PendingTransactionDao>`，
- * 而不是 `mockk<SyncQueue>()`。原因是一个可编译性事实：
- * 「未同步含 failed」这个口径写死在 `SyncQueueImpl` 委托的那一行 DAO 调用上，
- * 真正的历史 bug 形态「domain 承诺 pending+failed，实现却只数 pending」
- * 若在接口层打桩，mock 会**遮住**这次委托，变异永远不会被发现。
- * 只有让被测链路穿过真实 impl，才能钉住那行委托。
- *
- * `NotificationRecordRepository` **同样走真实 impl + mockk<NotificationRecordDao>**
- * （G-3 新增的第 4 张表）：若改用 `mockk<NotificationRecordRepository>()`，
- * 「`Impl.deleteAll()` 实际委托错了 DAO 方法」这一历史形态的 bug 就无从发现，
- * 变异测试会变绿。因此 `onSave` 的断言一律落在 **DAO** 层，与 pending 那条同构。
+ * - **计数仍走真实 impl + `mockk<PendingTransactionDao>`**：一个可编译性事实决定了这个选择——
+ *   「未同步含 failed」这个口径写死在 `SyncQueueImpl` 委托的那一行 DAO 调用上，
+ *   真实的历史 bug 形态「domain 承诺 pending+failed，实现却只数 pending」若在接口层打桩，
+ *   mock 会**遮住**这次委托，变异永远不会被发现。本 ViewModel 仍然直接持有 `SyncQueue`
+ *   取这个数，所以这层断言必须留着。
+ * - **处置改成 mock `LocalDataOwnership` + 断言意图**：「清哪几张表」不再由本 ViewModel
+ *   决定（收口前这里是手列的第二份清单，与 `AuthRepositoryImpl` 靠 KDoc 互保）。
+ *   清单唯一落点是 `LocalDataOwnershipImpl`，那里用**真实 Room 按表名**钉住 4 张表——
+ *   比收口前在这里断言 `NotificationRecordRepositoryImpl.deleteAll()` 委托对了没有更强：
+ *   委托错方法 / 漏一张表 / 只清 3 张，都会红。
  *
  * ## SQL 层口径另有覆盖，本文件只锁委托层与 ViewModel 决策
  *
@@ -73,15 +71,15 @@ import org.junit.jupiter.api.Test
  *   `:156-176`（确认框渲染）、`:168`（确认后才保存）**均无自动化测试**。
  *   本文件只测 `hasPendingData()` 这个**判定输入**，不覆盖弹框渲染与分支走向——
  *   即「判定为 true 就一定会弹」这一段仍是缺口（审计 P1-1，本轮不新建 Compose 测试）。
+ * - 不测「换服务器不做 SyncLock 握手」——那是归属 module 的事，
+ *   由 `LocalDataOwnershipImplTest` 钉住。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ServerConfigViewModelTest {
 
     private val userPreferences = mockk<UserPreferences>()
     private val pendingDao = mockk<PendingTransactionDao>()
-    private val categoryRepository = mockk<CategoryRepository>()
-    private val accountRepository = mockk<AccountRepository>()
-    private val notificationDao = mockk<NotificationRecordDao>()
+    private val ownership = mockk<LocalDataOwnership>()
     private val context: Context = mockk(relaxed = true)
 
     @BeforeEach
@@ -97,9 +95,7 @@ class ServerConfigViewModelTest {
         coEvery { pendingDao.getAnyUnsyncedCount() } returns 0
         coEvery { pendingDao.deleteAll() } just runs
 
-        coEvery { categoryRepository.deleteAll() } just runs
-        coEvery { accountRepository.deleteAll() } just runs
-        coEvery { notificationDao.deleteAll() } just runs
+        coEvery { ownership.dispose(any()) } returns DisposalOutcome.Cleared
     }
 
     @AfterEach
@@ -114,9 +110,7 @@ class ServerConfigViewModelTest {
     private fun buildViewModel() = ServerConfigViewModel(
         userPreferences = userPreferences,
         syncQueue = SyncQueueImpl(pendingDao, context),
-        categoryRepository = categoryRepository,
-        accountRepository = accountRepository,
-        notificationRecordRepository = NotificationRecordRepositoryImpl(notificationDao),
+        localDataOwnership = ownership,
     )
 
     @Test
@@ -144,7 +138,7 @@ class ServerConfigViewModelTest {
     }
 
     @Test
-    fun `onSave with clearLocalCache - clears exactly four tables and resets the count`() =
+    fun `onSave with clearLocalCache - disposes as SwitchingServer, resets the count and saves the url`() =
         runTest {
             coEvery { pendingDao.getAnyUnsyncedCount() } returns 3
 
@@ -153,34 +147,32 @@ class ServerConfigViewModelTest {
 
             viewModel.onSave(clearLocalCache = true)
 
-            coVerify(exactly = 1) { pendingDao.deleteAll() }
-            coVerify(exactly = 1) { categoryRepository.deleteAll() }
-            coVerify(exactly = 1) { accountRepository.deleteAll() }
-            // G-3：第 4 张表（断言落在 DAO，同时锁住 Impl 的委托）
-            coVerify(exactly = 1) { notificationDao.deleteAll() }
+            // 本 ViewModel 只表达意图；清哪几张表由归属 module 兑现
+            // （清单在 LocalDataOwnershipImpl，用真实 Room 按表名钉住）
+            coVerify(exactly = 1) { ownership.dispose(DisposalIntent.SwitchingServer) }
+            // 换服务器绝不能走「同号重登」或「换号」意图（两者对数据的处置完全不同）
+            coVerify(exactly = 0) { ownership.dispose(DisposalIntent.SameAccountRelogin) }
+            coVerify(exactly = 0) { ownership.dispose(DisposalIntent.SwitchingAccount) }
             coVerify(exactly = 1) { userPreferences.setServerUrl(SERVER_URL) }
             // 清空后计数归零，二次确认不会再触发。
             assertEquals(false, viewModel.hasPendingData())
         }
 
     @Test
-    fun `onSave without clearLocalCache - leaves local cache untouched but still saves url`() =
-        runTest {
-            coEvery { pendingDao.getAnyUnsyncedCount() } returns 2
+    fun `onSave without clearLocalCache - leaves local data untouched but still saves url`() = runTest {
+        coEvery { pendingDao.getAnyUnsyncedCount() } returns 2
 
-            val viewModel = buildViewModel()
+        val viewModel = buildViewModel()
 
-            viewModel.onSave(clearLocalCache = false)
+        viewModel.onSave(clearLocalCache = false)
 
-            coVerify(exactly = 0) { pendingDao.deleteAll() }
-            coVerify(exactly = 0) { categoryRepository.deleteAll() }
-            coVerify(exactly = 0) { accountRepository.deleteAll() }
-            // 不清空路径连第 4 张表也不能碰
-            coVerify(exactly = 0) { notificationDao.deleteAll() }
-            coVerify(exactly = 1) { userPreferences.setServerUrl(SERVER_URL) }
-            // 不清空 ⇒ 计数原样保留。
-            assertEquals(2, viewModel.uiState.value.unsyncedCount)
-        }
+        // 一张表都不许碰：连意图都不该发出去
+        coVerify(exactly = 0) { ownership.dispose(any()) }
+        coVerify(exactly = 0) { pendingDao.deleteAll() }
+        coVerify(exactly = 1) { userPreferences.setServerUrl(SERVER_URL) }
+        // 不清空 ⇒ 计数原样保留。
+        assertEquals(2, viewModel.uiState.value.unsyncedCount)
+    }
 
     private companion object {
         const val SERVER_URL = "http://a.example/api"

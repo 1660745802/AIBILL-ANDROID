@@ -310,9 +310,10 @@ class NotificationProcessor @Inject constructor(
     /**
      * 重放待补偿队列。
      *
-     * 由 [com.aibill.android.data.repository.AuthRepositoryImpl] 在**同账号**重新
-     * 登录成功后调用（换号/首次登录会走 clearLocalCache 把队列一起清掉——
-     * 那是另一个用户的数据，本来就不该重放）。
+     * 由 [com.aibill.android.data.repository.AuthRepositoryImpl] 在
+     * [com.aibill.android.domain.ownership.DisposalOutcome.Retained]（同账号重登、
+     * 本地数据一张未动）之后调用；换号/首次登录拿到的是 `Cleared`，队列已被一起清掉
+     * ——那是另一个用户的数据，本来就不该重放。
      *
      * 逐条重新走 [process]，解析成功会正常入库并转 confirmed/parsed；
      * 仍失败则删除，避免死循环。

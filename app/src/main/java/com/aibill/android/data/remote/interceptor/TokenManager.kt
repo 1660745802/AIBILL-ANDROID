@@ -65,8 +65,9 @@ class TokenManager internal constructor(
     /**
      * **最近一次成功登录过的用户 ID**，与当前 session 解耦。
      *
-     * 用途：`AuthRepositoryImpl` 登录时判定「同账号重登」还是「换号」，
-     * 从而决定**是否清空本地离线队列**（见 ARCHITECTURE §6.4）。
+     * 用途：本地数据归属 module（`LocalDataOwnership.currentOwnership()`，架构候选 4）
+     * 据此判定「同账号重登」还是「换号」，从而决定**是否清空本地离线队列**
+     * （见 ARCHITECTURE §6.4）。
      *
      * ⚠️ 为什么不能用 [getUserId]：401 / 登出时 [endSession] 会把整个
      * session（含 user_id）清掉。而「Token 过期 → 重登」恰恰是最需要保住离线队列的场景——
@@ -118,11 +119,12 @@ class TokenManager internal constructor(
      *   或本次请求本就未携带凭证却被拒（登录密码错误、首次安装等）
      *
      * ⚠️ **一律保留 [KEY_LAST_USER_ID]**，显式登出也不能删。
-     * 删了它，用户登出再登回**同一账号**时 `AuthRepositoryImpl` 会因
-     * `previousUserId == null` 判定为「首次登录」而走 `clearLocalCache()`，
+     * 删了它，用户登出再登回**同一账号**时本地数据归属 module 会因
+     * `accountId == null` 判定为「首次登录」而走
+     * `DisposalIntent.SwitchingAccount`，
      * 把用户离线记的账物理删除——而 `ProfileScreen` 的登出弹窗向用户承诺过
      * 「本地未同步的数据不会丢失」。跨账号防护靠的是
-     * `previousUserId != incomingUserId` 的比较，不靠 `previousUserId != null`。
+     * `accountId != incomingUserId` 的比较，不靠 `accountId != null`。
      */
     fun endSession(reason: SessionEndReason) {
         prefs.edit()

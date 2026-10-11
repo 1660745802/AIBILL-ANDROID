@@ -1,11 +1,6 @@
 package com.aibill.android.data.repository
 
-import com.aibill.android.data.local.dao.AccountDao
-import com.aibill.android.data.local.dao.CategoryDao
-import com.aibill.android.data.local.dao.NotificationRecordDao
-import com.aibill.android.data.local.datastore.SyncLock
 import com.aibill.android.data.local.datastore.UserPreferences
-import com.aibill.android.data.local.work.WorkManagerProvider
 import com.aibill.android.data.remote.api.AuthApi
 import com.aibill.android.data.remote.dto.request.LoginRequest
 import com.aibill.android.data.remote.dto.request.RegisterRequest
@@ -14,63 +9,56 @@ import com.aibill.android.data.remote.interceptor.TokenManager
 import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.User
-import com.aibill.android.domain.queue.SyncQueue
+import com.aibill.android.domain.ownership.DisposalIntent
+import com.aibill.android.domain.ownership.DisposalOutcome
+import com.aibill.android.domain.ownership.LocalDataOwnership
 import com.aibill.android.domain.repository.AuthRepository
 import com.aibill.android.service.NotificationProcessor
-import kotlinx.coroutines.delay
-import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * 认证与会话。**本地数据的处置不再在这里**：换号 / 同号重登 / 换服务器要动哪几张表、
+ * 要不要 SyncLock 握手、`last_known_user_id` 判成什么，全部归
+ * [LocalDataOwnership]（架构候选 4 收口）。
+ *
+ * 收口前本类持有 3 个 DAO + `SyncQueue` + `SyncLock` + `WorkManagerProvider`，
+ * 与 `ServerConfigViewModel` 各手列一份 4 张表的清单，靠 KDoc 互保。
+ * 现在这里只剩**一句意图**，表清单在 `data/ownership/LocalDataOwnershipImpl` 一处。
+ */
 @Singleton
 class AuthRepositoryImpl @Inject constructor(
     private val authApi: AuthApi,
     private val tokenManager: TokenManager,
     private val userPreferences: UserPreferences,
-    private val syncQueue: SyncQueue,
-    private val categoryDao: CategoryDao,
-    private val accountDao: AccountDao,
-    private val notificationRecordDao: NotificationRecordDao,
+    private val localDataOwnership: LocalDataOwnership,
     private val notificationProcessor: NotificationProcessor,
-    private val syncLock: SyncLock,
-    private val workManagerProvider: WorkManagerProvider,
 ) : AuthRepository {
 
-    /**
-     * PR C1：登录/注册前先取消在飞的 SyncWorker 并等待锁释放，
-     * 避免循环进行到一半时清缓存/换 token 导致 user A 的交易
-     * 用 user B 的 token 写到 user B 的服务端。
-     *
-     * PR 14：WorkManager 调用抽到 WorkManagerProvider 接口，便于单元测试 mock。
-     */
-    private suspend fun awaitSyncIdle() {
-        workManagerProvider.cancelSyncWorker()
-        val deadline = System.currentTimeMillis() + MAX_WAIT_MS
-        while (syncLock.isActive() && System.currentTimeMillis() < deadline) {
-            delay(WAIT_INTERVAL_MS)
-        }
-    }
-
     override suspend fun login(username: String, password: String): Result<User> {
-        // PR C1：登录前等 SyncWorker 跑完（或超时强杀）
-        awaitSyncIdle()
-        // 必须在 saveSession 之前读旧 userId——saveSession 会覆盖它。
-        // 用 getLastKnownUserId() 而非 getUserId()：401（Token 过期）时 AuthInterceptor 会把
-        // 整个 session（含 user_id）清掉，而「Token 过期→重登」正是最需要保住离线队列的场景。
-        val previousUserId = tokenManager.getLastKnownUserId()
+        // PR C1：登录前取消在飞的 SyncWorker 并等 SyncLock 释放（或超时强杀）
+        localDataOwnership.awaitSyncQuiescence()
+        // 必须在处置 / saveSession 之前问归属——saveSession 会覆盖 last_known_user_id，
+        // 之后问到的永远是「刚登进来的这个账号」，同号重登会被误判成换号。
+        // 问的是 last_known_user_id（跨 session 存活的归属判据）而非 user_id（session 字段）：
+        // 401 时 AuthInterceptor 会把整个 session（含 user_id）清掉，
+        // 而「Token 过期 → 重登」正是最需要保住离线队列的场景。
+        val previousOwnership = localDataOwnership.currentOwnership()
         val result = safeApiCall { authApi.login(LoginRequest(username, password)) }
         return when (result) {
             is Result.Success -> {
                 val data = result.data
-                val sameAccount = previousUserId != null && previousUserId == data.user.id
-                if (sameAccount) {
-                    onSameAccountRelogin(data.user.id)
-                } else {
-                    // PR #44：首次登录 / 换号 / userId 未知（老版本无 session 字段）→ 保守全清
-                    clearLocalCache()
-                }
+                val outcome = localDataOwnership.dispose(
+                    if (previousOwnership.isSameAccount(data.user.id)) {
+                        DisposalIntent.SameAccountRelogin
+                    } else {
+                        // PR #44：换号 / 首次登录 / userId 未知（老版本无 session 字段）→ 保守全清
+                        DisposalIntent.SwitchingAccount
+                    },
+                )
                 // PR M1：原子写入 token + userId + username + nickname，
-                // 避免「token 已写入但 userInfo 还在 DataStore」的不一致窗口
+                // 避免「token 已写入但 userInfo 还在 DataStore」的不一致窗口。
+                // ⚠️ 必须排在 dispose 之后：反过来就是 user B 的 session 盖在还没清掉的 user A 数据上。
                 tokenManager.saveSession(
                     token = data.token,
                     userId = data.user.id,
@@ -80,9 +68,10 @@ class AuthRepositoryImpl @Inject constructor(
                 // DataStore 仍同步一份供 Flow 订阅
                 userPreferences.setUserInfo(data.user.id, data.user.username, data.user.nickname)
                 // B2：同账号重登 → 重放因 401 未解析的通知。
-                // 换号/首次登录走的是上面的 clearLocalCache 分支，队列已被一起清掉
-                // （那是另一个用户的数据，本来就不该重放），所以只在这里调。
-                if (sameAccount) {
+                // 判据用**处置结果**（Retained = 数据确实留下了）而不是重算一遍归属：
+                // 换号/首次登录拿到的是 Cleared，队列已被一起清掉
+                // （那是另一个用户的数据，本来就不该重放）。
+                if (outcome is DisposalOutcome.Retained) {
                     notificationProcessor.replayAuthPending()
                 }
                 Result.Success(data.user.toDomain())
@@ -99,7 +88,7 @@ class AuthRepositoryImpl @Inject constructor(
         nickname: String?
     ): Result<User> {
         // PR C1：注册前同样等 SyncWorker
-        awaitSyncIdle()
+        localDataOwnership.awaitSyncQuiescence()
         val result = safeApiCall {
             authApi.register(RegisterRequest(username, password, inviteCode, nickname))
         }
@@ -107,7 +96,7 @@ class AuthRepositoryImpl @Inject constructor(
             is Result.Success -> {
                 val data = result.data
                 // 注册一定是新账号（服务端不允许重名），无脑清
-                clearLocalCache()
+                localDataOwnership.dispose(DisposalIntent.SwitchingAccount)
                 tokenManager.saveSession(
                     token = data.token,
                     userId = data.user.id,
@@ -122,48 +111,6 @@ class AuthRepositoryImpl @Inject constructor(
         }
     }
 
-    /**
-     * **同账号**重新登录（典型场景：Token 30 天过期后重登）。
-     *
-     * 原实现在 login 成功时无条件 [clearLocalCache]，会把用户「断网时记的、还没同步上去的」
-     * 账全部物理删除——而 Token 过期恰恰是离线数据最容易堆积的时刻，属于数据丢失。
-     * 提交 bd39a2b 的原意是「**换号**清缓存」（见其 commit message），
-     * 条件判断漏了，是实现与意图不符。
-     *
-     * 同账号下各表的正确处置：
-     * - pending_transactions：**必须保留**。它是离线队列，且「401 卡住」的记录是
-     *   可恢复失败——不重置回 pending 就会永远卡在 failed 状态永不上传
-     *   （getAllPending() 只捞 'pending'）。这里精准按 last_error 模式重置，
-     *   避免把「业务错误 / 服务端异常 / 超最大重试」这些不可恢复失败也重置成无限重试。
-     * - categories / accounts：服务端派生缓存，保留即可（HomeViewModel.refresh() 会重新拉），
-     *   清掉反而会造成登录后分类/账户短暂空白
-     * - notification_records：本地通知审计记录，保留
-     */
-    private suspend fun onSameAccountRelogin(userId: Int) {
-        val reset = syncQueue.recoverTokenExpiredFailures()
-        if (reset > 0) {
-            Timber.i("Auth: 同账号重登(userId=$userId)，重置 $reset 条 401 卡住的离线记录为待同步")
-        }
-        // 重置后主动排一次同步：否则要等下一次网络回调 / 用户手动点同步才会上传
-        syncQueue.requestSync()
-    }
-
-    /**
-     * PR #44：**换号**时清空 pending/categories/accounts/notifications。
-     * 仅由「首次登录 / 真正换号 / userId 未知」路径调用；
-     * 同账号重登走 [onSameAccountRelogin]，不清 pending（避免丢失离线记账）。
-     *
-     * **表集合与 `ServerConfigViewModel.onSave(clearLocalCache = true)` 必须一致（都是 4 张）**：
-     * 改这里必须同步改那边，反之亦然；两边各由自己的测试钉住 4 表
-     * （`AuthRepositoryImplTest` / `ServerConfigViewModelTest`）。
-     */
-    private suspend fun clearLocalCache() {
-        syncQueue.clear()
-        categoryDao.deleteAll()
-        accountDao.deleteAll()
-        notificationRecordDao.deleteAll()
-    }
-
     override suspend fun validateToken(): Result<User> {
         val result = safeApiCall { authApi.getCurrentUser() }
         return when (result) {
@@ -176,12 +123,13 @@ class AuthRepositoryImpl @Inject constructor(
     /**
      * 显式登出：**只结束会话，不删本地数据**。
      *
-     * - `last_known_user_id` 刻意保留：它是 pending 队列的归属判据。
-     *   若删掉，用户登出再登回同一账号时 `login()` 会因 `previousUserId == null`
-     *   走 `clearLocalCache()`，把离线记的账物理删除——而 `ProfileScreen` 的
+     * - `last_known_user_id` 刻意保留：它是本地缓存的归属判据
+     *   （见 [LocalDataOwnership.currentOwnership]）。
+     *   若删掉，用户登出再登回同一账号时 `login()` 会判成换号 → 走 `SwitchingAccount`
+     *   清空本地缓存，把离线记的账物理删除——而 `ProfileScreen` 的
      *   登出确认弹窗向用户承诺「本地未同步的数据不会丢失」。
-     * - 换号防护不受影响：`login()` 靠 `previousUserId != incomingUserId` 判定换号，
-     *   登出后换号依然会清空本地缓存。
+     * - 换号防护不受影响：`login()` 靠 `previousOwnership != incomingUserId` 的**比较**
+     *   判定换号，登出后换号依然会清空本地缓存。
      */
     override suspend fun logout() {
         tokenManager.endSession(SessionEndReason.SIGNED_OUT)
@@ -196,12 +144,6 @@ class AuthRepositoryImpl @Inject constructor(
         nickname = nickname,
         role = role,
     )
-
-    companion object {
-        /** PR C1：awaitSyncIdle 等待 sync_lock 释放的最长时限 */
-        private const val MAX_WAIT_MS = 3_000L
-        private const val WAIT_INTERVAL_MS = 50L
-    }
 
     override suspend fun changePassword(oldPassword: String, newPassword: String): Result<Unit> {
         return safeApiCall<Unit> {

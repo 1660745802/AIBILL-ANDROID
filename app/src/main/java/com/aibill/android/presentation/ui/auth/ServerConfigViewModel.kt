@@ -3,10 +3,9 @@ package com.aibill.android.presentation.ui.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.datastore.UserPreferences
+import com.aibill.android.domain.ownership.DisposalIntent
+import com.aibill.android.domain.ownership.LocalDataOwnership
 import com.aibill.android.domain.queue.SyncQueue
-import com.aibill.android.domain.repository.AccountRepository
-import com.aibill.android.domain.repository.CategoryRepository
-import com.aibill.android.domain.repository.NotificationRecordRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,8 +34,13 @@ data class ServerConfigUiState(
 )
 
 /**
- * 服务器配置 ViewModel。**已重构**：移除 3 个 DAO 直接依赖，全部走 Repository
- * 与离线队列 module。
+ * 服务器配置 ViewModel。**已重构**（两次）：
+ * 移除 3 个 DAO 直接依赖 → 走 Repository 与离线队列 module（候选 3）；
+ * 再移除 3 个 Repository 的 `deleteAll` → 走本地数据归属 module（候选 4）。
+ *
+ * 只留两个依赖：
+ * - [syncQueue]：只取 [SyncQueue.unsyncedCount]（换服务器前的二次确认口径，属队列自己的快照口径）；
+ * - [localDataOwnership]：`onSave` 的处置——本 ViewModel 只说「换服务器」这一句意图。
  *
  * 保留 UserPreferences（DataStore facade，按项目惯例允许直接使用）。
  */
@@ -44,9 +48,7 @@ data class ServerConfigUiState(
 class ServerConfigViewModel @Inject constructor(
     private val userPreferences: UserPreferences,
     private val syncQueue: SyncQueue,
-    private val categoryRepository: CategoryRepository,
-    private val accountRepository: AccountRepository,
-    private val notificationRecordRepository: NotificationRecordRepository,
+    private val localDataOwnership: LocalDataOwnership,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerConfigUiState())
@@ -97,30 +99,27 @@ class ServerConfigViewModel @Inject constructor(
     }
 
     /**
-     * 保存服务器地址；`clearLocalCache` 为 true 时同时清空 pending/categories/accounts/notification_records。
+     * 保存服务器地址；`clearLocalCache` 为 true 时按「换服务器」处置本地数据。
      *
      * 事实性说明（**不是**可选入口）：UI 的两处调用点——直接保存与二次确认——
      * 都固定传 `true`，当前**没有**任何调用方传 `false`。参数保留是为了让
      * 「首配置/不希望清空」的语义在签名上仍有表达力；新增调用方若要传 `false`，
      * 必须先想清楚它与 [hasPendingData] 的弹框逻辑如何配合，不要默认复用。
-     * 清空范围固定为 4 张表（pending/categories/accounts/notification_records），
-     * 与 `AuthRepositoryImpl.clearLocalCache()` **逐表一致**；两边必须同步改，
-     * 各自的测试分别钉住 4 表（`ServerConfigViewModelTest` / `AuthRepositoryImplTest`）。
-     * 新增第 5 张表时两处都要动——已知单点，尚未抽公共 cleaner。
      *
-     * G-3：历史上此处只清 3 张、通知记录会残留。现已补齐第 4 张，与 [AuthRepositoryImpl.clearLocalCache] 逐表一致。
-     * 代价：A→B→A 换回原服务器时，中间捕获的通知记录一并丢失——通知记录是**设备侧**捕获
-     * 的审计数据，不带服务器归属，按「换服务器 = 换命名空间」处理，接受该丢失。
-     * `ServerConfig` 仅从登录页可达，故不存在「用户在线时被误清」。
+     * 「清哪几张表」不再由本 ViewModel 决定（架构候选 4）：[DisposalIntent.SwitchingServer]
+     * 由本地数据归属 module 兑现，清空范围 = pending/categories/accounts/notification_records
+     * 四张，与登录路径换号时**同一份**清单。收口前这里是手列的第二份。
+     *
+     * 代价（刻意接受）：A→B→A 换回原服务器时，中间捕获的通知记录一并丢失——通知记录是
+     * **设备侧**捕获的审计数据，不带服务器归属，按「换服务器 = 换命名空间」处理。
+     * `ServerConfig` 仅从登录页可达，故不存在「用户在线时被误清」；
+     * 也因此**不需要** SyncLock 握手（此时无有效会话、无在飞同步），与收口前一致。
      */
     fun onSave(clearLocalCache: Boolean = true) {
         viewModelScope.launch {
             val url = normalizeUrl(_uiState.value.serverUrl)
             if (clearLocalCache) {
-                syncQueue.clear()
-                categoryRepository.deleteAll()
-                accountRepository.deleteAll()
-                notificationRecordRepository.deleteAll()
+                localDataOwnership.dispose(DisposalIntent.SwitchingServer)
                 _uiState.update { it.copy(unsyncedCount = 0) }
             }
             userPreferences.setServerUrl(url)

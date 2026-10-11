@@ -63,11 +63,12 @@ ViewModel 标准模式：
 ```
 app/src/main/java/com/aibill/android/
 ├── AiBillApp.kt                 # Application：Timber + 定时任务调度
-├── di/                          # Hilt 模块（7 个：Network/Database/Repository/Work/RecordIntake/Queue/CoroutineScope）
+├── di/                          # Hilt 模块（9 个：Network/Database/Repository/Work/RecordIntake/Queue/NotificationPrefilter/Ownership/CoroutineScope）
 ├── domain/
 │   ├── model/                   # Transaction / User / Result / CategoryAndAccount / SyncQueueStatus
 │   ├── record/                  # RecordIntake：入账 interface + 意图（见 §2.3）
 │   ├── queue/                   # SyncQueue：离线队列 interface + SyncRequest（见 §2.5）
+│   ├── ownership/               # LocalDataOwnership：归属与处置 interface + 三种意图（见 §2.6）
 │   ├── notification/            # NotificationPrefilter：预筛 interface + 判据词汇（见 §2.4）
 │   ├── repository/              # 9 个接口（Auth/Transaction/Category/Account/Ai/...；离线队列已不在此，见 §2.5）
 │   └── usecase/                 # CategoryLearningEngine / StreakTracker
@@ -79,6 +80,7 @@ app/src/main/java/com/aibill/android/
 │   │   └── datastore/           # UserPreferences + SyncLock
 │   ├── record/                  # 入账实现 + RecordClock
 │   ├── queue/                   # 离线队列：SyncQueueImpl + RecordWriter（两个 adapter）+ SyncScheduler（见 §2.5）
+│   ├── ownership/               # 本地数据归属：LocalDataOwnershipImpl（4 张表的唯一清单，见 §2.6）
 │   ├── notification/            # 预筛实现 + NotificationRuleSource（两个 adapter）
 │   └── remote/
 │       ├── api/                 # 10 个 Retrofit API（含 AppUpdateApi + GithubReleaseApi）
@@ -253,7 +255,47 @@ pending-only 的唯一读法现在是快照的 pending 列。
 的老毛病（domain 接口收发 entity 就只能是一层转发）。因此它是本 module 的 data 层
 `RecordWriter`，只由入账 module 使用，对外接口不带 entity。
 
+### 2.6 本地数据归属（LocalDataOwnership）
+
+「本地那些表归谁、什么时候该扔」曾经写了两遍：`AuthRepositoryImpl.clearLocalCache()`
+（登录路径，含 cancel 在飞 SyncWorker + 等 SyncLock）与 `ServerConfigViewModel.onSave(true)`
+（换服务器，**没有**握手）。同一个 4 张表的清单、同一份归属判据，分属两个 module，
+两边 KDoc 互相声明「改一处必须改另一处」。现在归一个 module：
+
+| 归属 | 文件 | 职责 |
+|---|---|---|
+| interface + 意图 + 归属键 | `domain/ownership/LocalDataOwnership.kt` | `currentOwnership` / `dispose` / `awaitSyncQuiescence`；`DisposalIntent`（三种意图）/ `DisposalOutcome`（实际结果）/ `LocalOwnership`（server × account） |
+| 实现 | `data/ownership/LocalDataOwnershipImpl.kt`（`@Singleton`） | **4 张表的唯一清单**、401 复活 + 排同步、SyncLock 握手 |
+| 装配 | `di/OwnershipModule.kt` | `LocalDataOwnership` 绑定 |
+| 队列那一张表 | 仍归 `SyncQueue`（见 §2.5） | 清空走 `SyncQueue.clear()`；本 module 只决定「该不该清」 |
+
+**归属键写成 `LocalOwnership` 是有意的**：它显式声明归属有两个维度，而**现在只有 account
+维度有判据**（`last_known_user_id`），server 维度是空的——那正是 §11.1 #3 未修的根因。
+本切片只收口不修根因；后续加 server scope 时只有这一个类型需要改。
+
+**三种意图与两个调用点**（各自只剩一句意图）：
+
+| 调用点 | 意图 | 兑现 |
+|---|---|---|
+| `AuthRepositoryImpl.login` | `SameAccountRelogin`（归属相同）/ `SwitchingAccount`（换号/首次/未知 userId） | 保留 vs 清 4 张表 |
+| `AuthRepositoryImpl.register` | `SwitchingAccount`（注册必是新账号） | 清 4 张表 |
+| `ServerConfigViewModel.onSave` | `SwitchingServer` | 清**同样** 4 张表 |
+
+**判定与处置刻意分成两步**：`currentOwnership()` 必须在 `TokenManager.saveSession()` **之前**问
+（它会覆盖 `last_known_user_id`），`dispose()` 也必须排在 `saveSession()` 之前（否则 user B 的
+session 盖在还没清掉的 user A 数据上）。重放 401 待补偿通知的判据用**处置结果**
+（`Retained`）而不是调用方重算一遍归属——「数据是否留下来了」由真正做处置的一方回答。
+
+**4 张表的清单只有这一处**，且由 `LocalDataOwnershipImplTest` 用**真实 Room 按表名**钉住
+（收口前两份清单各被自己的测试钉住，「清单本身」反而没人钉）。新增第 5 张「跟着账号走」的表时
+只改 `clearOwnedTables` 一处。
+
+**刻意不改**：换服务器路径**不做** SyncLock 握手（与收口前逐字一致；`ServerConfig` 只在未登录态
+可达，此时无在飞同步）；§11.1 #4 的 `unsyncedCount` init 快照竞态；§11.1 #3 的根因。
+
 ---
+
+## 三、API 契约
 
 ## 三、API 契约
 
@@ -503,8 +545,9 @@ sealed class AuthEvent {
 > presentation 层没有展示本地 `pending_transactions` 明细的 UI）、不可逐行删除
 > （`deleteByClientId` 只被 SyncWorker 补偿与通知撤销调用）、不可重试
 > （`getAllPending()` 不捞它）。仅有的两条路经都是一次性清空全部数据：
-> 切换服务器的 `ServerConfigViewModel.onSave(clearLocalCache = true)` 与
-> 换号登录的 `AuthRepositoryImpl.clearLocalCache()`；此外只有 401 类失败
+> 切换服务器的 `DisposalIntent.SwitchingServer` 与
+> 换号登录的 `DisposalIntent.SwitchingAccount`（两条都由本地数据归属 module 兑现，见 §2.6）；
+> 此外只有 401 类失败
 > 能靠同账号重新登录复位（`resetFailedMatching`）。
 >
 > 因此 Home 待同步横幅对 `failed` 只做**状态陈述、不给动作指引**
@@ -555,32 +598,42 @@ sealed class AuthEvent {
 
 ### 6.4 登录 / 换号时的本地数据处置（数据安全关键路径）
 
-`login()` 在 `saveSession()` **之前**读取旧 `userId`（`TokenManager.getLastKnownUserId()`），
-据此分三条路径：
+**收口后（架构候选 4）**：归属判据与「清哪几张表」归本地数据归属 module（见 [§2.6](#26-本地数据归属localdataownership)）。
+`login()` 只做两件事：在 `saveSession()` **之前**问一次归属（`LocalDataOwnership.currentOwnership()`
+← `TokenManager.getLastKnownUserId()`），再把**意图**交给 module（`dispose`），
+module 返回实际结果（`Retained` / `Cleared`）。4 张表的清单只在
+`LocalDataOwnershipImpl` 一处，两个调用点各剩一句意图。
 
-| 场景 | 判定 | pending 队列 | categories/accounts/notifications |
-|---|---|---|---|
-| **同账号重登**（Token 过期或**显式登出后**重登，典型场景） | `oldId != null && oldId == newId` | **保留**；并把 `last_error LIKE '%Token expired%'` 的记录重置回 `pending`（`resetFailedMatching`），再主动排一次同步 | 保留（server 派生缓存，`HomeViewModel.refresh()` 会重新拉；清掉会造成登录后短暂空白） |
-| **换号** | `oldId != null && oldId != newId` | 清空 | 清空 |
-| **首次登录 / 旧版本无 userId** | `oldId == null` | 清空（保守，无法判断是否换号） | 清空 |
-| **切换服务器**（`ServerConfig` 页保存，`clearLocalCache = true`） | 用户主动保存（不走 `oldId` 判定） | 清空 | 清空（含 `notification_records`，与上面两类登录路径**逐表一致**，都是 4 张；两边测试各钉 4 表） |
+| 场景 | 判定 | 意图 | pending 队列 | categories/accounts/notifications |
+|---|---|---|---|---|
+| **同账号重登**（Token 过期或**显式登出后**重登，典型场景） | `oldId != null && oldId == newId` | `SameAccountRelogin` | **保留**；并把 `last_error LIKE '%Token expired%'` 的记录重置回 `pending`（`resetFailedMatching`），再主动排一次同步 | 保留（server 派生缓存，`HomeViewModel.refresh()` 会重新拉；清掉会造成登录后短暂空白） |
+| **换号** | `oldId != null && oldId != newId` | `SwitchingAccount` | 清空 | 清空 |
+| **首次登录 / 旧版本无 userId** | `oldId == null` | `SwitchingAccount`（保守，无法判断是否换号） | 清空 | 清空 |
+| **切换服务器**（`ServerConfig` 页保存，`clearLocalCache = true`） | 用户主动保存（不走 `oldId` 判定） | `SwitchingServer` | 清空 | 清空（含 `notification_records`，与上面两类登录路径**同一份清单**，都是 4 张） |
+
+> 表级不变量（清了哪几张表）现在由 `LocalDataOwnershipImplTest` 用**真实 Room 按表名**钉住；
+> 「意图有没有选对」由 `AuthRepositoryImplTest` 钉住。两侧用例都在，语义等价。
+> 收口前是两份清单、两个测试文件各钉一遍——「清单本身」反而没人钉。
 
 > ⚠️ 历史 bug（1）：早期实现**无条件** `clearLocalCache()`。Token 30 天过期（无 refresh
 > token）恰恰是离线数据最容易堆积的时刻，用户重登后所有未同步的记账被物理删除。
 > 提交 `bd39a2b` 的原意是「**换号**清缓存」，条件判断漏了。
-> `AuthRepositoryImplTest` 的 `DATA LOSS regression` 用例锁住此不变量。
+> `AuthRepositoryImplTest` 的 `DATA LOSS regression`（意图层）
+> 与 `LocalDataOwnershipImplTest` 的同名用例（表层）同时锁住此不变量。
 
 > ⚠️ 历史 bug（2，B6）：`logout()` 曾调 `clearSessionAndIdentity()` 把 `last_known_user_id`
 > 一并删除。于是「登出 → 登回**同一账号**」时 `oldId == null`，退化为「首次登录」路径并
-> `clearLocalCache()`，把用户离线记的账物理删除——而 `ProfileScreen` 的登出确认弹窗向用户
-> 承诺过「本地未同步的数据不会丢失」。现在 `logout()` 只调 `endSession(SIGNED_OUT)`，
-> **保留 `last_known_user_id`**。
+> 清空本地数据，把用户离线记的账物理删除——而 `ProfileScreen` 的登出确认弹窗向用户
+> 承诺过「本地未同步的数据不会丢失」。现在 `logout()` 只调 `endSession(SIGNED_OUT)` +
+> `clearUserInfo()`，**保留 `last_known_user_id`**，也**不处置本地数据**
+> （`AuthRepositoryImplTest` 的 logout 用例断言 `dispose` 零调用）。
 >
 > 保留它**不降低**换号防护：上表第 2 行靠的是 `oldId != newId` 的**比较**，
 > 不靠 `oldId != null`。`AuthRepositoryImplTest` 用 `logout then SAME/DIFFERENT account login`
 > 两个用例同时锁住「同号保留」与「换号仍清空」。
 
-> ⚠️ 同账号判定必须用 `TokenManager.getLastKnownUserId()`，**不能**用 `getUserId()`：
+> ⚠️ 同账号判定必须用 `TokenManager.getLastKnownUserId()`（经
+> `LocalDataOwnership.currentOwnership()` 读），**不能**用 `getUserId()`：
 > 会话结束时 `endSession()` 会把 `user_id` 一并清掉，而
 > 「Token 过期 → 重登」「显式登出 → 登回」正是最需要保住离线队列的场景。
 > 因此 `last_known_user_id` 刻意活得比 session 长——**任何**会话结束路径都不清除它。
@@ -626,7 +679,9 @@ sealed class AuthEvent {
 ### 7.2.1 会话结束：`endSession(reason)` 是唯一入口
 
 `endSession()` 清 token + userId + username + nickname，写入结束原因，
-**保留 `last_known_user_id`**。
+**保留 `last_known_user_id`**。它是本地缓存归属判据的**唯一**写入者
+（`saveSession()` 写、`endSession()` 保留），本地数据归属 module 对它**只读**
+（`LocalDataOwnershipImplTest` 断言任何处置都不调 `saveSession` / `endSession`）。
 
 | 调用方 | reason | 冷启动提示 |
 |---|---|---|
@@ -729,7 +784,7 @@ sealed class AuthEvent {
 |---|---|---|---|---|
 | 1 | `failed` 行无任何逐行 UI 处置入口（不可查看/删除/重试） | 队列里存在 `failed` | 横幅只作状态陈述、不指引；待「failed 明细页」切片 | §6.2 |
 | 2 | 补偿删除失败无重试队列 | 撤销时服务端删除失败 | 仅 error 日志对账，可能留服务端孤儿账 | `AutoRecordActionReceiver` |
-| 3 | 跨服务器 `userId` 命名空间碰撞 | 登出态换服务器 + 两端 userId 相同（自建部署常见） | 已做的都是症状级处理（补表/补警告），**根因**（身份与本地缓存无 server 作用域）未修 | §6.4 |
+| 3 | 跨服务器 `userId` 命名空间碰撞 | 登出态换服务器 + 两端 userId 相同（自建部署常见） | **收口已做**（候选 4：4 张表的清单、归属判据、SyncLock 握手、`last_known_user_id` 存活期已归 `LocalDataOwnership`，并把归属键显式写成 `LocalOwnership`（server × account））；**根因待后续切片**——server 维度现在**故意为空**，换服务器仍被当作「整表作废」而不是「换命名空间」 | §2.6 / §6.4 |
 | 4 | `ServerConfigUiState.unsyncedCount` 是 `init` 快照 | 进入页面时队列为空、期间后台落 pending、用户点保存 | 有竞态窗口可致「无警告即清空」；按钮需 `isConnected` 才可点，窗口极窄，定为低优先 | `ServerConfigViewModel` |
 
 ### 11.2 认知陷阱（不改会误导后来者）
@@ -738,6 +793,7 @@ sealed class AuthEvent {
 - `SyncWorker` 尾部注释「检查剩余 pending（含 failed 状态）数……则 retry」易被误读成 `failed` 会被重试。实际 `getAllPending()` 只捞 `pending`，且空队列时 `doWork` 在计算该计数**之前**就早退 `Result.success()`。
 - `SyncQueue.requestSync()` 返回的 `SyncRequest.Enqueued` **只代表已入队**，不代表已上传（`TransactionRepository.syncPending()` 的 `Result.Success` 已随该方法删除）。不得据此写「已同步/已上传」——首页手动同步的 toast 因此是「已加入同步队列」，`HomeViewModelTest` 显式禁掉了「已同步 / 已上传 / 同步完成」三个词。
 - `RecordOutcome.syncScheduled` 回答的是「**本笔**排了没排」，不是「这批排了没排」。`NotificationCenterViewModel.confirmAll` 必须按它决定要不要在循环后补排一次；漏看 = 这一批通知确认的账永远不自动上传（兜底只剩网络跳变与启动）。
+- 「本地那几张表归谁、什么时候该扔」只有一个 module 管：`LocalDataOwnership`（§2.6）。看到任何 `deleteAll()` 连着一串 DAO 调用出现在认证或设置代码里，那不是「顺手再清一张表」，而是把清单又抄了一份——收口前正是这样漏过一次（新增第 5 张表，两处只改了一处）。同理，`last_known_user_id` 只由 `TokenManager` 写，归属 module 只读。
 
 ### 11.3 测试基建的技术债
 

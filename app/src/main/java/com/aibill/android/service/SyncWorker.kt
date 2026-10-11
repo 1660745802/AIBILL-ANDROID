@@ -229,7 +229,7 @@ class SyncWorker @AssistedInject constructor(
                 )
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
-            // 补偿是挂起调用：worker 被取消（换号 awaitSyncIdle / 系统回收）时
+            // 补偿是挂起调用：worker 被取消（换号前的 SyncLock 握手 / 系统回收）时
             // 必须让取消正常传播，不能当成「补偿异常」吞掉，否则破坏结构化并发。
             throw e
         } catch (e: Exception) {

@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.Flow
 /**
  * 离线队列 module：`pending_transactions` 这张表的**唯一**对外入口。
  *
+ * 注意「清空本地缓存」不在这里兑现（架构候选 4）：换号 / 换服务器要清的
+ * 是 4 张表，那份清单归 `LocalDataOwnership`（本 interface 只负责队列表本身）。
+ *
  * ## 收口了什么
  *
  * 「排调度 / 快照 / 失败恢复」原本散在四处，各自带一份「已入队 ≠ 已上传」的告诫：
@@ -70,8 +73,12 @@ interface SyncQueue {
      * 清空整张队列表（换服务器 / 换号）。
      *
      * 触发方必须先看 [unsyncedCount] 警告用户；清空范围与
-     * `AuthRepositoryImpl.clearLocalCache()` 的其余三张表**逐表一致**，两边各由
-     * 自己的测试钉住 4 张表。
+     * 「清空本地缓存」其余三张表（categories / accounts / notification_records）
+     * 的组合只存在于本地数据归属 module（`LocalDataOwnership`，
+     * 架构候选 4 起），由 `LocalDataOwnershipImplTest` 用**真实 Room**
+     * 按表名逐张钉住。
+     *
+     * ⚠️ 不要再从调用方直接清队列表：那份清单必须是全仓唯一的一份。
      */
     suspend fun clear()
 

@@ -16,7 +16,7 @@
 | **排队等上传**（pending） | `sync_status='pending'`：可被 `SyncWorker` 自动捞起。**不含 failed** | `PendingTransactionDao.getAllPending()` / `SyncQueueStatus.pending` |
 | **待人管**（failed） | `sync_status='failed'`：本地终态，需要用户介入，不会自动重试（401 除外） | `SyncWorker.markFailed` / `SyncQueueStatus.failed` |
 | **已入队 ≠ 已上传** | 排上 `SyncWorker` 只代表 WorkManager 接受了请求。这个区别现在**是类型**不是注释 | `SyncQueue.requestSync()` → `SyncRequest.Enqueued` |
-| **同步锁（SyncLock）** | 换号/清缓存前等在飞的同步循环跑完，避免 A 的账写进 B 的服务端 | `data/local/datastore/SyncLock.kt` |
+| **同步锁（SyncLock）** | 换号/清缓存前等在飞的同步循环跑完，避免 A 的账写进 B 的服务端。握手归归属 module：`LocalDataOwnership.awaitSyncQuiescence()` | `data/local/datastore/SyncLock.kt` |
 
 ## 通知入账
 
@@ -38,8 +38,9 @@
 | 术语 | 含义 | 代码位置 |
 |---|---|---|
 | **会话（session）** | token + userId + 用户信息，生命周期随登录 | `TokenManager.saveSession / endSession` |
-| **上次已知用户（last known user）** | 跨 session 存活的 userId，本地缓存的**归属判据** | `TokenManager.getLastKnownUserId()` |
-| **同号重登** | 旧 userId == 新 userId：保留离线队列，只重置 401 卡住的记录 | `AuthRepositoryImpl.onSameAccountRelogin` |
-| **换号** | 旧 userId != 新 userId：清空 pending/categories/accounts/notifications | `AuthRepositoryImpl.clearLocalCache()` |
-| **换服务器** | 改 `server_url` 并清本地：与上面两类逐表一致 | `ServerConfigViewModel.onSave` |
+| **上次已知用户（last known user）** | 跨 session 存活的 userId，本地缓存的**归属判据**（任何会话结束路径都不清除它） | `TokenManager.getLastKnownUserId()` → `LocalDataOwnership.currentOwnership()` |
+| **本地归属（local ownership）** | 本地那几张表归哪个 server × account。**当前只有 account 维度有判据**；server 维度是空的（已知缺口，见 [架构文档 §11.1](docs/ARCHITECTURE.md#111-用户可见的缺口) #3） | `LocalDataOwnership`（归属 module，见 [架构文档 §2.6](docs/ARCHITECTURE.md#26-本地数据归属localdataownership)） |
+| **同号重登** | 旧 userId == 新 userId：保留全部本地数据，只重置 401 卡住的记录并排同步 | `DisposalIntent.SameAccountRelogin` |
+| **换号** | 旧 userId != 新 userId（或压根不知道旧 userId）：清空 pending/categories/accounts/notifications | `DisposalIntent.SwitchingAccount` |
+| **换服务器** | 改 `server_url` 并清本地：与换号**同一份**表清单（表清单全仓只此一处） | `DisposalIntent.SwitchingServer`（`ServerConfigViewModel.onSave` 发出的意图） |
 | **服务端派生缓存** | categories / accounts：服务端真相的本地副本，登录后重新拉取 | `CategoryRepository` / `AccountRepository` |
