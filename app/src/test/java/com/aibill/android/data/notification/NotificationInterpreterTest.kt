@@ -2,11 +2,13 @@ package com.aibill.android.data.notification
 
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.remote.api.AiApi
+import com.aibill.android.data.remote.dto.request.AiParseRequest
 import com.aibill.android.data.remote.dto.response.AiParseResponseDto
 import com.aibill.android.data.remote.dto.response.AiParsedItemDto
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.domain.notification.AiCircuitBreaker
 import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.ParseOutcome
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.usecase.CategoryLearningEngine
@@ -56,6 +58,8 @@ class NotificationInterpreterTest {
     private val userPreferences: UserPreferences = mockk()
     private val categoryLearningEngine: CategoryLearningEngine = mockk(relaxed = true)
     private val rulesManager: NotificationRulesManager = mockk(relaxed = true)
+    private val appLogger: AppLogger = mockk(relaxed = true)
+    private val captureFunnelStats = CaptureFunnelStatsImpl()
 
     private lateinit var interpreter: NotificationInterpreterImpl
 
@@ -74,9 +78,10 @@ class NotificationInterpreterTest {
             circuitBreaker = circuitBreaker,
             userPreferences = userPreferences,
             categoryLearningEngine = categoryLearningEngine,
-            appLogger = AppLogger(mockk(relaxed = true)),
+            appLogger = appLogger,
             rulesManager = rulesManager,
             balanceConsistency = com.aibill.android.data.notification.BalanceConsistencyImpl(),
+            captureFunnelStats = captureFunnelStats,
         )
     }
 
@@ -138,6 +143,9 @@ class NotificationInterpreterTest {
         HttpException(retrofit2.Response.error<Any>(code, "{}".toResponseBody(null)))
 
     private fun parsed(outcome: ParseOutcome) = assertInstanceOf(ParseOutcome.Parsed::class.java, outcome).transaction
+
+    /** AI 响应侧 stage 名（通知路径只有 NLS 用不到；测试都走 NLS）。 */
+    private fun aiExtraStage() = CaptureFunnelStats.aiExtraItemsStage(SourceChannel.NLS)
 
     // ── 失败与降级 ──
 
@@ -308,15 +316,58 @@ class NotificationInterpreterTest {
     }
 
     @Test
-    @DisplayName("AI 返回多条 → 取信息完整度最高的那条")
-    fun `多条取最高分`() = runTest {
+    @DisplayName("通知路径请求不含 max_items（服务端已全局保证 items ≤ 1，死字段已删）")
+    fun `通知请求不含 max_items`() = runTest {
+        val sent = slot<AiParseRequest>()
+        coEvery { aiApi.parse(capture(sent)) } returns ok(aiItem())
+        interpreter.read(captureOf())
+        assertFalse(
+            sent.captured::class.java.declaredFields.any { it.name == "maxItems" },
+            "服务端已全局保证单笔，AiParseRequest 不应再有 max_items",
+        )
+    }
+
+    @Test
+    @DisplayName("旧服务端回多条 → 确定性取第一笔 + warn + 计数（不再本地挑选、不静默丢）")
+    fun `多条取第一笔并计数`() = runTest {
         coEvery { aiApi.parse(any()) } returns ok(
             aiItem(amount = 1000, categoryId = null, categoryName = null, description = null),
             aiItem(amount = 2000, description = "晚餐"),
         )
         val tx = parsed(interpreter.read(captureOf()))
-        assertEquals(2000, tx.amount)
-        assertEquals("晚餐", tx.description)
+        assertEquals(1000, tx.amount, "取第一笔，而不是本地评分最高的第二笔")
+        assertEquals(1L, captureFunnelStats.snapshot().stages[aiExtraStage()])
+        verify(exactly = 1) { appLogger.warn("NLS", match { it.contains("旧服务端返回多条") }) }
+    }
+
+    @Test
+    @DisplayName("extra_items_dropped=2 → warn + 计数 +1，入账行为不变（取唯一那笔）")
+    fun `服务端裁剪多余条目被计数`() = runTest {
+        coEvery { aiApi.parse(any()) } returns ApiResponse(
+            code = 0,
+            data = AiParseResponseDto(
+                items = listOf(aiItem(amount = 3200)),
+                rawInput = "x",
+                extraItemsDropped = 2,
+            ),
+            message = "",
+        )
+        val tx = parsed(interpreter.read(captureOf()))
+        assertEquals(3200, tx.amount)
+        assertEquals(1L, captureFunnelStats.snapshot().stages[aiExtraStage()])
+        verify(exactly = 1) { appLogger.warn("NLS", match { it.contains("裁剪 2 条") }) }
+    }
+
+    @Test
+    @DisplayName("单笔且 extra_items_dropped=0 → 与改造前一致：无计数、无多余 warn")
+    fun `单笔不计数`() = runTest {
+        coEvery { aiApi.parse(any()) } returns ok(aiItem())
+        val tx = parsed(interpreter.read(captureOf()))
+        assertEquals(3200, tx.amount)
+        assertTrue(captureFunnelStats.snapshot().stages.isEmpty(), captureFunnelStats.snapshot().stages.toString())
+        verify(exactly = 0) {
+            appLogger.warn("NLS", match { it.contains("多余") || it.contains("裁剪") })
+        }
     }
 
     @Test

@@ -12,7 +12,16 @@ data class AiParseResponseDto(
      * 只有「服务端真的调了模型 / 走了快捷解析」的形态才有；
      * 被服务端预筛挡下、上游超时等形态没有 → **不存在可反馈对象**，不要凭空构造。
      */
-    @Json(name = "parse_log_id") val parseLogId: Long? = null
+    @Json(name = "parse_log_id") val parseLogId: Long? = null,
+    /**
+     * 因请求的 `max_items` 被服务端裁掉的**多余条数**（契约保证恒出现，0 = 没丢）。
+     *
+     * 时机：服务端**先出站佐证、再裁剪**，所以 [items] 里返回的那笔是过了佐证的。
+     * 语义：只算因 `max_items` 被裁掉的条数（不是预筛/幻觉丢弃数）。
+     * 旧服务端无此字段 → 默认 0（此时客户端另有「响应含多条」的兜底计数，见
+     * [com.aibill.android.domain.notification.CaptureFunnelStats.AI_EXTRA_ITEMS_REPORT_KEY]）。
+     */
+    @Json(name = "extra_items_dropped") val extraItemsDropped: Int = 0,
 )
 
 @JsonClass(generateAdapter = true)

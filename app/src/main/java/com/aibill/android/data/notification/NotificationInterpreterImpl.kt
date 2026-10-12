@@ -8,6 +8,7 @@ import com.aibill.android.data.remote.dto.response.AiParsedItemDto
 import com.aibill.android.domain.notification.AiCircuitBreaker
 import com.aibill.android.domain.notification.BalanceConsistency
 import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.NotificationInterpreter
 import com.aibill.android.domain.notification.ParseOutcome
 import com.aibill.android.domain.notification.ParsedTransaction
@@ -33,7 +34,11 @@ import javax.inject.Singleton
  * 3. 调 AI（先截营销后缀）；
  * 4. 业务失败 → 记熔断失败 + [ParseOutcome.Unparsed]；
  * 5. 空 items / amount ≤ 0 → 判定非账；
- * 6. 校验 + 装配候选（type 非法回落 expense、电商描述脱敏、候选评分）。
+ * 6. 校验 + 装配候选（type 非法回落 expense、电商描述脱敏、跨渠道比较分）。
+ *
+ * 一次 AI 调用只回一笔：服务端**全局保证 `items` ≤ 1**（已按单一标准挑好），客户端
+ * 只取 `items.first()`（本地不再挑选，避免第二套口径）。多余条数见响应
+ * `extra_items_dropped`；旧服务端仍回多条时确定性取第一笔 + warn + 计数，绝不静默丢。
  *
  * 熔断的**失败计数在这里上报**，但「要不要查询熔断」在预筛 module：这条边界保证了
  * 熔断状态只有一个写入口（真正调 AI 的地方），而放行策略只有一处（预筛）。
@@ -48,6 +53,7 @@ class NotificationInterpreterImpl @Inject constructor(
     private val appLogger: AppLogger,
     private val rulesManager: NotificationRulesManager,
     private val balanceConsistency: BalanceConsistency,
+    private val captureFunnelStats: CaptureFunnelStats,
 ) : NotificationInterpreter {
 
     override suspend fun read(capture: Capture): ParseOutcome {
@@ -90,13 +96,24 @@ class NotificationInterpreterImpl @Inject constructor(
                 return ParseOutcome.Unparsed("code=${response.code}")
             }
             circuitBreaker.recordOutcome(capture.packageName, success = true)
+            // 边界：服务端**全局保证 `items` ≤ 1**（挑选标准在服务端 `lib/main-item.ts`）：
+            // 0 笔 = 走手动兜底（现有的 [ParseOutcome.NotATransaction] 路径）；1 笔 = 正常。
+            // 本地**不再做任何挑选**——服务端已挑好，本地再挑就是第二套口径。
             val items = response.data.items
             if (items.isEmpty()) {
                 appLogger.info("NLS", "AI判定非支付，丢弃")
                 return ParseOutcome.NotATransaction
             }
 
-            val aiItem = items.maxByOrNull { aiItemScore(it) } ?: return ParseOutcome.NotATransaction
+            // 多余条目：服务端已挑好一笔 → 只取第一笔；旧服务端可能仍回多条，
+            // 这里只兜底计数，不再本地挑选。
+            recordExtraItemsIfAny(
+                capture = capture,
+                itemCount = items.size,
+                extraItemsDropped = response.data.extraItemsDropped,
+            )
+
+            val aiItem = items.first()
 
             // H5: AI返回amount<=0无意义，直接丢弃
             if (aiItem.amount <= 0) {
@@ -166,7 +183,7 @@ class NotificationInterpreterImpl @Inject constructor(
                     // S3：商户名可作描述兜底（抽不到商户时为 null，不影响旧行为）
                     description = (aiItem.description ?: aiItem.merchant ?: aiItem.categoryName)
                         ?.let { sanitizeEcommerceDescription(it) },
-                    score = aiItemScore(aiItem),
+                    score = clientCompletenessScore(aiItem),
                     isComplete = isComplete,
                     // 反馈闭环的钥匙：data 层（快捷解析/模型成功）优先，顶层兼容「模型空结果」形态。
                     // 两者都无 = 无可反馈对象（客户端不得凭空构造 id）。
@@ -242,9 +259,45 @@ class NotificationInterpreterImpl @Inject constructor(
     }
 
     /**
-     * AI 返回多条时选最优：按信息完整度评分。
+     * 消费「AI 响应侧多余条目」：新服务端用 [extraItemsDropped]（因 `max_items` 被裁掉的条数）
+     * 告知；旧服务端不支持 `max_items`，仍可能回 [itemCount] > 1 条。
+     *
+     * 两种情形都**只取第一笔**（挑选标准在服务端，客户端不再自设第二套，确定性优先），
+     * 并 warn + 计入 [CaptureFunnelStats] 的 AI 响应侧 stage——**绝不静默丢弃**。
+     * stage 计的是「发生了这种感觉的响应」次数，条数只进 warn 日志；
+     * 两种情况互斥（新服务端不会同时回多条），合并记一次避免双计。
      */
-    private fun aiItemScore(item: AiParsedItemDto): Int {
+    private fun recordExtraItemsIfAny(capture: Capture, itemCount: Int, extraItemsDropped: Int) {
+        val localExtra = (itemCount - 1).coerceAtLeast(0)
+        if (localExtra > 0) {
+            appLogger.warn(
+                "NLS",
+                "旧服务端返回多条(items=$itemCount)，确定性取第一笔，多余=$localExtra " +
+                    "pkg=${capture.packageName}"
+            )
+        }
+        if (extraItemsDropped > 0) {
+            appLogger.warn(
+                "NLS",
+                "AI响应因 max_items 裁剪 $extraItemsDropped 条，仅取第一笔 " +
+                    "pkg=${capture.packageName}"
+            )
+        }
+        if (localExtra > 0 || extraItemsDropped > 0) {
+            captureFunnelStats.record(CaptureFunnelStats.aiExtraItemsStage(capture.channel))
+        }
+    }
+
+    /**
+     * 客户端跨渠道视图比较用的**信息完整度分**
+     * （给 [com.aibill.android.domain.notification.ScoredAdmission] 的 10s/60s 跨渠道择优）。
+     *
+     * ⚠️ **这不是挑选标准**：一次 AI 调用回哪一笔由服务端按 `max_items` 单一实现
+     * （金额货币单位佐证 > 信息完整度 > 金额降序 > 模型原序）。客户端只取 `items.first()`，
+     * 本函数保留纯粹因为「同金额、不同渠道两条候选」时要比一个信息完整度，
+     * 与服务端挑选口径无关（这里只看得见 DTO 的机械字段，看不到佐证）。
+     */
+    private fun clientCompletenessScore(item: AiParsedItemDto): Int {
         var score = 0
         if (item.amount > 0) score += 1
         if (item.type in VALID_TYPES) score += 1

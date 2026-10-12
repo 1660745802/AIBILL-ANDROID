@@ -55,6 +55,15 @@ package com.aibill.android.domain.notification
  * - **没有「非银行短信」分支**：银行/账务判据在预筛（[BlockReason.NOT_FINANCIAL]），已由
  *   [PrefilterStats] 计数——这也是任务里 `dropped.sms.not_bank` 这类命名的落点，故不在这里另立 stage。
  *
+ * **AI 响应侧（不是捕获层早退，别混）**
+ * - [aiExtraItemsStage]（形如 `ai.<channel>.extra_items`）：一次 AI 响应里「除被采用的那一笔外
+ *   还有多余条目」。两种来源：
+ *   - 新服务端按请求的 `max_items` 裁剪后，用响应里的 `extra_items_dropped` 告知条数；
+ *   - 旧服务端（不支持 `max_items`）仍可能回多条，客户端确定性取 `items.first()`。
+ *   两种情况都记**一次**本 stage（计的是「发生了这种感觉的响应」次数，条数在 warn 日志里），
+ *   绝不静默丢弃。上报键固定 [AI_EXTRA_ITEMS_REPORT_KEY]（`client_only.ai_extra_items`，
+ *   渠道段不体现在 key 里，由请求的 `channel` 字段承载）。
+ *
  * ## 进报表
  *
  * [Snapshot.reportCountsFor] 把 stage 机械映射成 `client_only.capture_<stage 点换下划线>`
@@ -81,11 +90,25 @@ interface CaptureFunnelStats {
     data class Snapshot(
         /** 各渠道入口收到的总数（来自 `received.*` 三项）。 */
         val received: Map<SourceChannel, Long>,
-        /** 各 stage 计数（**不含** `received.*`，只含 `dropped.*`）。 */
+        /**
+         * 各 stage 计数（**不含** `received.*`）。
+         *
+         * 含两类：捕获层早退 `dropped.*`，与 AI 响应侧 `ai.*`。
+         */
         val stages: Map<String, Long>,
     ) {
         val receivedTotal: Long get() = received.values.sum()
-        val droppedTotal: Long get() = stages.values.sum()
+
+        /**
+         * 捕获层早退总数（只算 `dropped.*`）。
+         *
+         * **不含** AI 响应侧 `ai.*`：那是「AI 已经应答之后」的观测，不是捕获层丢的，
+         * 混进来会让「早退丢弃」失真。AI 侧单独看 [aiResponseTotal]。
+         */
+        val droppedTotal: Long get() = stages.filterKeys { !isAiResponseStage(it) }.values.sum()
+
+        /** AI 响应侧（`ai.*`）发生次数合计（见 [aiExtraItemsStage]）。 */
+        val aiResponseTotal: Long get() = stages.filterKeys { isAiResponseStage(it) }.values.sum()
 
         /**
          * 某渠道的捕获层计数，键已映射为上报用的 `client_only.capture_*`。
@@ -114,6 +137,22 @@ interface CaptureFunnelStats {
         const val RECEIVED_A11Y = "received.a11y"
         const val RECEIVED_SMS = "received.sms"
 
+        /**
+         * AI 响应侧 stage 前缀：与捕获侧的 `received.` / `dropped.` 并列，但语义是
+         * **「AI 已经应答之后」的观测，不是捕获层早退**（渲染/合计据此分开）。
+         */
+        const val AI_RESPONSE_PREFIX = "ai."
+
+        /** AI 响应侧 stage 的原因段。 */
+        const val AI_EXTRA_ITEMS_REASON = "extra_items"
+
+        /**
+         * AI 响应侧唯一上报键：`client_only.ai_extra_items`。
+         *
+         * 渠道段不体现在 key 里（请求已带 `channel` 字段），避免为每渠道各造一个键。
+         */
+        const val AI_EXTRA_ITEMS_REPORT_KEY = "client_only.ai_extra_items"
+
         const val DROPPED_NLS_NO_PACKAGE = "dropped.nls.no_package"
         const val DROPPED_NLS_NO_EXTRAS = "dropped.nls.no_extras"
 
@@ -137,6 +176,18 @@ interface CaptureFunnelStats {
         /** `received.<channel>` 常量。 */
         fun receivedKey(channel: SourceChannel): String = "$RECEIVED_PREFIX${channel.logTag.lowercase()}"
 
+        /**
+         * 构造某渠道的 AI 响应侧 stage：`ai.<channel>.extra_items`。
+         *
+         * 第二段必须是渠道名（与捕获层同风格），[channelOf] 才能按渠道归因；
+         * 上报键则统一为 [AI_EXTRA_ITEMS_REPORT_KEY]。
+         */
+        fun aiExtraItemsStage(channel: SourceChannel): String =
+            "$AI_RESPONSE_PREFIX${channel.logTag.lowercase()}.$AI_EXTRA_ITEMS_REASON"
+
+        /** 是否是 AI 响应侧 stage。 */
+        fun isAiResponseStage(stage: String): Boolean = stage.startsWith(AI_RESPONSE_PREFIX)
+
         /** 从 stage 的第二段解析渠道；缺渠道段返回 null（这类 key 不上报，防 400）。 */
         fun channelOf(stage: String): SourceChannel? {
             val parts = stage.split('.')
@@ -146,13 +197,18 @@ interface CaptureFunnelStats {
         }
 
         /**
-         * stage → 上报键：`client_only.` + `capture_` + stage 里的点换成下划线。
+         * stage → 上报键。捕获侧机械拼为 `client_only.capture_<stage 点换下划线>`；
+         * AI 响应侧固定为 [AI_EXTRA_ITEMS_REPORT_KEY]（`client_only.ai_extra_items`）。
          *
          * 纯机械拼接（与 [PrefilterStats.clientOnlyKey] 同思路），**没有映射表**：
          * 服务端只需按前缀剥离即可对账，新增 stage 不需要改服务端。
          */
         fun reportKey(stage: String): String =
-            PrefilterStats.CLIENT_ONLY_PREFIX + REPORT_KEY_PREFIX + stage.replace('.', '_')
+            if (isAiResponseStage(stage)) {
+                AI_EXTRA_ITEMS_REPORT_KEY
+            } else {
+                PrefilterStats.CLIENT_ONLY_PREFIX + REPORT_KEY_PREFIX + stage.replace('.', '_')
+            }
 
         /**
          * 渲染成可直接贴进日志导出的诊断文本。
@@ -172,12 +228,25 @@ interface CaptureFunnelStats {
                     "${channel.logTag} 收到 ${snapshot.received[channel] ?: 0L}"
                 } + " · 合计 ${snapshot.receivedTotal}"
             )
-            snapshot.stages.entries
+            snapshot.stages
+                .filterKeys { !isAiResponseStage(it) }
+                .entries
                 .sortedWith(compareByDescending<Map.Entry<String, Long>> { it.value }.thenBy { it.key })
                 .forEach { (stage, count) ->
                     appendLine("  $count  $stage  ${LABELS[stage] ?: ""}")
                 }
-            appendLine("合计: 收到 ${snapshot.receivedTotal} · 早退丢弃 ${snapshot.droppedTotal}")
+            val aiStages = snapshot.stages.filterKeys { isAiResponseStage(it) }
+            if (aiStages.isNotEmpty()) {
+                appendLine("AI 响应侧（已应答，仅供对账）:")
+                aiStages.entries.sortedByDescending { it.value }.forEach { (stage, count) ->
+                    appendLine("  $count  $stage  ${LABELS[stage] ?: ""}")
+                }
+            }
+            append("合计: 收到 ${snapshot.receivedTotal} · 早退丢弃 ${snapshot.droppedTotal}")
+            if (snapshot.aiResponseTotal > 0L) {
+                append(" · AI 响应裁剪 ${snapshot.aiResponseTotal} 次")
+            }
+            appendLine()
         }
 
         private val LABELS: Map<String, String> = mapOf(
@@ -198,6 +267,12 @@ interface CaptureFunnelStats {
             DROPPED_SMS_NOT_ACTION to "非短信广播",
             DROPPED_SMS_NO_MESSAGES to "空短信数组",
             DROPPED_SMS_BLANK_TEXT to "空正文",
+            aiExtraItemsStage(SourceChannel.NLS) to AI_EXTRA_ITEMS_LABEL,
+            aiExtraItemsStage(SourceChannel.A11Y) to AI_EXTRA_ITEMS_LABEL,
+            aiExtraItemsStage(SourceChannel.SMS) to AI_EXTRA_ITEMS_LABEL,
         )
+
+        /** AI 响应侧唯一 stage 的人读标签。 */
+        private const val AI_EXTRA_ITEMS_LABEL = "AI 响应裁剪多余条目（按次数）"
     }
 }

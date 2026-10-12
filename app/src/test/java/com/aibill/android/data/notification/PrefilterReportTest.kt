@@ -283,6 +283,26 @@ class PrefilterReportTest {
     }
 
     @Test
+    @DisplayName("AI 响应侧计数进同一 counts，键固定为 client_only.ai_extra_items，不污染 totals")
+    fun aiResponseCountIsReported() = runTest {
+        val stats = PrefilterStatsImpl()
+        val capture = CaptureFunnelStatsImpl()
+        capture.record(CaptureFunnelStats.aiExtraItemsStage(SourceChannel.NLS))
+        val (reporter, requests) = reporter(stats, captureFunnelStats = capture)
+
+        reporter.report(now = 1_000_000L)
+
+        val nls = requests.single()
+        assertEquals(
+            mapOf("client_only.ai_extra_items" to 1L),
+            nls.counts.associate { it.ruleId to it.count },
+        )
+        assertEquals(0L, nls.totals.blocked)
+        assertEquals(0L, nls.totals.notifications)
+        assertTrue(nls.totals.blocked <= nls.totals.notifications)
+    }
+
+    @Test
     @DisplayName("窗口跨度防御性截断到 31 天（服务端约束）")
     fun windowSpanIsClamped() {
         val end = 10_000_000_000_000L

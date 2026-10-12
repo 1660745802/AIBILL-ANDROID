@@ -127,6 +127,44 @@ class CaptureFunnelStatsImplTest {
     }
 
     @Test
+    @DisplayName("AI 响应侧 stage：按渠道归因、上报键 client_only.ai_extra_items、不计入捕获层 droppedTotal")
+    fun aiResponseStageIsSeparateAndReportable() {
+        val stats = CaptureFunnelStatsImpl()
+        stats.record(CaptureFunnelStats.RECEIVED_NLS)
+        stats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
+        repeat(2) { stats.record(CaptureFunnelStats.aiExtraItemsStage(SourceChannel.NLS)) }
+
+        val snap = stats.snapshot()
+        assertEquals(
+            mapOf(
+                "client_only.capture_received_nls" to 1L,
+                "client_only.capture_dropped_nls_no_extras" to 1L,
+                "client_only.ai_extra_items" to 2L,
+            ),
+            snap.reportCountsFor(SourceChannel.NLS),
+        )
+        assertTrue(PrefilterReport.isReportableRuleId(CaptureFunnelStats.AI_EXTRA_ITEMS_REPORT_KEY))
+        // 捕获层合计不含 AI 响应侧；AI 侧单独统计
+        assertEquals(1L, snap.droppedTotal)
+        assertEquals(2L, snap.aiResponseTotal)
+    }
+
+    @Test
+    @DisplayName("渲染：捕获层与 AI 响应侧分开列出")
+    fun renderSeparatesAiResponseStages() {
+        val stats = CaptureFunnelStatsImpl()
+        stats.record(CaptureFunnelStats.RECEIVED_NLS)
+        stats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
+        stats.record(CaptureFunnelStats.aiExtraItemsStage(SourceChannel.NLS))
+
+        val text = CaptureFunnelStats.render(stats.snapshot())
+        assertTrue(text.contains("AI 响应侧"), text)
+        assertTrue(text.contains("ai.nls.extra_items"), text)
+        assertTrue(text.contains("早退丢弃 1"), text)
+        assertTrue(text.contains("AI 响应裁剪 1 次"), text)
+    }
+
+    @Test
     @DisplayName("渲染：列出三渠道入口，早退按条数降序，带人读标签")
     fun renderIsGroupedAndSorted() {
         val stats = CaptureFunnelStatsImpl()

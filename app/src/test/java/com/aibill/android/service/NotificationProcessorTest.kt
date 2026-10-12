@@ -7,6 +7,7 @@ import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.notification.AiCircuitBreakerImpl
 import com.aibill.android.data.notification.CaptureArchiveImpl
+import com.aibill.android.data.notification.CaptureFunnelStatsImpl
 import com.aibill.android.data.notification.NotificationInterpreterImpl
 import com.aibill.android.data.notification.ScoredAdmissionImpl
 import com.aibill.android.data.record.DirectRecordWriter
@@ -117,6 +118,7 @@ class NotificationProcessorTest {
             appLogger = appLogger,
             rulesManager = rulesManager,
             balanceConsistency = com.aibill.android.data.notification.BalanceConsistencyImpl(),
+            captureFunnelStats = CaptureFunnelStatsImpl(),
         )
         processor = NotificationProcessor(
             context = context,
