@@ -36,10 +36,9 @@ jobs:
         run: chmod +x gradlew
 
       # ===== 静态分析（detekt）=====
-      # TODO: 修复存量 issues 后将 ignoreFailures 改为 false 真正阻断 CI
+      # 存量 issues 已清零，app/build.gradle.kts 的 ignoreFailures=false 会直接阻断失败。
       - name: Detekt static analysis
         run: ./gradlew :app:detekt --no-daemon
-        continue-on-error: true
 
       - name: Upload detekt report
         if: always()
