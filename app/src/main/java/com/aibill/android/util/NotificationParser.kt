@@ -2,7 +2,6 @@ package com.aibill.android.util
 
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.roundToInt
 
 /**
  * 通知文本解析器
@@ -189,8 +188,25 @@ class NotificationParser @Inject constructor() {
     }
 
     private fun yuanToCents(yuanStr: String): Int? {
-        val yuan = yuanStr.toDoubleOrNull() ?: return null
-        return (yuan * 100).roundToInt()
+        // 全程整数（Long）运算，避免 Double.roundToInt() 对超范围值静默 clamp 成
+        // Int.MAX_VALUE（与 AmountUtils.parseExpression 同一类溢出 bug：
+        // "21474836.48" 会变成 2147483647 分，看起来合法但完全错误）。
+        val cleaned = yuanStr.trim()
+        if (cleaned.isEmpty()) return null
+        val dot = cleaned.indexOf('.')
+        val yuanPart = if (dot < 0) cleaned else cleaned.substring(0, dot)
+        val fenPart = if (dot < 0) "" else cleaned.substring(dot + 1)
+        val yuan = if (yuanPart.isEmpty()) 0L else yuanPart.toLongOrNull() ?: return null
+        // 非法字符直接判非法：本函数其它分支都以 null 表达「解析不出来」，
+        // 不能在 "1.2a" 这类输入上抛 NumberFormatException（既破坏契约又崩调用方）。
+        if (fenPart.any { !it.isDigit() }) return null
+        // 小数部分四舍五入到分（第三位起）："0.005" → 1 分
+        val frac = fenPart.take(3).padEnd(3, '0')
+        val fracCents = frac.substring(0, 2).toLong() + if (frac[2] >= '5') 1L else 0L
+        if (yuan < 0 || yuan > Long.MAX_VALUE / 100) return null
+        val total = yuan * 100 + fracCents
+        if (total <= 0 || total > Int.MAX_VALUE) return null
+        return total.toInt()
     }
 
     private fun extractDescription(text: String): String? {

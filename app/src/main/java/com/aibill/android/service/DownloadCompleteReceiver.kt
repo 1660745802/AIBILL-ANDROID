@@ -14,7 +14,9 @@ import java.util.concurrent.ConcurrentHashMap
  * 安全模型：
  * - AndroidManifest 中 `android:permission="android.permission.ACCESS_DOWNLOAD_MANAGER"`
  *   要求发送方必须持有系统级 signature 权限，只有 DownloadManager 服务能发出。
- * - 此处仍保留 [SYSTEM_DOWNLOAD_PACKAGE] 校验作为冗余防线（防止 manifest 误配置）。
+ * - BroadcastReceiver.getCallingPackage() 是 hidden API（编译不可用），这里不靠它；
+ *   改为只认 [pendingDownloads] 里登记过的 downloadId，并向 DownloadManager 反查
+ *   下载状态，只对 `STATUS_SUCCESSFUL` 的下载触发安装。
  */
 class DownloadCompleteReceiver : BroadcastReceiver() {
 
@@ -23,13 +25,35 @@ class DownloadCompleteReceiver : BroadcastReceiver() {
 
         val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
         if (id == -1L) return
+        // 只处理本进程主动 enqueue 的下载：伪造的 downloadId 在这里就被丢掉
         val entry = pendingDownloads.remove(id) ?: return
+
+        if (!isDownloadSuccessful(context, id)) {
+            Timber.w("DownloadCompleteReceiver: 下载未成功，跳过安装 id=$id")
+            return
+        }
 
         val apkFile = File(context.getExternalFilesDir(null), entry.fileName)
         if (apkFile.exists()) {
             UpdateManager.installApk(context, apkFile)
         } else {
             Timber.w("DownloadCompleteReceiver: APK 文件不存在 path=${apkFile.absolutePath}")
+        }
+    }
+
+    /** 向 DownloadManager 反查该 id 是否 `STATUS_SUCCESSFUL`；查询失败一律保守跳过。 */
+    private fun isDownloadSuccessful(context: Context, id: Long): Boolean {
+        return try {
+            val dm = context.applicationContext
+                .getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            dm.query(DownloadManager.Query().setFilterById(id)).use { cursor ->
+                cursor.moveToFirst()
+                val statusIdx = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                statusIdx >= 0 && cursor.getInt(statusIdx) == DownloadManager.STATUS_SUCCESSFUL
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "DownloadCompleteReceiver: 查询下载状态失败 id=$id")
+            false
         }
     }
 

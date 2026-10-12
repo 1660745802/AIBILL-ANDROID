@@ -24,7 +24,7 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
         CategoryRuleEntity::class,
         AppLogEntity::class,
     ],
-    version = 8, // v7 → v8: 删除死表 templates / auto_rules / recurring_rules
+    version = 9, // v8 → v9: notification_records 补两条热路径复合索引（表只增不减，见 ARCHITECTURE §12.1#3）
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -38,5 +38,20 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         const val DATABASE_NAME = "aibill.db"
+
+        /**
+         * ⚠️ 迁移链起点（人工确认过的前提，不要凭猜改）：
+         *
+         * `DatabaseModule.addMigrations` 只注册 5→6 起的迁移。本仓库**首个提交**
+         * （8694ec9 `feat:_AIBILL_Android_v0.4`）里 `AppDatabase.version` 就已是 5，
+         * 且从未提交过 v5 之前的导出 schema（`/app/schemas/` 被 .gitignore，历史无可查）。
+         * 因此这里把「v5 是本项目首个发布 schema」作为前提：DB 版本 < 5 的升级不存在，
+         * 也就不需要 1→5 的迁移。
+         *
+         * 若曾向用户发布过 DB 版本 < 5 的包，升级到本版本时会抛
+         * `IllegalStateException: A migration from X to 5 was required but not found`
+         * 并**不会**走 destructive fallback（本工程禁止）。
+         * 无法从仓库历史证实是否存在 < 5 的已发布包，需人工确认。
+         */
     }
 }

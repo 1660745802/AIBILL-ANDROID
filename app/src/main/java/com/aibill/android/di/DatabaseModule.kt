@@ -44,8 +44,26 @@ object DatabaseModule {
                     db.execSQL("DROP TABLE IF EXISTS templates")
                     db.execSQL("DROP TABLE IF EXISTS auto_rules")
                     db.execSQL("DROP TABLE IF EXISTS recurring_rules")
+                },
+                // v8 → v9：给只增不减的 notification_records 补两条热路径复合索引。
+                // 每条通知都会跑：package_name+content+received_at（DB 1s 去重）、
+                // parsed_amount+status+received_at（跨渠道判重）。
+                // ⚠️ 索引名/列序必须与 NotificationRecordEntity 的 @Entity(indices) 严格一致，
+                // 否则 Room 迁移后的 schema 校验会抛 IllegalStateException。
+                androidx.room.migration.Migration(8, 9) { db ->
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS " +
+                            "`index_notification_records_package_name_content_received_at` " +
+                            "ON `notification_records` (`package_name`, `content`, `received_at`)"
+                    )
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS " +
+                            "`index_notification_records_parsed_amount_status_received_at` " +
+                            "ON `notification_records` (`parsed_amount`, `status`, `received_at`)"
+                    )
                 }
             )
+            // 迁移链从 5→6 起：前提「v5 是项目首个发布 schema」写在 AppDatabase.companion 注释里。
             // 不允许 fallbackToDestructiveMigration：schema 不匹配时必须显式写 Migration，
             // 否则本地缓存（pending_transactions）会被静默清空，违反 PRD §8.4 数据不丢失
             .build()

@@ -7,6 +7,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -58,7 +62,6 @@ class AppLogger @Inject constructor(
     }
 
     /** App 打开时自动清理 2 天前的日志 + 旧日志文件，并按条数上限收缩 */
-    /** App 打开时自动清理 2 天前的日志 */
     fun autoCleanOldLogs(context: android.content.Context? = null) {
         scope.launch {
             val twoDaysAgo = System.currentTimeMillis() - 2 * 24 * 60 * 60 * 1000L
@@ -82,19 +85,35 @@ class AppLogger @Inject constructor(
         val logs = appLogDao.getRecent().take(limit)
         return buildString {
             appendLine("=== AIBILL 日志导出 ===")
-            appendLine("导出时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}")
+            appendLine("导出时间: ${formatTimestamp(System.currentTimeMillis(), EXPORT_TIME_FORMAT)}")
             appendLine("共 $logs 条（上限 $limit，已按时间倒序）")
             appendLine()
             for (log in logs) {
-                val time = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.getDefault())
-                    .format(java.util.Date(log.timestamp))
+                val time = formatTimestamp(log.timestamp, LOG_TIME_FORMAT)
                 appendLine("[$time] [${log.level}] [${log.tag}] ${log.message}")
             }
         }
     }
 
+    /**
+     * 落盘时间戳一律走 java.time + **固定 Locale.ROOT**。
+     *
+     * 旧实现用 `SimpleDateFormat(pattern, Locale.getDefault())`：泰语 locale 会写出佛历
+     * 年（2568 而非 2025）、阿拉伯语 locale 写出非 ASCII 数字——导出的日志是给开发者
+     * 排查用的落盘数据，必须稳定可读（ARCHITECTURE §2.3 / CONTRIBUTING §3 硬规矩）。
+     */
+    private fun formatTimestamp(epochMillis: Long, formatter: DateTimeFormatter): String =
+        Instant.ofEpochMilli(epochMillis)
+            .atZone(ZoneId.systemDefault())
+            .format(formatter)
+
     companion object {
         /** 日志表保留条数上限 */
         const val MAX_LOG_ROWS = 5_000
+
+        private val EXPORT_TIME_FORMAT: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.ROOT)
+        private val LOG_TIME_FORMAT: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("MM-dd HH:mm:ss", Locale.ROOT)
     }
 }

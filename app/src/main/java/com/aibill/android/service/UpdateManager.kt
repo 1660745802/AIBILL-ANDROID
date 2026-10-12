@@ -200,7 +200,11 @@ class UpdateManager @Inject constructor(
      */
     fun downloadAndInstall(context: Context, info: UpdateInfo) {
         try {
-            val fileName = "aibill-${info.versionName}.apk"
+            // 文件名只用白名单字符：versionName 来自服务端/GitHub 标签，
+            // 直接拼进路径可能带 `../` 之类的路径穿越（落盘 / 删除都会受害）。
+            val safeVersion = info.versionName.filter { it.isLetterOrDigit() || it in "._-" }
+                .ifEmpty { "unknown" }
+            val fileName = "aibill-$safeVersion.apk"
             // 清理旧的下载文件
             val destDir = context.getExternalFilesDir(null)
             File(destDir, fileName).takeIf { it.exists() }?.delete()

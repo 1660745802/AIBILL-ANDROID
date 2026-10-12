@@ -147,4 +147,26 @@ class NotificationParserTest {
         assertNotNull(r)
         assertEquals(10000, r!!.amount)
     }
+
+    // ==================== 金额边界（Int 溢出回归） ====================
+
+    @Test
+    fun `超大金额不被静默 clamp 成 Int 上限，返回 null`() {
+        // 旧实现走 Double.roundToInt()，对超范围值静默 clamp 到 2147483647 分，
+        // 会得到一个看起来合法的错误金额。
+        assertNull(parser.parse("com.bank.app", "消费99999999999999999999元"))
+        assertNull(parser.extractAmountOnly("收入999999999999999999.99元"))
+    }
+
+    @Test
+    fun `恰好 Int 上限内可解析，溢出即 null`() {
+        assertEquals(Int.MAX_VALUE, parser.parse("com.bank.app", "消费21474836.47元")!!.amount)
+        assertNull(parser.parse("com.bank.app", "消费21474836.48元"))
+    }
+
+    @Test
+    fun `第三位小数四舍五入到分`() {
+        assertEquals(10001, parser.parse("com.bank.app", "消费100.005元")!!.amount)
+        assertEquals(10000, parser.parse("com.bank.app", "消费100.004元")!!.amount)
+    }
 }
