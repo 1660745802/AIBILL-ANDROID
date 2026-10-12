@@ -46,7 +46,7 @@ class ScoredAdmissionTest {
     private val rulesManager: NotificationRulesManager = mockk(relaxed = true)
     private lateinit var admission: ScoredAdmissionImpl
 
-    /** 与生产同一个时间锚点的基准时刻；markProcessed 用的是 wall clock，测试须贴近它。 */
+    /** 与生产同一个时间锚点的基准时刻；已认领记录以 receivedAt 为时间轴，测试用它对齐。 */
     private val baseTime = System.currentTimeMillis()
 
     @BeforeEach
@@ -163,6 +163,33 @@ class ScoredAdmissionTest {
         runCurrent()
         assertEquals(2, admitted.size, "新交易走完自己的窗口后产出")
         assertEquals("咖啡2", admitted.last().description)
+    }
+
+    @Test
+    @DisplayName("401 重放的历史 receivedAt 不被近期跨渠道条目误判为重复")
+    fun `重放历史时间不误杀`() = runTest(testDispatcher) {
+        val admitted = mutableListOf<ParsedTransaction>()
+        // 实时通知：NLS ¥50 已入账（记入 recentProcessed，时间轴 = receivedAt）
+        admission.submit(candidate(5000, score = 5)) { admitted += it }
+        advanceTimeBy(10_100)
+        runCurrent()
+        assertEquals(1, admitted.size)
+
+        // 1 小时前的 auth_pending 待补偿重放：A11Y 同金额，receivedAt 是历史时刻。
+        // 单边时间差为负，不能被当成「60s 内」而把重放交易当重复丢掉。
+        admission.submit(
+            candidate(
+                5000,
+                score = 5,
+                channel = SourceChannel.A11Y,
+                packageName = "com.eg.android.AlipayGphone",
+                receivedAt = baseTime - 3_600_000,
+            )
+        ) { admitted += it }
+        advanceTimeBy(10_100)
+        runCurrent()
+
+        assertEquals(2, admitted.size, "历史时刻的另一笔同金额交易不应被近期条目误判为重复")
     }
 
     // ── 60s 跨渠道判重 ──

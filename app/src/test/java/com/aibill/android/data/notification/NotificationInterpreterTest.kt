@@ -189,6 +189,20 @@ class NotificationInterpreterTest {
     }
 
     @Test
+    @DisplayName("协程取消 → 原样向上抛，不吞成 Unparsed，也不记熔断失败")
+    fun `取消原样抛出`() = runTest {
+        coEvery { aiApi.parse(any()) } throws kotlinx.coroutines.CancellationException("cancelled")
+        var thrown: Throwable? = null
+        try {
+            interpreter.read(captureOf())
+        } catch (e: Throwable) {
+            thrown = e
+        }
+        assertInstanceOf(kotlinx.coroutines.CancellationException::class.java, thrown)
+        verify(exactly = 0) { circuitBreaker.recordOutcome(any(), any(), any()) }
+    }
+
+    @Test
     @DisplayName("成功一次 → 上报熔断成功")
     fun `成功上报`() = runTest {
         coEvery { aiApi.parse(any()) } returns ok(aiItem())

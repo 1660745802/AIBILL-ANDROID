@@ -104,7 +104,17 @@ class NotificationMonitorService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val notification = sbn ?: return
-        serviceScope.launch { handleNotification(notification) }
+        serviceScope.launch {
+            try {
+                handleNotification(notification)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 进程级 Scope 没有 CoroutineExceptionHandler，预筛/落库的 Room 异常
+                // 会直接崩进程；按 §10「本地 Room 异常 → 降级 + 日志」。
+                appLogger.error("NLS", "通知处理异常: pkg=${notification.packageName} err=${e.message}")
+            }
+        }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
@@ -127,7 +137,7 @@ class NotificationMonitorService : NotificationListenerService() {
         // 合并文本：bigText 是 text 的展开完整版，优先用 bigText（text 可能是截断摘要）。
         // 群聊类通知（QQ/微信）的 bigText 往往以 title 开头，此时不再重复拼 title，
         // 否则 AI 会收到「209嗨 209嗨 太越林上火型: …」这种双份噪音。
-        val body = sanitizeNotificationText(bigText.ifBlank { text})
+        val body = sanitizeNotificationText(bigText.ifBlank { text })
         val fullText = buildFullText(title, body, subText, infoText)
 
         val verdict = prefilter.evaluate(

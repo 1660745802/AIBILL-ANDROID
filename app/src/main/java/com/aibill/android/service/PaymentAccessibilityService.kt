@@ -485,10 +485,12 @@ class PaymentAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // 条件3.5：金额合理性校验（排除 ¥0.00、超大金额等异常值）
-            val amountValue = extractNumericAmount(amountText)
-            if (amountValue == null || amountValue < 0.01 || amountValue > 100_000.0) {
-                appLogger.debug("A11Y_SKIP", "金额异常($amountValue): [$shortClassName] raw=$amountText")
+            // 条件3.5：金额合理性校验（排除 ¥0.00、超大金额等异常值）。
+            // 一律整数分比较（CONTRIBUTING §三：禁止 Double/Float 参与金额计算）；
+            // 上下限与旧实现一致：0.01 元 ~ 100,000.00 元。
+            val amountCents = extractNumericAmountCents(amountText)
+            if (amountCents == null || amountCents < 1 || amountCents > 100_000_00) {
+                appLogger.debug("A11Y_SKIP", "金额异常($amountCents): [$shortClassName] raw=$amountText")
                 return
             }
 
@@ -538,21 +540,29 @@ class PaymentAccessibilityService : AccessibilityService() {
 
             // 交给预筛（与通知/短信同一套判据）；放行后才进 Processor
             serviceScope.launch {
-                val verdict = prefilter.evaluate(
-                    Capture(
-                        channel = SourceChannel.A11Y,
-                        packageName = packageName,
-                        title = A11Y_ITEM_TITLE,
-                        fullText = summary,
-                        receivedAt = now,
+                try {
+                    val verdict = prefilter.evaluate(
+                        Capture(
+                            channel = SourceChannel.A11Y,
+                            packageName = packageName,
+                            title = A11Y_ITEM_TITLE,
+                            fullText = summary,
+                            receivedAt = now,
+                        )
                     )
-                )
-                if (verdict is Verdict.Block) {
-                    appLogger.debug("A11Y_SKIP", "预筛拦截(${verdict.reason}): pkg=$packageName")
-                    return@launch
+                    if (verdict is Verdict.Block) {
+                        appLogger.debug("A11Y_SKIP", "预筛拦截(${verdict.reason}): pkg=$packageName")
+                        return@launch
+                    }
+                    val passed = (verdict as Verdict.Pass).capture
+                    notificationProcessor.process(passed)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // 进程级 Scope 没有 CoroutineExceptionHandler，预筛/落库的 Room 异常
+                    // 会直接崩进程；按 §10「本地 Room 异常 → 降级 + 日志」。
+                    appLogger.error("A11Y", "支付页处理异常: pkg=$packageName err=${e.message}")
                 }
-                val passed = (verdict as Verdict.Pass).capture
-                notificationProcessor.process(passed)
             }
         } finally {
             // rootNode 不再需要手动 recycle (Android 14+ deprecated)
@@ -651,11 +661,9 @@ class PaymentAccessibilityService : AccessibilityService() {
         return PaymentAccessibilityRecognition.isSuccessKeywordMatch(text, keyword)
     }
 
-    /** 从金额文本中提取数值（如 "¥12.50" → 12.5） */
-    private fun extractNumericAmount(amountText: String): Double? {
-        val cleaned = amountText.replace("¥", "").replace("￥", "").replace("元", "").replace(" ", "").trim()
-        return cleaned.toDoubleOrNull()
-    }
+    /** 从金额文本中提取整数分（如 "¥12.50" → 1250）；解析不出返回 null */
+    private fun extractNumericAmountCents(amountText: String): Int? =
+        PaymentAccessibilityRecognition.amountKey(amountText)?.toIntOrNull()
 
     /** 在节点树中找第一个匹配金额格式的文本 */
     private fun findAmount(root: AccessibilityNodeInfo): String? {

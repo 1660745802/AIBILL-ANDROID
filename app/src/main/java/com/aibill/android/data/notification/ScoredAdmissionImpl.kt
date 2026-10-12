@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedDeque
+import kotlin.math.abs
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -86,55 +87,66 @@ class ScoredAdmissionImpl @Inject constructor(
     private val recentProcessed = ConcurrentLinkedDeque<ProcessedEntry>()
 
     override fun submit(candidate: ParsedTransaction, onAdmitted: suspend (ParsedTransaction) -> Unit) {
-        val key = candidate.amount
-        val existing = windows[key]
+        // 判定段（读窗口 → 同源 flush / 跨渠道择优 / 开新窗口）必须原子：
+        // submit 从 NLS/SMS/A11Y 三条协程并发进来，并发的同金额两条会各自看到
+        // 「池子为空」而互相覆盖窗口，先到那笔被静默丢掉。
+        synchronized(this) {
+            val key = candidate.amount
+            val existing = windows[key]
 
-        if (existing != null && (candidate.capture.receivedAt - existing.candidate.capture.receivedAt) <= scoreWindowMs) {
-            val sameSource = existing.candidate.capture.channel == candidate.capture.channel &&
-                existing.candidate.capture.packageName == candidate.capture.packageName
-            if (sameSource) {
-                // 同渠道同包名同金额 = 两笔真实交易（如 10s 内两杯 ¥15 咖啡）。
-                // 评分窗口的本意是合并「同一笔交易的跨渠道多视图」，不能把
-                // 同来源的两笔合并丢一笔：立即提交前一笔，为新交易开新窗口。
-                // （同一交易的重复通知更早会被预筛的内存 hash 去重 / DB 1s 去重拦掉）
-                appLogger.debug(
-                    "NLS",
-                    "同来源同金额，视为两笔交易: amount=$key pkg=${candidate.capture.packageName}"
-                )
-                windowJobs[key]?.cancel()
-                windowJobs.remove(key)
-                windows.remove(key)
-                scope.launch {
-                    try {
-                        admitNow(existing)
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        // flush 路径异常兜底：未捕获异常会崩掉进程，必须与窗口路径同级兜底
-                        appLogger.error("NLS", "同源立即提交异常: amount=$key err=${e.message}")
-                        Timber.e(e, "ScoredAdmission same-source flush failed: amount=$key")
+            if (existing != null &&
+                (candidate.capture.receivedAt - existing.candidate.capture.receivedAt) <= scoreWindowMs
+            ) {
+                val sameSource = existing.candidate.capture.channel == candidate.capture.channel &&
+                    existing.candidate.capture.packageName == candidate.capture.packageName
+                if (sameSource) {
+                    // 同渠道同包名同金额 = 两笔真实交易（如 10s 内两杯 ¥15 咖啡）。
+                    // 评分窗口的本意是合并「同一笔交易的跨渠道多视图」，不能把
+                    // 同来源的两笔合并丢一笔：立即提交前一笔，为新交易开新窗口。
+                    // （同一交易的重复通知更早会被预筛的内存 hash 去重 / DB 1s 去重拦掉）
+                    appLogger.debug(
+                        "NLS",
+                        "同来源同金额，视为两笔交易: amount=$key pkg=${candidate.capture.packageName}"
+                    )
+                    // 窗口到期任务在产出前会先按身份摘掉自己的 job 映射，因此这里
+                    // remove 到 null = 产出已在进行/已完成：不能再次 flush 同一候选
+                    // （否则同一候选会以两个 clientId 各入一笔 = 重复账）。
+                    windowJobs.remove(key)?.cancel()
+                    val stale = windows.remove(key)
+                    if (stale != null) {
+                        scope.launch {
+                            try {
+                                admitNow(stale)
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                // flush 路径异常兜底：未捕获异常会崩掉进程，必须与窗口路径同级兜底
+                                appLogger.error("NLS", "同源立即提交异常: amount=$key err=${e.message}")
+                                Timber.e(e, "ScoredAdmission same-source flush failed: amount=$key")
+                            }
+                        }
                     }
+                    openWindow(Window(candidate, onAdmitted))
+                    return
                 }
-                openWindow(Window(candidate, onAdmitted))
-                return
-            }
-            // 跨渠道同金额：同一笔交易的两个视图，比较 score 保留更好的。
-            // 注意定时任务不重启：窗口锚点是先到那条的到达时刻。
-            if (candidate.score > existing.candidate.score) {
-                windows[key] = Window(candidate, onAdmitted)
-                appLogger.debug(
-                    "NLS",
-                    "评分替换: amount=$key newScore=${candidate.score} > oldScore=${existing.candidate.score}"
-                )
+                // 跨渠道同金额：同一笔交易的两个视图，比较 score 保留更好的。
+                // 注意定时任务不重启：窗口锚点是先到那条的到达时刻。
+                if (candidate.score > existing.candidate.score) {
+                    windows[key] = Window(candidate, onAdmitted)
+                    appLogger.debug(
+                        "NLS",
+                        "评分替换: amount=$key newScore=${candidate.score} > oldScore=${existing.candidate.score}"
+                    )
+                } else {
+                    appLogger.debug(
+                        "NLS",
+                        "评分丢弃: amount=$key score=${candidate.score} ≤ existing=${existing.candidate.score}"
+                    )
+                }
             } else {
-                appLogger.debug(
-                    "NLS",
-                    "评分丢弃: amount=$key score=${candidate.score} ≤ existing=${existing.candidate.score}"
-                )
+                // 首条或超过评分窗口的新交易
+                openWindow(Window(candidate, onAdmitted))
             }
-        } else {
-            // 首条或超过评分窗口的新交易
-            openWindow(Window(candidate, onAdmitted))
         }
     }
 
@@ -142,15 +154,20 @@ class ScoredAdmissionImpl @Inject constructor(
     private fun openWindow(window: Window) {
         val key = window.candidate.amount
         windows[key] = window
-        windowJobs[key]?.cancel()
+        windowJobs.remove(key)?.cancel()
         appLogger.debug(
             "NLS",
             "评分窗口启动: amount=$key score=${window.candidate.score} " +
                 "isComplete=${window.candidate.isComplete} channel=${window.candidate.capture.channel}"
         )
         windowJobs[key] = scope.launch {
+            // 产出前先按身份摘掉自己的映射：这一步之后本任务不再接受 cancel。
+            // 与同源 flush 的配合（两条路径竞争同一窗口）恰好产出一次：
+            // - 本任务先摘映射 → flush 的 windows.remove 拿到 null，不再 flush，由本任务产出；
+            // - flush 先取走窗口 → 本任务 windows.remove 拿到 null，直接退出。
             try {
                 delay(scoreWindowMs)
+                windowJobs.remove(key, coroutineContext[Job])
                 val best = windows.remove(key) ?: run {
                     appLogger.warn("NLS", "评分窗口到期但池中无数据: amount=$key")
                     return@launch
@@ -165,7 +182,9 @@ class ScoredAdmissionImpl @Inject constructor(
                 Timber.e(e, "ScoredAdmission scoring commit failed: amount=$key")
                 windows.remove(key)
             } finally {
-                windowJobs.remove(key)
+                // 只摘自己的映射：若已被同源新窗口覆盖，不能把新窗口的 job 映射误删
+                // （误删会让新窗口的计时任务之后无法被 cancel）。
+                windowJobs.remove(key, coroutineContext[Job])
             }
         }
     }
@@ -202,7 +221,12 @@ class ScoredAdmissionImpl @Inject constructor(
                 appLogger.debug("NLS", "去重(DB): amount=${candidate.amount}")
                 return@withLock false
             }
-            markProcessed(candidate.amount, candidate.capture.channel, candidate.capture.packageName)
+            markProcessed(
+                candidate.amount,
+                candidate.capture.channel,
+                candidate.capture.packageName,
+                candidate.capture.receivedAt,
+            )
             true
         }
         if (!admitted) return
@@ -212,7 +236,7 @@ class ScoredAdmissionImpl @Inject constructor(
 
     /**
      * 跨渠道去重判断（内存级）：
-     * - 不同 channel 或不同包名 + 同金额 + 60s 内 → 重复
+     * - 不同 channel 或 不同包名 + 同金额 + 60s 内 → 重复
      * - 同 channel 同包名 → 不去重（视为真实两笔交易）
      */
     private fun isDuplicateAcrossChannels(
@@ -221,18 +245,24 @@ class ScoredAdmissionImpl @Inject constructor(
         packageName: String,
         now: Long,
     ): Boolean {
-        // 先清过期
-        val cutoff = now - dedupWindowMs
+        // 过期清理用 wall clock：entries 与查询锚点都以 receivedAt 为时间轴，
+        // 401 重放进来的是历史 receivedAt——若用它当清理基准会把尚在窗口内的
+        // 新鲜条目整批删掉，之后的判重全部失效。
+        val cutoff = System.currentTimeMillis() - dedupWindowMs
         recentProcessed.removeIf { it.time < cutoff }
-        // 查重：不同渠道 或 不同包名（同金额N秒内）
+        // 查重：不同渠道 或 不同包名（同金额N秒内）。
+        // 用绝对时间差：重放候选的 receivedAt 可能早于已登记条目，单边差值为负
+        // 会误判成「60s 内」而把历史交易当重复丢掉。
         return recentProcessed.any {
             it.amount == amount &&
                 (it.channel != channel || it.packageName != packageName) &&
-                (now - it.time) <= dedupWindowMs
+                abs(now - it.time) <= dedupWindowMs
         }
     }
 
-    private fun markProcessed(amount: Int, channel: SourceChannel, packageName: String) {
-        recentProcessed.addLast(ProcessedEntry(amount, channel, packageName, System.currentTimeMillis()))
+    private fun markProcessed(amount: Int, channel: SourceChannel, packageName: String, receivedAt: Long) {
+        // 时间轴统一用 receivedAt（与查询侧同源）：wall clock 与捕获时刻混用
+        // 会让重放（历史 receivedAt）的判定结果不可预测。
+        recentProcessed.addLast(ProcessedEntry(amount, channel, packageName, receivedAt))
     }
 }

@@ -6,6 +6,7 @@ import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.CaptureArchive
 import com.aibill.android.domain.notification.CapturedText
 import com.aibill.android.util.AppLogger
+import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -53,6 +54,10 @@ class CaptureArchiveImpl @Inject constructor(
                         receivedAt = record.receivedAt,
                     )
                 )
+            } catch (e: CancellationException) {
+                // 取消不是重放失败：不标终态，留给下次重登继续重放；
+                // 吞掉会破坏结构化取消（随后的 updateStatus 在已取消协程里也会再抛）。
+                throw e
             } catch (e: Exception) {
                 appLogger.error("NLS", "待补偿重放异常: ${e.message}")
             }

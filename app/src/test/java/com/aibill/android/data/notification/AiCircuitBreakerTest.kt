@@ -73,4 +73,25 @@ class AiCircuitBreakerTest {
     fun `未知来源不熔断`() {
         assertFalse(newBreaker().isMuted("com.never.seen.app", now = 1_000L))
     }
+
+    @Test
+    @DisplayName("静音期外的陈旧失败不累计：跨冷却期的下一次失败重新计数")
+    fun `陈旧失败不累计`() {
+        val breaker = newBreaker()
+        repeat(threshold - 1) { breaker.recordOutcome("pkg", success = false, now = 1_000L) }
+        // 第三次失败距上次已超过冷却期 → 「连续」不成立，计数重置为 1，不静音
+        breaker.recordOutcome("pkg", success = false, now = 1_000L + cooldownMs + 1)
+        assertFalse(breaker.isMuted("pkg", now = 1_001L + cooldownMs))
+    }
+
+    @Test
+    @DisplayName("冷却期内的失败照常累计：恰好卡在冷却期边界仍触发静音")
+    fun `冷却期内累计`() {
+        val breaker = newBreaker()
+        breaker.recordOutcome("pkg", success = false, now = 1_000L)
+        // 间隔恰好等于冷却期（不算陈旧）→ 第三次仍应静音
+        breaker.recordOutcome("pkg", success = false, now = 1_000L + cooldownMs)
+        breaker.recordOutcome("pkg", success = false, now = 1_000L + 2 * cooldownMs)
+        assertTrue(breaker.isMuted("pkg", now = 1_000L + 2 * cooldownMs + 1))
+    }
 }

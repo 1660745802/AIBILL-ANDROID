@@ -12,6 +12,7 @@ import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.service.NotificationRulesManager
 import com.aibill.android.util.AiResultValidator
 import com.aibill.android.util.AppLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import retrofit2.HttpException
 import timber.log.Timber
@@ -95,7 +96,8 @@ class NotificationInterpreterImpl @Inject constructor(
                 categoryId = aiItem.categoryId,
                 description = aiItem.description,
                 // 必传：校验 5 靠它拦「金额从群名误取」的幻觉（A1）。
-                // 用清洗前的 capture.fullText，与实际送 AI 的文本一致。
+                // 用清洗后的 cleanedText：与实际送 AI 的文本逐字一致，
+                // 金额佐证看到的才和模型看到的是同一份。
                 sourceText = cleanedText,
             )
 
@@ -141,6 +143,10 @@ class NotificationInterpreterImpl @Inject constructor(
                 Timber.w(e, "AI HTTP 失败，落原文: ${capture.packageName}")
                 ParseOutcome.Unparsed("http=${e.code()}")
             }
+        } catch (e: CancellationException) {
+            // 协程取消不是解析失败：吞掉会让服务重建/进程回收时落出一条假的 raw 留痕，
+            // 并破坏结构化取消（取消后 Room 也会再抛一次）。
+            throw e
         } catch (e: Exception) {
             circuitBreaker.recordOutcome(capture.packageName, success = false)
             appLogger.error("NLS", "AI异常: ${e.message}")

@@ -39,14 +39,22 @@ class AiCircuitBreakerImpl @Inject constructor(
             breakers.remove(source)
             return
         }
-        val previous = breakers[source]
-        val failures = (previous?.failures ?: 0) + 1
-        val mutedUntil = if (failures >= FAIL_THRESHOLD) now + COOLDOWN_MS else 0L
-        breakers[source] = Breaker(failures, now, mutedUntil)
-        if (mutedUntil > 0L) {
+        var mutedNow = false
+        var failureCount = 0
+        // compute 保证并发失败不丢计数；静音期外的陈旧失败不累计
+        // （「连续失败」必须有时间连续性，否则几周前的两次失败会在今天凑满阈值）。
+        breakers.compute(source) { _, previous ->
+            val stale = previous != null && now - previous.lastFailureAt > COOLDOWN_MS
+            val failures = if (previous == null || stale) 1 else previous.failures + 1
+            val mutedUntil = if (failures >= FAIL_THRESHOLD) now + COOLDOWN_MS else 0L
+            mutedNow = mutedUntil > 0L
+            failureCount = failures
+            Breaker(failures, now, mutedUntil)
+        }
+        if (mutedNow) {
             appLogger.warn(
                 "NLS",
-                "AI 熔断开启: pkg=$source 连续失败 $failures 次，静音 ${COOLDOWN_MS / 1000}s"
+                "AI 熔断开启: pkg=$source 连续失败 $failureCount 次，静音 ${COOLDOWN_MS / 1000}s"
             )
         }
         // 顺手清理长时间无失败记录的条目，防 map 无限增长

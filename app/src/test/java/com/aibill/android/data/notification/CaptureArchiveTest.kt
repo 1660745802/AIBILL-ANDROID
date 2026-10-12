@@ -135,6 +135,22 @@ class CaptureArchiveTest {
     }
 
     @Test
+    @DisplayName("重放回调被取消 → 原样向上抛且不标终态（留给下次重登继续）")
+    fun `重放取消不标终态`() = runTest {
+        coEvery { dao.findAuthPending(any()) } returns listOf(pendingRow(9L))
+
+        var thrown: Throwable? = null
+        try {
+            archive.replay { throw kotlinx.coroutines.CancellationException("cancelled") }
+        } catch (e: Throwable) {
+            thrown = e
+        }
+
+        assertTrue(thrown is kotlinx.coroutines.CancellationException)
+        coVerify(exactly = 0) { dao.updateStatus(any(), any(), any()) }
+    }
+
+    @Test
     @DisplayName("没有待补偿记录时不回调")
     fun `无记录不回调`() = runTest {
         coEvery { dao.findAuthPending(any()) } returns emptyList()
