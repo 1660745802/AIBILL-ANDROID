@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
@@ -199,6 +200,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         fun prefilter(): NotificationPrefilter
         fun appLogger(): com.aibill.android.util.AppLogger
         fun rulesManager(): NotificationRulesManager
+        fun captureFunnelStats(): CaptureFunnelStats
         @com.aibill.android.di.ApplicationScope
         fun applicationScope(): kotlinx.coroutines.CoroutineScope
     }
@@ -207,6 +209,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     private lateinit var prefilter: NotificationPrefilter
     private lateinit var appLogger: com.aibill.android.util.AppLogger
     private lateinit var rulesManager: NotificationRulesManager
+    private lateinit var captureFunnelStats: CaptureFunnelStats
 
     // PR 修复：改用进程级 ApplicationScope，避免 Service 每次实例化都泄漏一个 SupervisorJob。
     private lateinit var serviceScope: kotlinx.coroutines.CoroutineScope
@@ -291,6 +294,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         prefilter = entryPoint.prefilter()
         appLogger = entryPoint.appLogger()
         rulesManager = entryPoint.rulesManager()
+        captureFunnelStats = entryPoint.captureFunnelStats()
         serviceScope = entryPoint.applicationScope()
 
         refreshRulesIfNeeded(force = true)
@@ -320,9 +324,14 @@ class PaymentAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val ev = event ?: return
         val packageName = ev.packageName?.toString() ?: return
+        captureFunnelStats.record(CaptureFunnelStats.RECEIVED_A11Y)
 
         refreshRulesIfNeeded()
-        if (packageName !in paymentApps) return
+        if (packageName !in paymentApps) {
+            // 捕获层早退：白名单外的 App 无支付语义，预筛看不到（黑盒中最大的一块）
+            captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NOT_WHITELISTED)
+            return
+        }
 
         val eventTypeName = when (ev.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "STATE"
@@ -347,12 +356,14 @@ class PaymentAccessibilityService : AccessibilityService() {
 
                 val root = rootInActiveWindow
                 if (root == null) {
+                    captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NO_ROOT)
                     appLogger.debug("A11Y_EVENT", "$eventTypeName pkg=$packageName class=${className.substringAfterLast('.')} root=NULL")
                     return
                 }
                 if (!PaymentAccessibilityRecognition.isRootForEvent(
                         root.packageName?.toString(), packageName,
                     )) {
+                    captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_ROOT_MISMATCH)
                     appLogger.debug("A11Y_EVENT", "$eventTypeName pkg=$packageName class=${className.substringAfterLast('.')} root=MISMATCH(rootPkg=${root.packageName} rootWin=${root.windowId} evWin=$windowId)")
                     return
                 }
@@ -363,11 +374,13 @@ class PaymentAccessibilityService : AccessibilityService() {
                 val root = rootInActiveWindow
                 if (root == null) {
                     // CONTENT_CHANGED root为null很常见（频繁事件），不记日志避免爆量
+                    captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NO_ROOT)
                     return
                 }
                 if (!PaymentAccessibilityRecognition.isRootForEvent(
                         root.packageName?.toString(), packageName,
                     )) {
+                    captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_ROOT_MISMATCH)
                     return
                 }
                 val activity = currentActivity[packageName]
@@ -376,19 +389,26 @@ class PaymentAccessibilityService : AccessibilityService() {
                     //   页上。STATE 分支本来就有 `?: className` 兑底，这里补齐对称逻辑。
                     ?: ev.className?.toString()?.takeIf { isActivityClassName(it) }
                     ?: run {
+                        captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NO_ACTIVITY)
                         appLogger.debug("A11Y_EVENT", "CONTENT pkg=$packageName 无可用 Activity，跳过")
                         return
                     }
                 if (!isPotentialPaymentActivity(activity, packageName)) {
                     // 非支付相关Activity的CONTENT_CHANGED，不记日志（太多）
+                    captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NOT_PAYMENT_ACTIVITY)
                     return
                 }
 
-                val pageToken = currentPageToken[packageName] ?: return
+                val pageToken = currentPageToken[packageName]
+                if (pageToken == null) {
+                    captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NO_PAGE_TOKEN)
+                    return
+                }
                 val now = System.currentTimeMillis()
                 val lastCheck = contentChangeThrottle[pageToken] ?: 0L
                 if (now - lastCheck < CONTENT_CHANGE_THROTTLE_MS) {
                     // 节流中，不记日志
+                    captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_DEBOUNCE)
                     return
                 }
                 contentChangeThrottle[pageToken] = now
@@ -472,6 +492,7 @@ class PaymentAccessibilityService : AccessibilityService() {
                 val scanNow = System.currentTimeMillis()
                 val lastScan = scanThrottle[pageToken] ?: 0L
                 if (scanNow - lastScan < SCAN_THROTTLE_MS) {
+                    captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_DEBOUNCE)
                     return
                 }
                 scanThrottle[pageToken] = scanNow
@@ -493,6 +514,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 条件1：有支付成功关键词
             val matchedKeyword = findMatchedKeyword(rootNode, activeKeywords)
             if (matchedKeyword == null) {
+                captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NO_SUCCESS_KEYWORD)
                 // 未命中成功词 = 不是支付结果页，一律**只记一行汇总**。
                 //
                 // 2026-10-09 真机日志证据：原实现在这里分两支，有金额的支支
@@ -527,6 +549,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 条件2：排除非支付结果页
             val activeExcludeKeywords = if (isEmbeddedApp) commonExcludeKeywords else wechatAlipayExcludeKeywords + commonExcludeKeywords
             if (hasAnyKeyword(allTexts, activeExcludeKeywords)) {
+                captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_EXCLUDED)
                 appLogger.debug("A11Y_SKIP", "排除词命中: [$shortClassName] pkg=$packageName")
                 return
             }
@@ -534,6 +557,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 条件3：有金额文字
             val amountText = findAmount(rootNode)
             if (amountText == null) {
+                captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_BAD_AMOUNT)
                 // 有成功词但没找到金额 → 可能页面还没渲染完
                 if (!isRetry) {
                     scheduleRetry(
@@ -553,12 +577,14 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 上下限与旧实现一致：0.01 元 ~ 100,000.00 元。
             val amountCents = extractNumericAmountCents(amountText)
             if (amountCents == null || amountCents < 1 || amountCents > 100_000_00) {
+                captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_BAD_AMOUNT)
                 appLogger.debug("A11Y_SKIP", "金额异常($amountCents): [$shortClassName] raw=$amountText")
                 return
             }
 
             // 条件4：不是历史账单（只检查金额节点附近文本）
             if (!isRecentPayment(allTexts, amountText)) {
+                captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_HISTORY_DATE)
                 appLogger.debug("A11Y_SKIP", "历史日期拦截: [$shortClassName] amount=$amountText")
                 return
             }
@@ -576,6 +602,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             val hash = summary.hashCode()
             val now = System.currentTimeMillis()
             if (hash == lastHash && (now - lastTime) < DEBOUNCE_MS) {
+                captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_DEBOUNCE)
                 appLogger.debug("A11Y_SKIP", "防抖拦截(${DEBOUNCE_MS / 1000}s): $amountText")
                 return
             }
@@ -583,12 +610,17 @@ class PaymentAccessibilityService : AccessibilityService() {
             lastTime = now
 
             // cooldown：同规范化金额+页面 N 分钟内只触发一次
-            val amountKey = PaymentAccessibilityRecognition.amountKey(amountText) ?: return
+            val amountKey = PaymentAccessibilityRecognition.amountKey(amountText)
+            if (amountKey == null) {
+                captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_BAD_AMOUNT)
+                return
+            }
             val merchantKey = merchant?.trim()?.lowercase().orEmpty()
             val deduKey = "$amountKey|$merchantKey|$pageToken"
             val dedupTtl = PaymentAccessibilityRecognition.dedupTtl(cooldownMs)
             val lastPayTime = recentPayments[deduKey]
             if (lastPayTime != null && (now - lastPayTime) < dedupTtl) {
+                captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_PAGE_DEDUP)
                 appLogger.debug("A11Y_SKIP", "页面去重(${dedupTtl / 1000}s同金额+商家): $deduKey")
                 return
             }

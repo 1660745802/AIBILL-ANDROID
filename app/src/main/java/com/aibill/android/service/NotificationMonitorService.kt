@@ -4,6 +4,7 @@ import android.app.Notification
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
@@ -41,6 +42,7 @@ class NotificationMonitorService : NotificationListenerService() {
     interface NlsEntryPoint {
         fun notificationProcessor(): NotificationProcessor
         fun prefilter(): NotificationPrefilter
+        fun captureFunnelStats(): CaptureFunnelStats
         fun appLogger(): AppLogger
         @com.aibill.android.di.ApplicationScope
         fun applicationScope(): kotlinx.coroutines.CoroutineScope
@@ -48,6 +50,7 @@ class NotificationMonitorService : NotificationListenerService() {
 
     private lateinit var notificationProcessor: NotificationProcessor
     private lateinit var prefilter: NotificationPrefilter
+    private lateinit var captureFunnelStats: CaptureFunnelStats
     private lateinit var appLogger: AppLogger
 
     // PR 修复：改用进程级 @ApplicationScope，
@@ -68,6 +71,7 @@ class NotificationMonitorService : NotificationListenerService() {
         val entryPoint = EntryPointAccessors.fromApplication(applicationContext, NlsEntryPoint::class.java)
         notificationProcessor = entryPoint.notificationProcessor()
         prefilter = entryPoint.prefilter()
+        captureFunnelStats = entryPoint.captureFunnelStats()
         appLogger = entryPoint.appLogger()
         serviceScope = entryPoint.applicationScope()
     }
@@ -123,9 +127,19 @@ class NotificationMonitorService : NotificationListenerService() {
 
     /** 平台翻译：`StatusBarNotification` → [Capture]，判定与放行都交给预筛 module。 */
     private suspend fun handleNotification(sbn: StatusBarNotification) {
-        val packageName = sbn.packageName ?: return
+        captureFunnelStats.record(CaptureFunnelStats.RECEIVED_NLS)
+        val packageName = sbn.packageName
+        if (packageName == null) {
+            // 捕获层早退：包名为空的通知无法归因，预筛也看不到（不重复计）
+            captureFunnelStats.record(CaptureFunnelStats.DROPPED_NLS_NO_PACKAGE)
+            return
+        }
 
-        val extras = sbn.notification?.extras ?: return
+        val extras = sbn.notification?.extras
+        if (extras == null) {
+            captureFunnelStats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
+            return
+        }
         val title = sanitizeNotificationText(
             extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
         )

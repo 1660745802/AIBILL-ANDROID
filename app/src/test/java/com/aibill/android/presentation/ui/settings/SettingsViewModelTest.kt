@@ -75,10 +75,14 @@ class SettingsViewModelTest {
         notificationRulesManager = notificationRulesManager,
         updateManager = updateManager,
         prefilterStats = prefilterStats,
+        captureFunnelStats = captureFunnelStats,
     )
 
     /** 预筛拦截计数：导出日志时随附（断言导出文本包含分布段落）。 */
     private val prefilterStats = com.aibill.android.data.notification.PrefilterStatsImpl()
+
+    /** 捕获层漏斗计数：与预筛段落相邻随附导出。 */
+    private val captureFunnelStats = com.aibill.android.data.notification.CaptureFunnelStatsImpl()
 
     @Test
     fun `defaults to enabled`() {

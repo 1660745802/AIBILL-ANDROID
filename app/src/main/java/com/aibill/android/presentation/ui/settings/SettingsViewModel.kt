@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.domain.repository.AuthRepository
 import com.aibill.android.service.NotificationRulesManager
@@ -45,6 +46,7 @@ class SettingsViewModel @Inject constructor(
     private val notificationRulesManager: NotificationRulesManager,
     private val updateManager: UpdateManager,
     private val prefilterStats: PrefilterStats,
+    private val captureFunnelStats: CaptureFunnelStats,
 ) : ViewModel() {
 
     data class UiState(
@@ -175,8 +177,10 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 // 预筛拦截分布随导出一起走：这是「拦了什么、是不是误杀」唯一的现场证据
+                // 捕获层漏斗紧跟其后（两段相邻），回答「连预筛都没到的那一段丢在哪」
                 val logText = appLogger.exportAsText() +
-                    "\n" + PrefilterStats.render(prefilterStats.snapshot())
+                    "\n" + PrefilterStats.render(prefilterStats.snapshot()) +
+                    "\n" + CaptureFunnelStats.render(captureFunnelStats.snapshot())
                 val logFile = java.io.File(context.cacheDir, "aibill_log_${System.currentTimeMillis()}.txt")
                 logFile.writeText(logText)
                 val uri = androidx.core.content.FileProvider.getUriForFile(

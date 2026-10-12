@@ -4,6 +4,7 @@ import com.aibill.android.data.remote.api.AiApi
 import com.aibill.android.data.remote.dto.request.FilterReportRequest
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.data.remote.dto.response.FilterReportResponseDto
+import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.PrefilterReport
 import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.domain.notification.SourceChannel
@@ -37,6 +38,7 @@ class PrefilterReportTest {
     /** 记录每次发出的请求；[failWhen] 返回 true 时该次调用抛 IOException（模拟离线）。 */
     private fun reporter(
         stats: PrefilterStatsImpl,
+        captureFunnelStats: CaptureFunnelStatsImpl = CaptureFunnelStatsImpl(),
         failWhen: () -> Boolean = { false },
         unknownIds: List<String>? = null,
     ): Pair<PrefilterReportImpl, MutableList<FilterReportRequest>> {
@@ -47,7 +49,12 @@ class PrefilterReportTest {
             if (failWhen()) throw IOException("offline")
             ApiResponse(code = 0, data = FilterReportResponseDto(accepted = 1, unknownPrecheckIds = unknownIds), message = "ok")
         }
-        return PrefilterReportImpl(stats = stats, aiApi = aiApi, appLogger = logger) to requests
+        return PrefilterReportImpl(
+            stats = stats,
+            captureFunnelStats = captureFunnelStats,
+            aiApi = aiApi,
+            appLogger = logger,
+        ) to requests
     }
 
     @Test
@@ -200,6 +207,79 @@ class PrefilterReportTest {
         val (reporter, requests) = reporter(stats)
         reporter.report(now = 1_000_000L)
         assertTrue(requests.isEmpty())
+    }
+
+    @Test
+    @DisplayName("捕获层漏斗 stage 也能上报，且机械映射落在 client_only.capture_*（不污染 totals）")
+    fun captureFunnelStagesAreReportedUnderClientOnly() = runTest {
+        val stats = PrefilterStatsImpl()
+        val capture = CaptureFunnelStatsImpl()
+        // A11Y：一页连发多个事件 → 大量白名单外早退 + 命中/未命中成功词
+        repeat(7) { capture.record(CaptureFunnelStats.RECEIVED_A11Y) }
+        repeat(5) { capture.record(CaptureFunnelStats.DROPPED_A11Y_NOT_WHITELISTED) }
+        capture.record(CaptureFunnelStats.DROPPED_A11Y_NO_SUCCESS_KEYWORD)
+        // NLS 侧也有捕获层早退
+        capture.record(CaptureFunnelStats.RECEIVED_NLS)
+        capture.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
+        val (reporter, requests) = reporter(stats, captureFunnelStats = capture)
+
+        reporter.report(now = 1_000_000L)
+
+        assertEquals(2, requests.size, "每渠道一条（预筛为空，但仍要上报捕获层）：$requests")
+        val a11y = requests.first { it.channel == "a11y" }
+        val a11yKeys = a11y.counts.map { it.ruleId }
+        assertTrue(a11yKeys.all { it.startsWith("client_only.") }, a11yKeys.toString())
+        assertEquals(
+            mapOf(
+                "client_only.capture_received_a11y" to 7L,
+                "client_only.capture_dropped_a11y_not_whitelisted" to 5L,
+                "client_only.capture_dropped_a11y_no_success_keyword" to 1L,
+            ),
+            a11y.counts.associate { it.ruleId to it.count },
+        )
+        // totals 是纯预筛口径：捕获层计数只进 counts，不破坏 blocked <= notifications
+        assertEquals(0L, a11y.totals.blocked)
+        assertEquals(0L, a11y.totals.notifications)
+        assertTrue(a11y.totals.blocked <= a11y.totals.notifications)
+
+        val nls = requests.first { it.channel == "nls" }
+        assertEquals(
+            mapOf(
+                "client_only.capture_received_nls" to 1L,
+                "client_only.capture_dropped_nls_no_extras" to 1L,
+            ),
+            nls.counts.associate { it.ruleId to it.count },
+        )
+        // 捕获层被取走后清零：再 report 一次不应重复上报
+        reporter.report(now = 2_000_000L)
+        assertEquals(2, requests.size, "捕获层计数不应重复上报：$requests")
+    }
+
+    @Test
+    @DisplayName("捕获层计数与预筛计数合并进同一 counts（同键求和防御）")
+    fun captureFunnelCountsMergeWithPrefilterCounts() = runTest {
+        val stats = PrefilterStatsImpl()
+        val capture = CaptureFunnelStatsImpl()
+        stats.recordBlocked(SourceChannel.SMS, "client_only.MARKETING")
+        stats.recordPassed(SourceChannel.SMS)
+        repeat(3) { capture.record(CaptureFunnelStats.RECEIVED_SMS) }
+        capture.record(CaptureFunnelStats.DROPPED_SMS_BLANK_TEXT)
+        val (reporter, requests) = reporter(stats, captureFunnelStats = capture)
+
+        reporter.report(now = 1_000_000L)
+
+        val sms = requests.single()
+        assertEquals(
+            mapOf(
+                "client_only.MARKETING" to 1L,
+                "client_only.capture_received_sms" to 3L,
+                "client_only.capture_dropped_sms_blank_text" to 1L,
+            ),
+            sms.counts.associate { it.ruleId to it.count },
+        )
+        // totals 仍只算预筛：拦截 1 + 放行 1 → notifications = 2（捕获层不参与）
+        assertEquals(1L, sms.totals.blocked)
+        assertEquals(2L, sms.totals.notifications)
     }
 
     @Test

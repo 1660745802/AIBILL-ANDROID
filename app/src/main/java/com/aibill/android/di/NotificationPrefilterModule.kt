@@ -2,6 +2,7 @@ package com.aibill.android.di
 
 import com.aibill.android.data.notification.CloudNotificationRuleSource
 import com.aibill.android.data.notification.NotificationPrefilterImpl
+import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.domain.notification.PrefilterReport
@@ -47,6 +48,16 @@ object NotificationPrefilterModule {
     @Provides
     @Singleton
     fun providePrefilterStats(impl: com.aibill.android.data.notification.PrefilterStatsImpl): PrefilterStats = impl
+
+    /**
+     * 捕获层漏斗计数（PRODUCT §三「漏账率」缺的那块：adapter 早退的每一层）。
+     * 与 [PrefilterStats] 同形态、同作用域，但**只记 adapter 自己拦下的**，不重复预筛的账。
+     */
+    @Provides
+    @Singleton
+    fun provideCaptureFunnelStats(
+        impl: com.aibill.android.data.notification.CaptureFunnelStatsImpl,
+    ): CaptureFunnelStats = impl
 
     /**
      * ⑤ 拦截计数上报（跨端契约 §4）。

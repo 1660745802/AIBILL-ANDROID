@@ -6,6 +6,7 @@ import android.content.Intent
 import android.provider.Telephony
 import com.aibill.android.di.ApplicationScope
 import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
@@ -29,21 +30,33 @@ class SmsReceiverService : BroadcastReceiver() {
 
     @Inject lateinit var notificationProcessor: NotificationProcessor
     @Inject lateinit var prefilter: NotificationPrefilter
+    @Inject lateinit var captureFunnelStats: CaptureFunnelStats
     @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
 
     // PR 修复：注入进程级 ApplicationScope，避免每次 SMS 接收都泄漏一个 SupervisorJob。
     @Inject @ApplicationScope lateinit var scope: CoroutineScope
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
+        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
+            captureFunnelStats.record(CaptureFunnelStats.DROPPED_SMS_NOT_ACTION)
+            return
+        }
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-        if (messages.isNullOrEmpty()) return
+        if (messages.isNullOrEmpty()) {
+            captureFunnelStats.record(CaptureFunnelStats.DROPPED_SMS_NO_MESSAGES)
+            return
+        }
 
         val fullText = messages.joinToString("") { it.messageBody ?: "" }
         val sender = messages.firstOrNull()?.originatingAddress.orEmpty()
 
-        if (fullText.isBlank()) return
+        captureFunnelStats.record(CaptureFunnelStats.RECEIVED_SMS)
+        if (fullText.isBlank()) {
+            // 预筛在空正文之前就会被 return 掉，所以这一层必须在捕获层计（跟 NLS 不同）
+            captureFunnelStats.record(CaptureFunnelStats.DROPPED_SMS_BLANK_TEXT)
+            return
+        }
 
         appLogger.info("SMS", "短信到达: sender=$sender len=${fullText.length}")
 
