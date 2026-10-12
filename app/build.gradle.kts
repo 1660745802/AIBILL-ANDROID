@@ -209,9 +209,11 @@ kover {
             }
             verify {
                 rule {
-                    // 当前 line 覆盖率 22.8%（2026-10 实测，debug 变体），随测试补齐逐步提高
-                    // 目标：先 20%（关键 VM + Repository）→ 50%（UI Kit + 工具类）
-                    minBound(9)
+                    // line 覆盖率实测 24%（2026-10，debug 变体）；门槛留余量取 20%，
+                    // 让回归能被 CI 卡住而不是形同虚设（原值 9% 比实际低 15 个点）。
+                    // 提高时先跑 ./gradlew :app:koverVerifyDebug 确认。
+                    // 目标：20%（当前）→ 50%（UI Kit + 工具类补齐后）
+                    minBound(20)
                 }
             }
         }
