@@ -324,8 +324,11 @@ GitHub 更新检查连接 15s / 读 30s。
 ### 7.1 Room（6 张表）
 
 `pending_transactions`（已确认记录的本地缓存）· `categories` / `accounts`（服务端派生缓存）·
-`notification_records`（通知审计）· `category_rules`（分类学习）· `app_logs`。无自定义索引。
-Migration 显式列出，禁 destructive fallback。
+`notification_records`（通知审计）· `category_rules`（分类学习）· `app_logs`。
+`notification_records` 有两条热路径复合索引（`package_name+content+received_at`、
+`parsed_amount+status+received_at`）——该表只增不减（§12.1#3），无索引会让 DB 1s 去重与
+跨渠道判重退化成全表扫描。Migration 显式列出（当前 5→9），禁 destructive fallback。
+迁移链起点是 v5（仓库首个提交即 v5），写在 `AppDatabase` 注释里。
 
 ### 7.2 敏感数据（`TokenManager`）
 
@@ -350,7 +353,9 @@ Migration 显式列出，禁 destructive fallback。
 
 Token 加密存储 · 支持 HTTPS（自签证书走 NetworkSecurityConfig）· Release 禁 debug 日志 ·
 R8 开启（保留 DTO/Entity/Retrofit 接口）· `allowBackup=false` · 权限按需申请、拒绝则降级不崩 ·
-导出 Receiver 加 signature 权限 · `DownloadCompleteReceiver` 校验 `getCallingPackage()` ·
+导出 Receiver 加 signature 权限 · `DownloadCompleteReceiver` 的防线是「manifest 签名权限 +
+`pendingDownloads` 白名单 + 向 DownloadManager 反查 `STATUS_SUCCESSFUL`」（`BroadcastReceiver.getCallingPackage()`
+是 hidden API，不可用） ·
 `ExternalActionReceiver` 的静默入账校验 `Binder.getCallingUid()`，
 **不得**弱化成 `checkSelfPermission`（那只查自己进程，等于没防护）。
 
@@ -391,7 +396,7 @@ R8 开启（保留 DTO/Entity/Retrofit 接口）· `allowBackup=false` · 权限
 |---|---|---|
 | 1 | 跨服务器 `userId` 命名空间碰撞 | 归属已收进 `LocalOwnership`（server × account），**server 维度仍为空**，换服务器仍是「整表作废」。当前唯一还在丢数据的根因 |
 | 2 | 撤销时服务端删除失败无自动重试 | 删除失败保留本地缓存行并提示去流水页手动删。撤销失败各分支都返回 `UndoOutcome` 由 receiver 播报（不静默，符合 [PRODUCT.md §五.5](PRODUCT.md)）；残余风险是播报可能被忽略、无自动重试 |
-| 3 | `pending_transactions` / `notification_records` 只增不减 | 两张表都没有清理窗口：原本定义的 `cleanSyncedBefore` / `cleanIgnoredBefore` / `cleanAuthPendingBefore` 零调用，已随死代码一并删除。DB 体积随使用时长单调增长，将来要清必须先补清理时机 |
+| 3 | `pending_transactions` / `notification_records` 只增不减 | 两张表都没有清理窗口：原本定义的 `cleanSyncedBefore` / `cleanIgnoredBefore` / `cleanAuthPendingBefore` 零调用，已随死代码一并删除。DB 体积随使用时长单调增长，将来要清必须先补清理时机。`notification_records` 的热路径查询已补复合索引（§7.1），所以增长只影响体积，不再拖慢每条通知的判定 |
 
 ### 12.2 认知陷阱
 
