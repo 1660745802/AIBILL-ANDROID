@@ -365,11 +365,16 @@ class TransactionsViewModel @Inject constructor(
         val transaction = lastDeletedTransaction ?: return
         lastDeletedTransaction = null   // 立即清掉，防止重复撤销
         viewModelScope.launch {
-            val result = if (transaction.id != null) {
-                transactionRepository.restoreTransaction(transaction.id)
-            } else {
-                transactionRepository.createTransactions(listOf(transaction)).map { Unit }
+            // fail-closed：列表数据来自服务端、理论上必有 id（onDeleteTransaction 在同一
+            // 线程内已先校验并把无 id 的行从撤销槽里清掉），但万一到达这里，**绝不能**
+            // 退化成 createTransactions——那会凭空新建一条服务端记录（重复账），
+            // 比「撤不掉」危险得多。
+            val id = transaction.id
+            if (id == null) {
+                _uiEvent.send(UiEvent.ShowToast("撤销失败：这条记录缺少 id"))
+                return@launch
             }
+            val result = transactionRepository.restoreTransaction(id)
             when (result) {
                 is Result.Success -> {
                     _uiEvent.send(UiEvent.ShowToast("已恢复"))
