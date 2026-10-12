@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.domain.model.Account
+import com.aibill.android.presentation.components.AmountFormatter
 import com.aibill.android.presentation.components.AppTopBar
 import com.aibill.android.presentation.components.EmptyState
 import com.aibill.android.presentation.components.GroupedList
@@ -41,8 +42,7 @@ import com.aibill.android.presentation.components.TrailingIconButton
 import com.aibill.android.presentation.theme.AmountTypography
 import com.aibill.android.presentation.theme.AppTextButton
 import com.aibill.android.presentation.theme.Tokens
-import java.text.NumberFormat
-import java.util.Locale
+import com.aibill.android.util.AmountUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,7 +97,7 @@ fun AccountManageScreen(
                     bottom = Tokens.Spacing.huge,
                 ),
             ) {
-                item(key = "group") {
+                item(key = "group", contentType = "group") {
                     GroupedList {
                         accounts.forEach { account ->
                             AccountRow(
@@ -135,7 +135,7 @@ fun AccountManageScreen(
             initialName = acct.name,
             initialType = acct.type,
             initialIcon = acct.icon,
-            initialBalance = "%.2f".format(acct.currentBalance / 100.0),
+            initialBalance = AmountUtils.fenToYuan(acct.currentBalance),
             showType = false,
             onDismiss = { editAccount = null },
             onConfirm = { name, _, icon, balance ->
@@ -290,7 +290,8 @@ private fun AccountEditDialog(
                 text = "确定",
                 onClick = {
                     if (name.isNotBlank()) {
-                        val cents = ((balance.toDoubleOrNull() ?: 0.0) * 100).toInt()
+                        // 金额一律整数分：`toDouble() * 100` 会丢分（0.29 → 28）
+                        val cents = AmountFormatter.yuanTextToFen(balance)
                         onConfirm(name, type, icon, cents)
                     }
                 },
@@ -312,8 +313,4 @@ private fun accountTypeLabel(type: String): String = when (type) {
     else -> type
 }
 
-private fun formatBalance(cents: Int): String {
-    val yuan = cents / 100.0
-    val formatter = NumberFormat.getCurrencyInstance(Locale.CHINA)
-    return formatter.format(yuan)
-}
+private fun formatBalance(cents: Int): String = AmountFormatter.toYuanDisplay(cents)

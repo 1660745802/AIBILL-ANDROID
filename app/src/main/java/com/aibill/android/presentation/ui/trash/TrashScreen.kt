@@ -91,7 +91,7 @@ fun TrashScreen(
                             bottom = Tokens.Spacing.huge,
                         ),
                     ) {
-                        item(key = "group") {
+                        item(key = "group", contentType = "group") {
                             GroupedList {
                                 uiState.items.forEach { item ->
                                     TrashRow(

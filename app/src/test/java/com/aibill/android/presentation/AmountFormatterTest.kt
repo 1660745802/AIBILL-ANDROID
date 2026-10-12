@@ -71,4 +71,34 @@ class AmountFormatterTest {
         assertEquals("¥1,000.00", AmountFormatter.toYuanDisplay(100000))
         assertEquals("¥1,000,000.00", AmountFormatter.toYuanDisplay(100000000))
     }
+
+    @Test
+    @DisplayName("用户输入的元文本 → 分：逐位整数换算，不经过 Double")
+    fun yuanTextToFenIsExact() {
+        // 0.29 * 100 == 28.999… → 截断成 28（旧实现丢 1 分）
+        assertEquals(29, AmountFormatter.yuanTextToFen("0.29"))
+        assertEquals(28, AmountFormatter.yuanTextToFen("0.28"))
+        assertEquals(1, AmountFormatter.yuanTextToFen("0.01"))
+        assertEquals(10, AmountFormatter.yuanTextToFen("0.1"))
+        assertEquals(50, AmountFormatter.yuanTextToFen("0.5"))
+        assertEquals(3250, AmountFormatter.yuanTextToFen("32.5"))
+        assertEquals(3250, AmountFormatter.yuanTextToFen("32.50"))
+        assertEquals(100, AmountFormatter.yuanTextToFen("1"))
+        assertEquals(0, AmountFormatter.yuanTextToFen(""))
+        assertEquals(0, AmountFormatter.yuanTextToFen("."))
+        assertEquals(0, AmountFormatter.yuanTextToFen("abc"))
+        // 负余额（信用卡欠款）保留符号
+        assertEquals(-50, AmountFormatter.yuanTextToFen("-0.50"))
+        // 千分位/空格不该出现在输入里，但出现了也不能崩，按数字前缀解析
+        assertEquals(123456, AmountFormatter.yuanTextToFen(" 1234.56 "))
+        // 超上限收敛到 Int 边界，且不溢出成负数
+        assertEquals(Int.MAX_VALUE, AmountFormatter.yuanTextToFen("99999999999999999999"))
+        assertEquals(Int.MIN_VALUE, AmountFormatter.yuanTextToFen("-99999999999999999999"))
+        // 边界内最大可表示值
+        assertEquals(2147483647, AmountFormatter.yuanTextToFen("21474836.47"))
+        // 紧邻的溢出侧：Long 相加后收敛，不得回绕成负数（正输入不能变负）
+        assertEquals(Int.MAX_VALUE, AmountFormatter.yuanTextToFen("21474836.48"))
+        assertEquals(Int.MAX_VALUE, AmountFormatter.yuanTextToFen("21474836.99"))
+        assertEquals(Int.MIN_VALUE, AmountFormatter.yuanTextToFen("-21474836.99"))
+    }
 }

@@ -61,7 +61,7 @@ data class SemanticColors(
     /** 铺在 [transfer] 实底上的前景色（见 [onExpense]） */
     val onTransfer: Color,
     val transferContainer: Color,
-    /** 待同步、需要注意但不阻塞 */
+    /** 待确认、需要注意但不阻塞 */
     val warning: Color,
     val warningContainer: Color,
     val onWarningContainer: Color,

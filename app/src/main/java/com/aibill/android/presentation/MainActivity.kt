@@ -79,15 +79,6 @@ class MainActivity : FragmentActivity() {
             }
         }
 
-        // 监听 appLockEnabled 后续变化（用户在设置中开启 / 关闭）
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                mainViewModel.appLockEnabled.collect { _ ->
-                    // 监听副作用：仅作为状态信号；锁定逻辑统一在 onStart 处理。
-                }
-            }
-        }
-
         // 监听 hideFromRecents 变化，实时同步到 ActivityManager
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {

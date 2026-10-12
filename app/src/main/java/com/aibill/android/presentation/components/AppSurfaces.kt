@@ -346,7 +346,7 @@ fun GroupedRow(
 enum class PillTone { Neutral, Primary, Expense, Income, Warning, Danger }
 
 /**
- * 胶囊标签。用于「自动」「待同步」「剩 22 天」这类状态标记。
+ * 胶囊标签。用于「自动」「待确认」「剩 22 天」这类状态标记。
  * 颜色由 [PillTone] 映射到语义色，明暗模式自动适配。
  */
 @Composable

@@ -14,13 +14,17 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aibill.android.domain.repository.CategoryStat
+import com.aibill.android.domain.repository.StatsSummary
 import com.aibill.android.presentation.components.EmptyState
 import com.aibill.android.presentation.components.ErrorState
 import com.aibill.android.presentation.components.LoadingState
+import com.aibill.android.presentation.theme.AiBillTheme
 import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.ui.statistics.components.CategoryDonutChart
 import com.aibill.android.presentation.ui.statistics.components.CategoryRankList
@@ -121,7 +125,7 @@ private fun StatsContent(
         verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
     ) {
         // 汇总卡 + 紧贴其下的收支对比条（视觉上同属一组）
-        item(key = "summary") {
+        item(key = "summary", contentType = "summary") {
             Column(verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.md)) {
                 SummaryCard(
                     summary = state.summary,
@@ -136,7 +140,7 @@ private fun StatsContent(
             }
         }
 
-        item(key = "trend") {
+        item(key = "trend", contentType = "chart") {
             TrendChart(
                 trendData = state.trendData,
                 selectedTab = state.selectedTab,
@@ -146,7 +150,7 @@ private fun StatsContent(
         }
 
         if (state.categoryStats.isNotEmpty()) {
-            item(key = "donut") {
+            item(key = "donut", contentType = "chart") {
                 CategoryDonutChart(
                     categories = state.categoryStats,
                     selectedTab = state.selectedTab,
@@ -161,7 +165,7 @@ private fun StatsContent(
                 )
             }
 
-            item(key = "rank") {
+            item(key = "rank", contentType = "list") {
                 CategoryRankList(
                     categories = state.categoryStats,
                     selectedTab = state.selectedTab,
@@ -177,6 +181,45 @@ private fun StatsContent(
             }
         }
 
-        item(key = "bottom_spacer") { Spacer(Modifier.height(Tokens.Spacing.sm)) }
+        item(key = "bottom_spacer", contentType = "spacer") { Spacer(Modifier.height(Tokens.Spacing.sm)) }
+    }
+}
+
+/**
+ * 预览无状态的 [StatsContent]：`StatisticsScreen` 本体依赖 `hiltViewModel()`。
+ * 数据取一整套有值的快照，能看到汇总卡 / 对比条 / 趋势图 / 排行同时出现的样子。
+ */
+@Preview(showBackground = true, heightDp = 1000)
+@Composable
+private fun StatsContentPreview() {
+    AiBillTheme {
+        StatsContent(
+            state = StatisticsViewModel.StatsUiState(
+                summary = StatsSummary(
+                    expense = 324750,
+                    income = 120000,
+                    balance = -204750,
+                    expenseChange = 12,
+                ),
+                categoryStats = listOf(
+                    CategoryStat(
+                        categoryId = 1,
+                        categoryName = "餐饮",
+                        categoryIcon = "🍜",
+                        amount = 120000,
+                        percent = 37.0,
+                    ),
+                    CategoryStat(
+                        categoryId = 2,
+                        categoryName = "交通",
+                        categoryIcon = "🚕",
+                        amount = 80000,
+                        percent = 25.0,
+                    ),
+                ),
+                trendData = emptyList(),
+            ),
+            onNavigateToCategoryTransactions = { _, _, _, _ -> },
+        )
     }
 }

@@ -97,8 +97,41 @@ object AmountFormatter {
         return (if (negative) "-" else "") + body
     }
 
+    /**
+     * 用户输入的「元」文本 → 整数分（账户余额这类输入框用）。
+     *
+     * ⚠️ 不用 `text.toDoubleOrNull() * 100`：`0.29 * 100` 在 IEEE754 下是
+     * `28.999…`，截断成 28 分 —— 用户输入和落库金额差 1 分且无法察觉。
+     * 这里按小数点切分成「元」+「角分」两段整数运算，不存在浮点参与。
+     *
+     * 非法 / 空输入返回 0；只有 "." / "-" 也算 0；超出 Int 表示范围时收敛到边界
+     * （调用方另有输入长度与格式校验）。
+     */
+    fun yuanTextToFen(text: String): Int {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty() || trimmed == "-" || trimmed == ".") return 0
+        val negative = trimmed.startsWith("-")
+        val digits = trimmed.removePrefix("-")
+        val dot = digits.indexOf('.')
+        val yuanPart = (if (dot >= 0) digits.substring(0, dot) else digits).ifEmpty { "0" }
+        val fenPart = if (dot >= 0) digits.substring(dot + 1) else ""
+        // 非数字 → 当成非法输入返回 0（不能当成“超大金额”收敛，那会把乱填变成天文数字）
+        if (!yuanPart.all { it.isDigit() } || !fenPart.all { it.isDigit() }) return 0
+        val fen = fenPart.padEnd(2, '0').take(2).toLongOrNull() ?: 0
+        val yuan = yuanPart.toLongOrNull()
+        // Long 也装不下（用户填了一串很长的数字）→ 收敛到边界，不静默变成 0
+        if (yuan == null || yuan > MAX_YUAN) return if (negative) Int.MIN_VALUE else Int.MAX_VALUE
+        // ⚠️ 用 Long 相加后统一收敛：yuan == MAX_YUAN 且 fen ≥ 48 时总额会超过
+        // Int.MAX_VALUE，直接 toInt() 会回绕成负数（正输入变负、负输入变正）。
+        val signed = if (negative) -(yuan * 100L + fen) else (yuan * 100L + fen)
+        return signed.coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
+    }
+
     /** 一「万」等于多少分（= ¥10,000） */
     private const val WAN_FEN = 1_000_000
+
+    /** [yuanTextToFen] 的整数上限（元），保证 `yuan * 100 + fen` 不溢出 Int */
+    private const val MAX_YUAN = Int.MAX_VALUE / 100L
 
     /** 隐私遮罩：固定 "¥***" */
     const val PRIVACY_MASK = "¥***"
@@ -190,9 +223,16 @@ fun AmountHero(
     }
 }
 
-/** 拆出 ¥ 后面的小数部分（Hero 专用：小数固定 2 位，不足补 0）。 */
-private fun moneyDigits(amountFen: Int): String =
-    String.format(Locale.US, "%,d.%02d", amountFen / 100, Math.abs(amountFen % 100))
+/**
+ * 拆出 ¥ 后面的数字部分（Hero 专用：小数固定 2 位，不足补 0）。
+ *
+ * 负数必须先取绝对值再拆：`-50 / 100` 截断成 0，会输出 `¥0.50`（符号和角分都丢）。
+ */
+private fun moneyDigits(amountFen: Int): String {
+    val abs = Math.abs(amountFen.toLong())
+    return (if (amountFen < 0) "-" else "") +
+        String.format(Locale.US, "%,d.%02d", abs / 100, abs % 100)
+}
 
 private val AlignmentBaseline = androidx.compose.ui.Alignment.CenterVertically
 

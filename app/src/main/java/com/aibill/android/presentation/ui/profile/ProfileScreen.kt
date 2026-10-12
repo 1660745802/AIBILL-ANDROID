@@ -118,7 +118,7 @@ fun ProfileScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
         ) {
-            item(key = "hero") {
+            item(key = "hero", contentType = "hero") {
                 UserHeroCard(
                     displayName = displayName,
                     username = username,
@@ -127,10 +127,10 @@ fun ProfileScreen(
             }
 
             // ============ 内容与数据 ============
-            item(key = "section_content") {
+            item(key = "section_content", contentType = "header") {
                 SectionHeader(title = "内容与数据")
             }
-            item(key = "content_group") {
+            item(key = "content_group", contentType = "group") {
                 GroupedList {
                     GroupedRow(
                         title = "分类管理",
@@ -167,10 +167,10 @@ fun ProfileScreen(
             }
 
             // ============ 自动化与安全 ============
-            item(key = "section_automation") {
+            item(key = "section_automation", contentType = "header") {
                 SectionHeader(title = "自动化与安全")
             }
-            item(key = "automation_group") {
+            item(key = "automation_group", contentType = "group") {
                 GroupedList {
                     GroupedRow(
                         title = "通知中心",
@@ -202,7 +202,7 @@ fun ProfileScreen(
             }
 
             // ============ 退出登录（降级为普通一行） ============
-            item(key = "logout_group") {
+            item(key = "logout_group", contentType = "group") {
                 Spacer(modifier = Modifier.height(Tokens.Spacing.sm))
                 GroupedList {
                     GroupedRow(
@@ -232,7 +232,8 @@ fun ProfileScreen(
  *   明暗模式自动成立（渐变版深色模式会糊）。
  * - 头像用首字符圆形（避免 emoji 跨设备不一致）。
  * - 底部用共享 [StatCell] 展示唯一成就指标：累计记账笔数。
- * - 右上角一个「已同步」小 [Pill]。
+ * - 右上角不放状态胶囊：「同步 / 已同步」这类字眼在本工程不存在（没有待上传队列），
+ *   放上去就是向用户主张一个系统里没有的状态。
  */
 @Composable
 private fun UserHeroCard(
@@ -281,7 +282,6 @@ private fun UserHeroCard(
                     )
                 }
             }
-            Pill(text = "已同步", tone = PillTone.Primary)
         }
 
         Spacer(modifier = Modifier.height(Tokens.Spacing.xl))

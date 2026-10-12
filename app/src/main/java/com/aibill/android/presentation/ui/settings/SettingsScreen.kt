@@ -151,10 +151,10 @@ fun SettingsScreen(
                 )
                 GroupedDivider()
                 GroupedRow(
-                    title = "同步记账规则",
-                    subtitle = if (uiState.isSyncingRules) "正在同步…" else "从服务端拉取最新规则",
+                    title = "更新记账规则",
+                    subtitle = if (uiState.isSyncingRules) "正在拉取…" else "从服务端拉取最新规则",
                     icon = Icons.Default.Sync,
-                    // 同步中禁用点击：防连点打多次请求，也避免行内 spinner 闪
+                    // 拉取中禁用点击：防连点打多次请求，也避免行内 spinner 闪
                     onClick = { if (!uiState.isSyncingRules) viewModel.syncRules() },
                     showChevron = !uiState.isSyncingRules,
                     trailing = {

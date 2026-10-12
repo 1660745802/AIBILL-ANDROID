@@ -69,13 +69,14 @@ class ServerConfigViewModel @Inject constructor(
                     .readTimeout(5, TimeUnit.SECONDS)
                     .build()
                 val request = Request.Builder().url(testUrl).get().build()
-                val response = client.newCall(request).execute()
+                // use {} 必须包住 Response：不关闭会泄漏连接（OkHttp 连接池无法复用）
+                val code = client.newCall(request).execute().use { response -> response.code }
 
                 // 只要能连通（包括 401 未认证也算连通）
-                if (response.code in 200..499) {
+                if (code in 200..499) {
                     _uiState.update { it.copy(isTesting = false, isConnected = true) }
                 } else {
-                    _uiState.update { it.copy(isTesting = false, error = "服务器响应异常: ${response.code}") }
+                    _uiState.update { it.copy(isTesting = false, error = "服务器响应异常: $code") }
                 }
             } catch (e: Exception) {
                 Timber.e(e, "连接测试失败")

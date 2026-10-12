@@ -1,6 +1,7 @@
 package com.aibill.android.presentation.ui.common
 
 import com.aibill.android.presentation.components.AppChip
+import com.aibill.android.presentation.components.AmountFormatter
 import com.aibill.android.presentation.components.TypeSegmentedControl
 import com.aibill.android.presentation.theme.AmountTypography
 import com.aibill.android.presentation.theme.AppTextButton
@@ -22,6 +23,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.aibill.android.domain.model.Account
 import com.aibill.android.domain.model.Category
+import com.aibill.android.util.AmountUtils
 
 /**
  * 交易编辑初始值。集中打包多参数，避免 LongParameterList。
@@ -52,7 +54,9 @@ fun TransactionEditDialog(
     onConfirm: (amount: Int, type: String, categoryId: Int?, description: String, accountId: Int?, targetAccountId: Int?, tags: List<String>) -> Unit,
 ) {
     var type by remember { mutableStateOf(initial.type) }
-    var amountText by remember { mutableStateOf(if (initial.amount > 0) "%.2f".format(initial.amount / 100.0) else "") }
+    var amountText by remember {
+        mutableStateOf(if (initial.amount > 0) AmountUtils.fenToYuan(initial.amount) else "")
+    }
     var description by remember { mutableStateOf(initial.description ?: "") }
     var selectedCategoryId by remember { mutableStateOf(initial.categoryId) }
     var selectedAccountId by remember { mutableStateOf(initial.accountId) }
@@ -243,7 +247,8 @@ fun TransactionEditDialog(
             PrimaryButton(
                 text = "确认入账",
                 onClick = {
-                    val cents = Math.round((amountText.toDoubleOrNull() ?: 0.0) * 100).toInt()
+                    // 金额一律整数分：`toDouble() * 100` 会丢分（0.29 → 28）
+                    val cents = AmountFormatter.yuanTextToFen(amountText)
                     val finalCategoryId = if (type == "transfer") null else selectedCategoryId
                     onConfirm(
                         cents, type, finalCategoryId, description,
@@ -252,7 +257,7 @@ fun TransactionEditDialog(
                         tags,
                     )
                 },
-                enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0,
+                enabled = AmountFormatter.yuanTextToFen(amountText) > 0,
                 tall = false,
             )
         },

@@ -24,6 +24,7 @@ import com.aibill.android.presentation.components.AppHeroCard
 import com.aibill.android.presentation.components.StatCell
 import com.aibill.android.presentation.components.TrendIndicator
 import com.aibill.android.presentation.theme.Tokens
+import com.aibill.android.presentation.theme.AmountTypography
 import com.aibill.android.presentation.theme.semantic
 
 /**
@@ -89,7 +90,7 @@ fun SummaryCard(
             StatCell(
                 label = "日均",
                 value = dailyAvg ?: "¥0.00",
-                valueStyle = MaterialTheme.typography.titleMedium,
+                valueStyle = AmountTypography.Stat,
                 modifier = Modifier.weight(1f),
             )
             StatCell(
@@ -100,7 +101,7 @@ fun SummaryCard(
                 } else {
                     MaterialTheme.semantic.income
                 },
-                valueStyle = MaterialTheme.typography.titleMedium,
+                valueStyle = AmountTypography.Stat,
                 showDividerBefore = true,
                 modifier = Modifier.weight(1f),
             )
@@ -108,7 +109,7 @@ fun SummaryCard(
                 StatCell(
                     label = "笔数",
                     value = count.toString(),
-                    valueStyle = MaterialTheme.typography.titleMedium,
+                    valueStyle = AmountTypography.Stat,
                     showDividerBefore = true,
                     modifier = Modifier.weight(1f),
                 )

@@ -40,11 +40,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.presentation.components.AmountFormatter
@@ -60,9 +62,9 @@ import com.aibill.android.presentation.components.SectionHeader
 import com.aibill.android.presentation.components.StatCell
 import com.aibill.android.presentation.components.TransactionRow
 import com.aibill.android.presentation.theme.AmountTypography
+import com.aibill.android.presentation.theme.AiBillTheme
 import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.theme.semantic
-import kotlinx.coroutines.flow.collectLatest
 import java.time.LocalDate
 
 /**
@@ -84,7 +86,7 @@ import java.time.LocalDate
  *  │  │ 日均  │ 收入 │ 结余           │  │
  *  │  ╰───────────────────────────────╯  │
  *  ├─────────────────────────────────────┤
- *  │ ⚠ 3 笔待同步          [立即同步]   │  ← 按需出现的横幅
+ *  │ ⚠ 有 3 条通知待确认      [去处理]  │  ← 按需出现的横幅（无同步/队列态）
  *  │                                     │
  *  │ 今日流水  支出 ¥xx    自动 3        │  ← SectionHeader
  *  │ ╭───────────────────────────────╮  │
@@ -110,7 +112,9 @@ fun HomeScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
-        viewModel.uiEvent.collectLatest { event ->
+        // 用 collect 而不是 collectLatest：SnackbarHostState 自己排队，
+        // collectLatest 会在下一条事件到达时取消上一条的 showSnackbar，把错误提示吞掉。
+        viewModel.uiEvent.collect { event ->
             when (event) {
                 is HomeViewModel.UiEvent.ShowError ->
                     snackbarHostState.showSnackbar(event.message)
@@ -204,7 +208,7 @@ private fun HomeContent(
         ),
         verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
     ) {
-        item(key = "summary") {
+        item(key = "summary", contentType = "summary") {
             MonthlySummaryCard(
                 monthlyExpense = uiState.monthlyExpense,
                 monthlyIncome = uiState.monthlyIncome,
@@ -213,7 +217,7 @@ private fun HomeContent(
             )
         }
 
-        item(key = "today_title") {
+        item(key = "today_title", contentType = "header") {
             SectionHeader(
                 title = "今日流水",
                 subtitle = if (todayExpense > 0) {
@@ -232,11 +236,11 @@ private fun HomeContent(
         }
 
         if (uiState.todayTransactions.isEmpty()) {
-            item(key = "empty") {
+            item(key = "empty", contentType = "empty") {
                 TodayEmptyCard()
             }
         } else {
-            item(key = "today_list") {
+            item(key = "today_list", contentType = "list") {
                 // 整组一个容器：流水是一份连续的清单，不该每条一张卡
                 GroupedList(contentPadding = PaddingValues(vertical = Tokens.Spacing.xs)) {
                     uiState.todayTransactions.forEach { transaction ->
@@ -416,6 +420,38 @@ private fun TodayEmptyCard() {
             title = "今天还没有记账",
             subtitle = "通知监听开着，支付完成后会自动记到这里",
             modifier = Modifier.height(232.dp),
+        )
+    }
+}
+
+/**
+ * 预览走无状态的 [HomeContent]：`HomeScreen` 本体依赖 `hiltViewModel()`，
+ * 在 Preview 里拉不起 Hilt 图，直接预览会崩。
+ */
+@Preview(showBackground = true, heightDp = 800)
+@Composable
+private fun HomeContentPreview() {
+    AiBillTheme {
+        HomeContent(
+            uiState = HomeViewModel.HomeUiState(
+                monthlyExpense = 324750,
+                monthlyIncome = 120000,
+                todayTransactions = listOf(
+                    Transaction(
+                        clientId = "preview-1",
+                        type = TransactionType.EXPENSE,
+                        amount = 3200,
+                        categoryName = "餐饮",
+                        categoryIcon = "🍜",
+                        description = "午餐",
+                        date = LocalDate.now().toString(),
+                        source = TransactionSource.APP_NOTIFICATION,
+                    ),
+                ),
+                pendingNotificationCount = 3,
+            ),
+            onHeaderClick = {},
+            onItemClick = {},
         )
     }
 }

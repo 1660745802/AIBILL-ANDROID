@@ -56,9 +56,9 @@ import com.aibill.android.presentation.theme.AppOutlinedButton
 import com.aibill.android.presentation.theme.PrimaryButton
 import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.theme.semantic
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * 通知中心。**已重构**：
@@ -159,7 +159,7 @@ fun NotificationCenterScreen(
                     .padding(horizontal = Tokens.Spacing.lg),
                 verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.sm),
             ) {
-                item(key = "health_status") {
+                item(key = "health_status", contentType = "health") {
                     NlsHealthCard(isConnected = nlsConnected, pendingCount = pendingCount)
                     Spacer(Modifier.height(Tokens.Spacing.xs))
                 }
@@ -167,7 +167,7 @@ fun NotificationCenterScreen(
                 val pendingList = allItems.filter { it.status in listOf("raw", "parsed") }
                 val confirmedList = allItems.filter { it.status !in listOf("raw", "parsed") }
 
-                items(pendingList, key = { it.id }) { item ->
+                items(pendingList, key = { it.id }, contentType = { "pending" }) { item ->
                     NotificationItem(
                         item = item,
                         onConfirm = { editItem = item },
@@ -176,7 +176,7 @@ fun NotificationCenterScreen(
                 }
 
                 if (confirmedList.isNotEmpty()) {
-                    item(key = "confirmed_summary") {
+                    item(key = "confirmed_summary", contentType = "summary") {
                         ConfirmedSummaryCard(
                             count = confirmedList.size,
                             totalAmount = confirmedList.sumOf { it.parsedAmount ?: 0 },
@@ -185,13 +185,19 @@ fun NotificationCenterScreen(
                         )
                     }
                     if (expandedConfirmed) {
-                        items(confirmedList, key = { "confirmed_${it.id}" }) { item ->
+                        items(
+                            confirmedList,
+                            key = { "confirmed_${it.id}" },
+                            contentType = { "confirmed" },
+                        ) { item ->
                             ConfirmedNotificationItem(item = item)
                         }
                     }
                 }
 
-                item { Spacer(Modifier.height(Tokens.Spacing.lg)) }
+                item(key = "bottom_spacer", contentType = "spacer") {
+                    Spacer(Modifier.height(Tokens.Spacing.lg))
+                }
             }
         }
     }
@@ -392,9 +398,7 @@ private fun ConfirmedSummaryCard(
  */
 @Composable
 private fun ConfirmedNotificationItem(item: NotificationRecord) {
-    val timeText = remember(item.receivedAt) {
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(item.receivedAt))
-    }
+    val timeText = remember(item.receivedAt) { formatTimeOfDay(item.receivedAt) }
 
     Row(
         modifier = Modifier
@@ -431,7 +435,14 @@ private fun ConfirmedNotificationItem(item: NotificationRecord) {
     }
 }
 
-private fun formatTime(timestamp: Long): String {
-    val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
-    return sdf.format(Date(timestamp))
-}
+// 时间显示一律 java.time（禁止 SimpleDateFormat(Locale.getDefault())：
+// 泰语 locale 会写出佛历年、阿拉伯语 locale 写出非 ASCII 数字）。
+// DateTimeFormatter 不可变，提到 top-level 常量避免每次重组重建。
+private val TIME_OF_DAY_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+private val DATE_TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm")
+
+private fun formatTime(timestamp: Long): String =
+    Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).format(DATE_TIME_FORMATTER)
+
+private fun formatTimeOfDay(timestamp: Long): String =
+    Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).format(TIME_OF_DAY_FORMATTER)

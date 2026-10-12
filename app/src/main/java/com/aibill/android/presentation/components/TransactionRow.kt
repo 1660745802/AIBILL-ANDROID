@@ -50,7 +50,7 @@ import com.aibill.android.presentation.theme.Tokens
  * - 整行按下时向右微缩 2%，确认"点到了"
  *
  * @param onClick 点击回调。为 null 时不消费点击（用于纯展示场景）
- * @param highlight 高亮该行（如待同步），底色微染品牌色
+ * @param highlight 高亮该行（如从外部深链跳进来要定位的那一行），底色微染品牌色
  */
 @Composable
 fun TransactionRow(

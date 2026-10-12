@@ -13,12 +13,11 @@ import com.aibill.android.domain.repository.TransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -60,8 +59,11 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
-    private val _uiEvent = MutableSharedFlow<UiEvent>()
-    val uiEvent: SharedFlow<UiEvent> = _uiEvent.asSharedFlow()
+    // 一次性事件用 Channel + receiveAsFlow（架构约定）：
+    // MutableSharedFlow(replay=0) 在没有订阅者时 emit 直接丢失 —— init 里的
+    // refresh() 报错发生在 UI 订阅之前，用户永远看不到那条错误。
+    private val _uiEvent = Channel<UiEvent>(Channel.BUFFERED)
+    val uiEvent = _uiEvent.receiveAsFlow()
 
     private val today: String
         get() = LocalDate.now().toString()
@@ -92,7 +94,7 @@ class HomeViewModel @Inject constructor(
                 val deferred4 = async {
                     val success = loadTodayTransactions()
                     if (!success) {
-                        _uiEvent.emit(UiEvent.ShowError("加载今日流水失败，请检查网络"))
+                        _uiEvent.send(UiEvent.ShowError("加载今日流水失败，请检查网络"))
                     }
                 }
                 awaitAll(deferred1, deferred2, deferred3, deferred4)
@@ -148,7 +150,7 @@ class HomeViewModel @Inject constructor(
             }
             is Result.Error -> {
                 Timber.e("加载月度支出失败: ${result.message}")
-                _uiEvent.emit(UiEvent.ShowError("加载月度数据失败: ${result.message}"))
+                _uiEvent.send(UiEvent.ShowError("加载月度数据失败: ${result.message}"))
             }
             is Result.Loading -> Unit
         }

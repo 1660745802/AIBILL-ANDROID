@@ -112,7 +112,7 @@ fun CategoryManageScreen(
                         bottom = Tokens.Spacing.huge,
                     ),
                 ) {
-                    item(key = "group") {
+                    item(key = "group", contentType = "group") {
                         GroupedList {
                             categories.forEach { category ->
                                 CategoryRow(

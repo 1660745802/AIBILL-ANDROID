@@ -201,9 +201,9 @@ class ManualRecordViewModel @Inject constructor(
                     val items = result.data
                     if (items.isNotEmpty()) {
                         val first = items.first()
-                        // 填充金额
+                        // 填充金额（显示走 AmountUtils，不在 UI 层做 Double 换算）
                         if (first.amount > 0) {
-                            val yuanText = "%.2f".format(first.amount / 100.0)
+                            val yuanText = AmountUtils.fenToYuan(first.amount)
                             _uiState.update { it.copy(amountText = yuanText, amountFen = first.amount) }
                         }
                         // 填充类型

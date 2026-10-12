@@ -27,8 +27,9 @@ import org.junit.jupiter.api.Test
  * - 删除成功后 Pager 不刷新 → fix: emit ShowDeleteUndo + RefreshList
  * - 撤销永远无效 → fix: onDeleteTransaction 保存被删 Transaction，undoDelete 真正调用 restoreTransaction
  *
- * 用 Turbine 的 flow.test { } 解决 SharedFlow(replay=0) 在测试中的时序问题——
- * Turbine 自带 buffer，能接住所有 emit，避免 collector 未就绪时事件丢失。
+ * 用 Turbine 的 flow.test { } 消费事件流。`uiEvent` 是 Channel.BUFFERED +
+ * receiveAsFlow（一次性事件不丢），因此**删除产生的事件必须在同一个 test 块内消费掉**，
+ * 否则它会留在缓冲区里污染下一个用例的 expectNoEvents()。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TransactionsViewModelTest {
@@ -112,11 +113,16 @@ class TransactionsViewModelTest {
     @Test
     fun `delete failure clears lastDeleted so undo is no-op (regression for sticky undo bug)`() = runTest {
         coEvery { transactionRepository.deleteTransaction(42) } returns Result.Error(-1, "网络失败")
-        viewModel.onDeleteTransaction(sampleTx)
-        advanceUntilIdle()
 
-        // 删除失败后 lastDeletedTransaction 必须被清空——否则用户撤销一个根本没删成功的项会乱来
         viewModel.uiEvent.test {
+            viewModel.onDeleteTransaction(sampleTx)
+            advanceUntilIdle()
+            assertEquals(
+                TransactionsViewModel.UiEvent.ShowToast("删除失败: 网络失败"),
+                awaitItem(),
+            )
+
+            // 删除失败后 lastDeletedTransaction 必须被清空——否则用户撤销一个根本没删成功的项会乱来
             viewModel.undoDelete()
             advanceUntilIdle()
 
@@ -130,25 +136,25 @@ class TransactionsViewModelTest {
         coEvery { transactionRepository.deleteTransaction(42) } returns Result.Success(Unit)
         coEvery { transactionRepository.restoreTransaction(42) } returns Result.Success(Unit)
 
-        // 1. 删除
-        viewModel.onDeleteTransaction(sampleTx)
-        advanceUntilIdle()
-
-        // 2. 撤销 — 应真发请求并 emit 两个事件
         viewModel.uiEvent.test {
+            // 1. 删除 —— 先把它产生的两个事件消费掉，避免污染后续断言
+            viewModel.onDeleteTransaction(sampleTx)
+            advanceUntilIdle()
+            assertEquals(TransactionsViewModel.UiEvent.ShowDeleteUndo, awaitItem())
+            assertEquals(TransactionsViewModel.UiEvent.RefreshList, awaitItem())
+
+            // 2. 撤销 — 应真发请求并 emit 两个事件
             viewModel.undoDelete()
             advanceUntilIdle()
 
             assertEquals(TransactionsViewModel.UiEvent.ShowToast("已恢复"), awaitItem())
             assertEquals(TransactionsViewModel.UiEvent.RefreshList, awaitItem())
-        }
-        coVerify(exactly = 1) { transactionRepository.restoreTransaction(42) }
 
-        // 3. 二次撤销 — lastDeletedTransaction 已被清空，应是 no-op（0 新事件）
-        viewModel.uiEvent.test {
+            // 3. 二次撤销 — lastDeletedTransaction 已被清空，应是 no-op（0 新事件）
             viewModel.undoDelete()
             advanceUntilIdle()
             expectNoEvents()
         }
+        coVerify(exactly = 1) { transactionRepository.restoreTransaction(42) }
     }
 }

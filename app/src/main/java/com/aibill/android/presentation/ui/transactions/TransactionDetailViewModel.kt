@@ -11,6 +11,7 @@ import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.presentation.navigation.Route
+import com.aibill.android.util.AmountUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -133,9 +134,17 @@ class TransactionDetailViewModel @Inject constructor(
 
     fun onSave() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isSaving = true) }
             val state = _uiState.value
-            val amountCents = state.amount.toDoubleOrNull()?.let { (it * 100).toInt() }
+            // 金额一律整数分：`toDouble() * 100` 会丢分（0.29 → 28）且超范围静默截断。
+            // 空文本 = 本次不改金额（不提交 amount 字段）；非空但不合法 = 当场拒绝，
+            // 绝不“跳过金额继续保存”，否则用户看到的数字和服务端存的不一致。
+            val amountText = state.amount.trim()
+            val amountCents = if (amountText.isEmpty()) null else AmountUtils.parseExpression(amountText)
+            if (amountText.isNotEmpty() && amountCents == null) {
+                _uiEvent.send(UiEvent.ShowToast("金额不合法，请填写不超过 ¥1,000,000 的数字"))
+                return@launch
+            }
+            _uiState.update { it.copy(isSaving = true) }
             val requestBody = buildMap<String, Any> {
                 put("type", state.type)
                 if (amountCents != null) put("amount", amountCents)
@@ -208,7 +217,7 @@ class TransactionDetailViewModel @Inject constructor(
                         it.copy(
                             isLoading = false,
                             type = t.type.value,
-                            amount = (t.amount / 100.0).toString(),
+                            amount = AmountUtils.fenToYuan(t.amount),
                             categoryName = t.categoryName.orEmpty(),
                             categoryId = t.categoryId,
                             accountName = t.accountName.orEmpty(),

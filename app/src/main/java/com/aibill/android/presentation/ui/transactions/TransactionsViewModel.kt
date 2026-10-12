@@ -13,16 +13,15 @@ import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -84,8 +83,10 @@ class TransactionsViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(TransactionsUiState())
     val uiState: StateFlow<TransactionsUiState> = _uiState.asStateFlow()
 
-    private val _uiEvent = MutableSharedFlow<UiEvent>()
-    val uiEvent: SharedFlow<UiEvent> = _uiEvent.asSharedFlow()
+    // 一次性事件用 Channel + receiveAsFlow（架构约定）：SharedFlow(replay=0) 在
+    // 无订阅者时丢弃事件，且 emit 会在 collectLatest 下被下一个事件取消。
+    private val _uiEvent = Channel<UiEvent>(Channel.BUFFERED)
+    val uiEvent = _uiEvent.receiveAsFlow()
 
     private val pageSize = 20
     /**
@@ -338,22 +339,22 @@ class TransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             val id = transaction.id ?: run {
                 lastDeletedTransaction = null
-                _uiEvent.emit(UiEvent.ShowToast("无法删除：找不到这条记录"))
+                _uiEvent.send(UiEvent.ShowToast("无法删除：找不到这条记录"))
                 return@launch
             }
             // 软删除（billserver 移到回收站，本地/远端缓存不自动感知）
             when (val result = transactionRepository.deleteTransaction(id)) {
                 is Result.Success -> {
-                    _uiEvent.emit(UiEvent.ShowDeleteUndo)
+                    _uiEvent.send(UiEvent.ShowDeleteUndo)
                     // PR 修复：billserver 软删除后 Pager 不会自动 invalidate，
                     // 需主动 refresh 让 LazyPagingItems 重新从 PagingSource 加载，
                     // 删除的条目才会从 UI 上消失。
-                    _uiEvent.emit(UiEvent.RefreshList)
+                    _uiEvent.send(UiEvent.RefreshList)
                 }
                 is Result.Error -> {
                     lastDeletedTransaction = null
                     Timber.e("删除失败: ${result.message}")
-                    _uiEvent.emit(UiEvent.ShowToast("删除失败: ${result.message}"))
+                    _uiEvent.send(UiEvent.ShowToast("删除失败: ${result.message}"))
                 }
                 is Result.Loading -> Unit
             }
@@ -371,11 +372,11 @@ class TransactionsViewModel @Inject constructor(
             }
             when (result) {
                 is Result.Success -> {
-                    _uiEvent.emit(UiEvent.ShowToast("已恢复"))
-                    _uiEvent.emit(UiEvent.RefreshList)
+                    _uiEvent.send(UiEvent.ShowToast("已恢复"))
+                    _uiEvent.send(UiEvent.RefreshList)
                 }
                 is Result.Error -> {
-                    _uiEvent.emit(UiEvent.ShowToast("撤销失败: ${result.message}"))
+                    _uiEvent.send(UiEvent.ShowToast("撤销失败: ${result.message}"))
                 }
                 is Result.Loading -> Unit
             }

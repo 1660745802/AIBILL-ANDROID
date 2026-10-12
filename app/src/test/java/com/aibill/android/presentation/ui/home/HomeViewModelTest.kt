@@ -130,7 +130,8 @@ class HomeViewModelTest {
     fun `today list failure surfaces an error event and leaves the state consistent`() = runTest {
         coEvery { transactionRepository.getTransactions(any()) } returns Result.Error(-1, "网络连接失败")
 
-        // 先订阅再触发：`uiEvent` 是 replay=0 的 SharedFlow，晚订阅就收不到这一条
+        // `uiEvent` 是 Channel.BUFFERED + receiveAsFlow：事件不会因为
+        // 「订阅晚了一步」而丢失（旧实现是 replay=0 的 SharedFlow，会丢）。
         viewModel.uiEvent.test {
             viewModel.refresh()
 

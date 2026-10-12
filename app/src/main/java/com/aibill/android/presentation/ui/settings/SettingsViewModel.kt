@@ -48,7 +48,7 @@ class SettingsViewModel @Inject constructor(
     data class UiState(
         val notificationListenerGranted: Boolean = false,
         val isLoading: Boolean = false,
-        /** 「同步记账规则」进行中，用于副标题 + 行内 spinner + 防重复点击。 */
+        /** 「拉取记账规则」进行中，用于副标题 + 行内 spinner + 防重复点击。 */
         val isSyncingRules: Boolean = false,
     )
 
@@ -191,11 +191,13 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 手动同步云控规则。
+     * 手动拉取云控规则。
      *
      * 反馈必须区分三态：更新成功 / 本来就是最新 / 拉取失败。
      * 以前 `fetchRules()` 内部吞异常返回 Unit，这里的 `try/catch` 是死代码，
-     * 断网也会弹「规则同步成功」——用户据此以为规则已是新版。
+     * 断网也会弹「规则拉取成功」——用户据此以为规则已是新版。
+     *
+     * 文案不使用「同步」字眼：本工程不存在待上传队列，规则只是一次拉取。
      */
     fun syncRules() {
         if (_uiState.value.isSyncingRules) return
@@ -208,7 +210,7 @@ class SettingsViewModel @Inject constructor(
                     NotificationRulesManager.RulesFetchResult.NotModified ->
                         _events.send("规则已是最新，无需更新")
                     is NotificationRulesManager.RulesFetchResult.Failed ->
-                        _events.send("规则同步失败：${result.message}")
+                        _events.send("规则拉取失败：${result.message}")
                 }
             } finally {
                 _uiState.update { it.copy(isSyncingRules = false) }
