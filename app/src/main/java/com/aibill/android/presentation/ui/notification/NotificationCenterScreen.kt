@@ -43,7 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.aibill.android.data.local.entity.NotificationRecordEntity
+import com.aibill.android.domain.model.NotificationRecord
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.util.NotificationSourceMapping
 import com.aibill.android.presentation.components.AppTopBar
@@ -75,7 +75,7 @@ fun NotificationCenterScreen(
     val pendingCount by viewModel.pendingCount.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var ignoreConfirmId by remember { mutableStateOf<Long?>(null) }
-    var editItem by remember { mutableStateOf<NotificationRecordEntity?>(null) }
+    var editItem by remember { mutableStateOf<NotificationRecord?>(null) }
     var expandedConfirmed by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -199,7 +199,7 @@ fun NotificationCenterScreen(
 
 @Composable
 private fun NotificationItem(
-    item: NotificationRecordEntity,
+    item: NotificationRecord,
     onConfirm: () -> Unit,
     onIgnore: () -> Unit,
     modifier: Modifier = Modifier,
@@ -391,7 +391,7 @@ private fun ConfirmedSummaryCard(
  * 已入账的单条通知（折叠区里）。弱化为一行，不再是一张卡。
  */
 @Composable
-private fun ConfirmedNotificationItem(item: NotificationRecordEntity) {
+private fun ConfirmedNotificationItem(item: NotificationRecord) {
     val timeText = remember(item.receivedAt) {
         SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(item.receivedAt))
     }

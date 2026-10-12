@@ -45,7 +45,7 @@ package com.aibill.android.domain.undo
  *
  * ### 为什么 `synced` 却没有 serverId 也删不了
  *
- * [server_transaction_id](com.aibill.android.data.local.entity.PendingTransactionEntity)
+ * [server_transaction_id]（见 data 层 `PendingTransactionEntity`）
  * 是定位服务端那一行的**唯一**凭据。没有它就只能按 keyword 猜 id——
  * 无排序保证、只取第 1 页、命中多条时删错账。宁可什么都不删。
  *

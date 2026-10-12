@@ -1,6 +1,6 @@
 package com.aibill.android.domain.notification
 
-import com.aibill.android.data.local.entity.NotificationRecordEntity
+import com.aibill.android.domain.model.NotificationRecord
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.Flow
  * - **确认（confirm）不在这里**：它已经归 `RecordIntake`（服务端确认 + 跨表写入），
  *   这里再开一个入口就会出现第二条入账路径。
  * - 写入只保留 [ignore]（纯状态标记，不入账、不发回执）。
+ *
+ * 返回类型是 domain 的 [NotificationRecord] 而非 Entity——「Entity 不出 data 层」。
  */
 interface ReviewQueue {
 
@@ -30,13 +32,13 @@ interface ReviewQueue {
      *
      * @param sinceMillis 已确认记录的展示窗口下界（通知中心传 24h 前的时间戳）
      */
-    fun observe(sinceMillis: Long): Flow<List<NotificationRecordEntity>>
+    fun observe(sinceMillis: Long): Flow<List<NotificationRecord>>
 
     /** 观察待审计数（首页红点 / 通知中心角标）。 */
     fun observePendingCount(): Flow<Int>
 
     /** 按 id 取一条；确认 / 忽略前核对状态用。 */
-    suspend fun findById(id: Long): NotificationRecordEntity?
+    suspend fun findById(id: Long): NotificationRecord?
 
     /** 忽略一条：只把状态置为 `ignored`，不入账、不发回执。 */
     suspend fun ignore(id: Long)

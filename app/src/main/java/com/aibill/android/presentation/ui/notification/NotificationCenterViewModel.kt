@@ -3,8 +3,8 @@ package com.aibill.android.presentation.ui.notification
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.domain.model.Category
+import com.aibill.android.domain.model.NotificationRecord
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.notification.ReviewQueue
 import com.aibill.android.domain.record.RecordIntent
@@ -94,7 +94,7 @@ class NotificationCenterViewModel @Inject constructor(
     /**
      * 通知中心展示：待确认全部 + 已确认最近 24h。
      */
-    val allNotifications: StateFlow<List<NotificationRecordEntity>> =
+    val allNotifications: StateFlow<List<NotificationRecord>> =
         reviewQueue.observe(
             System.currentTimeMillis() - 24 * 60 * 60 * 1000L,
         ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())

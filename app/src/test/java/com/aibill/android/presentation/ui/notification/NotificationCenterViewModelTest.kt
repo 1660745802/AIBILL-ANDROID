@@ -1,7 +1,7 @@
 package com.aibill.android.presentation.ui.notification
 
 import app.cash.turbine.test
-import com.aibill.android.data.local.entity.NotificationRecordEntity
+import com.aibill.android.domain.model.NotificationRecord
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.notification.ReviewQueue
 import com.aibill.android.domain.record.RecordFailure
@@ -78,7 +78,7 @@ class NotificationCenterViewModelTest {
         appContext = RuntimeEnvironment.getApplication(),
     )
 
-    private fun parsedRecord(id: Long = 1L) = NotificationRecordEntity(
+    private fun parsedRecord(id: Long = 1L) = NotificationRecord(
         id = id,
         packageName = "com.tencent.mm",
         content = "支付成功 ¥1.00",
