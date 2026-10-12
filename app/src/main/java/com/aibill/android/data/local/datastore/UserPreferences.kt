@@ -6,7 +6,6 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -65,15 +64,12 @@ class UserPreferences @Inject constructor(
         val USER_ID = intPreferencesKey("user_id")
         val USERNAME = stringPreferencesKey("username")
         val NICKNAME = stringPreferencesKey("nickname")
-        val DEFAULT_ACCOUNT_ID = intPreferencesKey("default_account_id")
         val THEME_MODE = stringPreferencesKey("theme_mode")
-        val LAST_SYNC_TIME = longPreferencesKey("last_sync_time")
         val HIDE_FROM_RECENTS = booleanPreferencesKey("hide_from_recents")
         val NOTIFICATION_PRIVACY = booleanPreferencesKey("notification_privacy")
         val APP_LOCK_ENABLED = booleanPreferencesKey("app_lock_enabled")
         val QUICK_ENTRY_ENABLED = booleanPreferencesKey("quick_entry_enabled")
         val DYNAMIC_COLOR_ENABLED = booleanPreferencesKey("dynamic_color_enabled")
-        val AUTOMATION_LEVEL = stringPreferencesKey("automation_level")
         val AI_PARSE_ENABLED = booleanPreferencesKey("ai_parse_enabled")
     }
 
@@ -115,13 +111,6 @@ class UserPreferences @Inject constructor(
         }
     }
 
-    // --- Default Account ---
-    val defaultAccountId: Flow<Int?> = dataStore.data.map { it[Keys.DEFAULT_ACCOUNT_ID] }
-
-    suspend fun setDefaultAccountId(id: Int) {
-        dataStore.edit { it[Keys.DEFAULT_ACCOUNT_ID] = id }
-    }
-
     // --- Theme ---
     val themeMode: Flow<String> = dataStore.data.map { it[Keys.THEME_MODE] ?: "system" }
 
@@ -145,9 +134,6 @@ class UserPreferences @Inject constructor(
     suspend fun setDynamicColorEnabled(enabled: Boolean) {
         dataStore.edit { it[Keys.DYNAMIC_COLOR_ENABLED] = enabled }
     }
-
-    // --- Sync ---
-    val lastSyncTime: Flow<Long?> = dataStore.data.map { it[Keys.LAST_SYNC_TIME] }
 
     // --- Hide from Recents ---
     val hideFromRecents: Flow<Boolean> = dataStore.data.map { it[Keys.HIDE_FROM_RECENTS] ?: false }
@@ -184,9 +170,6 @@ class UserPreferences @Inject constructor(
     suspend fun setQuickEntryEnabled(enabled: Boolean) {
         dataStore.edit { it[Keys.QUICK_ENTRY_ENABLED] = enabled }
     }
-
-    // --- Automation Level ---
-    val automationLevel: Flow<String> = dataStore.data.map { it[Keys.AUTOMATION_LEVEL] ?: "standard" }
 
     /**
      * 登出：只清除**用户身份信息**。

@@ -329,6 +329,8 @@ GitHub 更新检查连接 15s / 读 30s。
 `parsed_amount+status+received_at`）——该表只增不减（§12.1#3），无索引会让 DB 1s 去重与
 跨渠道判重退化成全表扫描。Migration 显式列出（当前 5→9），禁 destructive fallback。
 迁移链起点是 v5（仓库首个提交即 v5），写在 `AppDatabase` 注释里。
+导出 schema 已入库（`app/schemas/`）：迁移历史的机器可读记录，也是将来写
+`MigrationTestHelper` 迁移测试的必需输入。
 
 ### 7.2 敏感数据（`TokenManager`）
 
@@ -337,9 +339,9 @@ GitHub 更新检查连接 15s / 读 30s。
 
 ### 7.3 DataStore（`UserPreferences`）
 
-`server_url` · `default_account_id` · `theme_mode` · `notification_privacy` · `app_lock_enabled` ·
-`hide_from_recents` · `quick_entry_enabled` · `dynamic_color_enabled`（默认关）· `automation_level` ·
-`ai_parse_enabled` · `last_sync_time`。迁移期保留旧 `user_id/username/nickname` 作只读 fallback。
+`server_url` · `theme_mode` · `notification_privacy` · `app_lock_enabled` ·
+`hide_from_recents` · `quick_entry_enabled` · `dynamic_color_enabled`（默认关）·
+`ai_parse_enabled`。迁移期保留旧 `user_id/username/nickname` 作只读 fallback。
 用 `stateIn(Eagerly)` + `AtomicReference` 暴露热流，避开 Interceptor 同步路径的 `runBlocking`。
 
 ---

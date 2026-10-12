@@ -62,7 +62,6 @@ class UserPreferencesClearUserInfoTest {
     fun `clearUserInfo removes identity but keeps serverUrl and every device setting`() = runBlocking {
         prefs.setServerUrl("https://bill.example.com/api")
         prefs.setUserInfo(42, "alice", "Alice")
-        prefs.setDefaultAccountId(3)
         prefs.setThemeMode("dark")
         prefs.setNotificationPrivacy(false)
         prefs.setAppLockEnabled(true)
@@ -80,8 +79,7 @@ class UserPreferencesClearUserInfoTest {
 
         // 服务器地址必须保留 —— 否则登出后无法再登录（F5）
         assertEquals("https://bill.example.com/api", prefs.serverUrl.first())
-        // 设备设置与偏好全部保留（defaultAccountId 也不是身份字段）
-        assertEquals(3, prefs.defaultAccountId.first())
+        // 设备设置与偏好全部保留
         assertEquals("dark", prefs.themeMode.first())
         assertEquals(false, prefs.notificationPrivacy.first())
         assertEquals(true, prefs.appLockEnabled.first())

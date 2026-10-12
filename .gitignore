@@ -4,7 +4,6 @@
 .kotlin/
 /build/
 /app/build/
-/app/schemas/
 /captures/
 .externalNativeBuild/
 .cxx/
