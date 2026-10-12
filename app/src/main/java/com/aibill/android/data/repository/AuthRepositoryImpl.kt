@@ -14,6 +14,8 @@ import com.aibill.android.domain.ownership.DisposalOutcome
 import com.aibill.android.domain.ownership.LocalDataOwnership
 import com.aibill.android.domain.repository.AuthRepository
 import com.aibill.android.service.NotificationProcessor
+import kotlinx.coroutines.CancellationException
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -62,8 +64,8 @@ class AuthRepositoryImpl @Inject constructor(
                     username = data.user.username,
                     nickname = data.user.nickname,
                 )
-                // DataStore 仍同步一份供 Flow 订阅
-                userPreferences.setUserInfo(data.user.id, data.user.username, data.user.nickname)
+                // DataStore 仍同步一份供 Flow 订阅（失败只降级，见下方 helper）
+                syncUserInfoToDataStore(data.user.id, data.user.username, data.user.nickname)
                 // B2：同账号重登 → 重放因 401 未解析的通知。
                 // 判据用**处置结果**（Retained = 数据确实留下了）而不是重算一遍归属：
                 // 换号/首次登录拿到的是 Cleared，队列已被一起清掉
@@ -98,7 +100,7 @@ class AuthRepositoryImpl @Inject constructor(
                     username = data.user.username,
                     nickname = data.user.nickname,
                 )
-                userPreferences.setUserInfo(data.user.id, data.user.username, data.user.nickname)
+                syncUserInfoToDataStore(data.user.id, data.user.username, data.user.nickname)
                 Result.Success(data.user.toDomain())
             }
             is Result.Error -> result
@@ -119,7 +121,32 @@ class AuthRepositoryImpl @Inject constructor(
      */
     override suspend fun logout() {
         tokenManager.endSession(SessionEndReason.SIGNED_OUT)
-        userPreferences.clearUserInfo()
+        try {
+            userPreferences.clearUserInfo()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 同 syncUserInfoToDataStore：权威状态在 TokenManager（isLoggedIn 只看它），
+            // DataStore 副本清不掉只是留了些过期 fallback 字段，不该让登出抛异常。
+            Timber.w(e, "登出清理 DataStore userInfo 失败（已降级：session 已结束）")
+        }
+    }
+
+    /**
+     * DataStore 版本的 userInfo 只是「供 Flow 订阅」的副本，权威 session 在 `TokenManager`
+     * （`isLoggedIn()` 只看 token）。写入失败按 ARCHITECTURE §10「本地 DataStore 异常 →
+     * 降级 + 日志」处理：不把一次**已经成功**的登录/注册变成抛异常
+     * ——那既违反 Repository「禁止抛异常（除 CancellationException）」的契约，
+     * 又会让 UI 在 session 已生效的情况下报失败。
+     */
+    private suspend fun syncUserInfoToDataStore(userId: Int, username: String, nickname: String?) {
+        try {
+            userPreferences.setUserInfo(userId, username, nickname)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "同步 userInfo 到 DataStore 失败（已降级：session 已保存）")
+        }
     }
 
     override fun isLoggedIn(): Boolean = tokenManager.hasToken()

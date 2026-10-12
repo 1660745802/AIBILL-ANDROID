@@ -2,10 +2,13 @@ package com.aibill.android.data.remote
 
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.domain.model.Result
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import retrofit2.HttpException
@@ -124,6 +127,20 @@ class SafeApiCallTest {
             assertEquals(Result.ERROR_UNKNOWN, err.code)
             assertTrue(err.message.contains("未知错误"), "${ex.message} message format")
             assertTrue(err.message.contains(ex.message!!), "${ex.message} preserves original")
+        }
+    }
+
+    /**
+     * 结构化取消必须**原样传播**，不能被 `catch (Exception)` 吞成 Result.Error：
+     * 契约见 `domain/model/Result.kt`。回归护栏：去掉 SafeApiCall 里的
+     * `catch (CancellationException) { throw e }`，本用例立刻红。
+     */
+    @Test
+    fun `CancellationException propagates instead of becoming Result Error`() {
+        assertThrows(CancellationException::class.java) {
+            runBlocking {
+                safeApiCall<String> { throw CancellationException("job cancelled") }
+            }
         }
     }
 }

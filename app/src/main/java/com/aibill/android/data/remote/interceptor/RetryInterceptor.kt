@@ -28,20 +28,21 @@ class RetryInterceptor @Inject constructor() : Interceptor {
             return chain.proceed(request)
         }
 
-        var lastException: IOException? = null
-        repeat(MAX_RETRY_COUNT) { attempt ->
+        var retry = 0
+        while (true) {
             try {
                 return chain.proceed(request)
             } catch (e: IOException) {
-                lastException = e
-                Timber.w("请求重试 ${attempt + 1}/$MAX_RETRY_COUNT: ${request.url}")
-                if (attempt < MAX_RETRY_COUNT - 1) {
-                    Thread.sleep(BACKOFF_BASE_MS * (attempt + 1))
+                // MAX_RETRY_COUNT 是「重试次数」，首次请求不计入：
+                // 首次 + 最多 2 次重试 = 最多 3 次 proceed，退避 200ms × n。
+                if (retry >= MAX_RETRY_COUNT) {
+                    throw e
                 }
+                retry++
+                Timber.w("请求重试 $retry/$MAX_RETRY_COUNT: ${request.url}")
+                Thread.sleep(BACKOFF_BASE_MS * retry)
             }
         }
-
-        throw lastException ?: IOException("Max retries exceeded")
     }
 
     private fun isRetryable(request: Request): Boolean {

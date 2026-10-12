@@ -2,6 +2,7 @@ package com.aibill.android.data.remote
 
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.domain.model.Result
+import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 import timber.log.Timber
 import java.io.IOException
@@ -44,6 +45,12 @@ suspend inline fun <reified T> safeApiCall(
                 Result.Error(response.code, response.message)
             }
         }
+    } catch (e: CancellationException) {
+        // 结构化取消必须原样传播，不能被下面的 catch (Exception) 吞成 Result.Error：
+        // 契约见 domain/model/Result.kt「禁止抛出异常（除 CancellationException）」。
+        // 吞掉它，调用方会在已取消的协程里继续返回「网络失败/未知错误」，
+        // 并可能对取消做重试、落库、播报失败文案。
+        throw e
     } catch (e: IOException) {
         Timber.e(e, "网络连接失败")
         Result.Error(Result.ERROR_NETWORK, "网络连接失败，请检查网络")

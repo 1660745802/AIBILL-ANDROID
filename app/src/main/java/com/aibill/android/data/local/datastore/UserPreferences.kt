@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -39,6 +40,11 @@ class UserPreferences @Inject constructor(
 
     // 用于在 OkHttp Interceptor 同步路径上读取 serverUrl，避免每个请求都 runBlocking DataStore
     private val serverUrlCache = AtomicReference<String?>(null)
+
+    // 区分「尚未加载」与「已加载但为 null」：只用 AtomicReference<String?> 时，
+    // server_url 未配置会每次都落到 runBlocking（缓存里是 null，get()?.let 命不中），
+    // 于是在 OkHttp 线程上反复阻塞 DataStore，违背本类「避开同步路径 runBlocking」的初衷。
+    private val serverUrlLoaded = AtomicBoolean(false)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
@@ -46,7 +52,10 @@ class UserPreferences @Inject constructor(
         dataStore.data
             .map { it[Keys.SERVER_URL] }
             .distinctUntilChanged()
-            .onEach { serverUrlCache.set(it) }
+            .onEach {
+                serverUrlCache.set(it)
+                serverUrlLoaded.set(true)
+            }
             .stateIn(scope, SharingStarted.Eagerly, null)
     }
 
@@ -79,10 +88,13 @@ class UserPreferences @Inject constructor(
      * （仅在缓存未就绪时发生，首次调用后由热流接管，不再重复读）。
      */
     fun getServerUrlBlocking(): String? {
-        serverUrlCache.get()?.let { return it }
+        if (serverUrlLoaded.get()) return serverUrlCache.get()
         return runBlocking {
             dataStore.data.map { it[Keys.SERVER_URL] }.first()
-                .also { serverUrlCache.compareAndSet(null, it) }
+                .also {
+                    serverUrlCache.set(it)
+                    serverUrlLoaded.set(true)
+                }
         }
     }
 
