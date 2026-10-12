@@ -92,6 +92,8 @@ class RecordIntakeImpl @Inject constructor(
             source = SOURCE_APP_NOTIFICATION,
             sourceDetail = sourceDetail,
             clientCreatedAt = moment.instant.toString(),
+            // AI 反馈闭环的锚点：只有 AI 自动入账路径会带（其余 intent 默认 null）
+            parseLogId = intent.parseLogId,
         )
 
         // 送服务端 + 写缓存行 + 新建审计行 + 回填 linked_client_id，全在 confirmAndCache 里

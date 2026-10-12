@@ -1,12 +1,16 @@
 package com.aibill.android.di
 
 import com.aibill.android.data.notification.AiCircuitBreakerImpl
+import com.aibill.android.data.notification.BalanceConsistencyImpl
 import com.aibill.android.data.notification.CaptureArchiveImpl
 import com.aibill.android.data.notification.NotificationInterpreterImpl
+import com.aibill.android.data.notification.ParseFeedbackImpl
 import com.aibill.android.data.notification.ScoredAdmissionImpl
 import com.aibill.android.domain.notification.AiCircuitBreaker
+import com.aibill.android.domain.notification.BalanceConsistency
 import com.aibill.android.domain.notification.CaptureArchive
 import com.aibill.android.domain.notification.NotificationInterpreter
+import com.aibill.android.domain.notification.ParseFeedback
 import com.aibill.android.domain.notification.ScoredAdmission
 import dagger.Module
 import dagger.Provides
@@ -44,4 +48,19 @@ object NotificationLoopModule {
     @Provides
     @Singleton
     fun provideCaptureArchive(impl: CaptureArchiveImpl): CaptureArchive = impl
+
+    /**
+     * 余额自洽校验（纯本地）：用上一条同卡余额自证金额；不一致只降级待审，不拒收。
+     */
+    @Provides
+    @Singleton
+    fun provideBalanceConsistency(impl: BalanceConsistencyImpl): BalanceConsistency = impl
+
+    /**
+     * AI 反馈：把用户对解析结果的纠正回传服务端（跨端契约 §2）。
+     * best-effort —— 失败只记日志，不影响用户操作。
+     */
+    @Provides
+    @Singleton
+    fun provideParseFeedback(impl: ParseFeedbackImpl): ParseFeedback = impl
 }

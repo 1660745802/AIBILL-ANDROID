@@ -206,7 +206,12 @@ GET  /api/transactions/tags      # 标签候选
 GET  /api/transactions/trash     # 回收站
 POST /api/transactions/:id/restore       # 回收站恢复
 DELETE /api/transactions/:id/permanent   # 彻底删除
-POST /api/ai/parse               # { input } 自然语言解析
+POST /api/ai/parse               # { input } 必填；可选上下文 channel/source/title/body/received_at/hints
+                                 # 响应 items 含 S3 机械抽取字段（merchant/card_tail/balance_*/time）
+                                 # 与 needs_review（**服务端唯一待审阈值**）/confidence（仅展示）
+                                 # 成功形态带 parse_log_id；预筛挡下/超时等形态没有（无可反馈对象）
+POST /api/ai/parse-feedback      # { parse_log_id, final_items, modified, channel }
+                                 # 用户最终态；删除 = 空数组（AI 越用越准的闭环）
 GET|POST /api/categories  PUT|DELETE /api/categories/:id
 GET|POST /api/accounts    PUT|DELETE /api/accounts/:id
 GET  /api/stats/summary|by-category|trend
@@ -269,7 +274,8 @@ GitHub 更新检查连接 15s / 读 30s。
 | 列 | 含义 |
 |---|---|
 | `client_id` | 幂等与撤销的唯一凭据 |
-| `server_transaction_id` | 服务端那一笔的 id；**撤销时删的就是它** |
+| `server_transaction_id` | 服务端那一笔的 id；**撤销时删的就是它**；也是 AI 反馈反查锚点的键 |
+| `parse_log_id` | 该笔来自哪一次 AI 解析（服务端 `ai_parse_logs.id`），用户改动/删除时据此回传反馈；null = 非 AI 路径或服务端无可反馈对象（DB v10） |
 | `sync_status` / `retry_count` / `last_error` | **已废弃**：新写入恒为 `synced` / `0` / `null`，不再被读取。列保留、不写 migration |
 
 `sync_status` 的唯一残留用途是**区分历史遗留行**：只有 `synced` 才当缓存；老版本写下的

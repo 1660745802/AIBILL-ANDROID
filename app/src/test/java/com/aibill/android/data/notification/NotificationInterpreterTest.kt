@@ -76,6 +76,7 @@ class NotificationInterpreterTest {
             categoryLearningEngine = categoryLearningEngine,
             appLogger = AppLogger(mockk(relaxed = true)),
             rulesManager = rulesManager,
+            balanceConsistency = com.aibill.android.data.notification.BalanceConsistencyImpl(),
         )
     }
 
@@ -109,6 +110,8 @@ class NotificationInterpreterTest {
         categoryName: String? = "餐饮",
         categoryIcon: String? = "🍜",
         description: String? = "午餐",
+        merchant: String? = null,
+        needsReview: Boolean? = null,
     ) = AiParsedItemDto(
         type = type,
         amount = amount,
@@ -116,6 +119,8 @@ class NotificationInterpreterTest {
         categoryName = categoryName,
         categoryIcon = categoryIcon,
         description = description,
+        merchant = merchant,
+        needsReview = needsReview,
         date = "2026-07-10",
         accountId = null,
         accountName = null,
@@ -266,12 +271,33 @@ class NotificationInterpreterTest {
     }
 
     @Test
-    @DisplayName("营销后缀在调 AI 前被截断")
+    @DisplayName("营销后缀在调 AI 前被截断（input 仍是清洗后的文本）")
     fun `营销后缀截断`() = runTest {
-        val sent = slot<Map<String, String>>()
+        val sent = slot<com.aibill.android.data.remote.dto.request.AiParseRequest>()
         coEvery { aiApi.parse(capture(sent)) } returns ok(aiItem())
         interpreter.read(captureOf(text = "微信支付 已支付¥32.00 点击领取红包"))
-        assertEquals("微信支付 已支付¥32.00", sent.captured["input"])
+        assertEquals("微信支付 已支付¥32.00", sent.captured.input)
+    }
+
+    @Test
+    @DisplayName("上下文随请求上送：channel/source/received_at(带偏移)/title/body")
+    fun `请求带上下文`() = runTest {
+        val sent = slot<com.aibill.android.data.remote.dto.request.AiParseRequest>()
+        coEvery { aiApi.parse(capture(sent)) } returns ok(aiItem())
+
+        interpreter.read(captureOf())
+
+        val req = sent.captured
+        assertEquals("nls", req.channel)
+        assertEquals(pkg, req.source?.packageName)
+        assertEquals("微信支付", req.title)
+        // body = 未截断的原文；input = 清洗后（模型看到的）；佐证用 body 更全
+        assertTrue(req.body!!.isNotBlank())
+        // 带时区偏移的 ISO-8601（不带偏移服务端会 400）
+        assertTrue(
+            Regex(""".*[+-]\d{2}:\d{2}$""").matches(req.receivedAt ?: ""),
+            "received_at 必须带时区偏移：${req.receivedAt}",
+        )
     }
 
     @Test
@@ -291,5 +317,71 @@ class NotificationInterpreterTest {
         val tx = parsed(interpreter.read(captureOf()))
         assertEquals(2000, tx.amount)
         assertEquals("晚餐", tx.description)
+    }
+
+    @Test
+    @DisplayName("解析结果带上服务端日志 id（反馈闭环的钥匙）")
+    fun `解析结果带 parseLogId`() = runTest {
+        // data 层（快捷解析 / 模型成功）
+        coEvery { aiApi.parse(any()) } returns ApiResponse(
+            code = 0, data = AiParseResponseDto(items = listOf(aiItem()), rawInput = "x", parseLogId = 777L), message = "",
+        )
+        assertEquals(777L, parsed(interpreter.read(captureOf())).parseLogId)
+    }
+
+    @Test
+    @DisplayName("顶层 parse_log_id 形态（模型空结果）也不丢 id；缺失时为 null")
+    fun `顶层 parseLogId 与缺失形态`() = runTest {
+        coEvery { aiApi.parse(any()) } returns ApiResponse(
+            code = 0, data = AiParseResponseDto(items = listOf(aiItem()), rawInput = "x"), message = "", parseLogId = 888L,
+        )
+        assertEquals(888L, parsed(interpreter.read(captureOf())).parseLogId)
+
+        // 服务端预筛挡下的形态：没有任何日志 id → 必须是 null（不得凭空构造）
+        coEvery { aiApi.parse(any()) } returns ApiResponse(
+            code = 0, data = AiParseResponseDto(items = listOf(aiItem()), rawInput = "x"), message = "",
+        )
+        assertEquals(null, parsed(interpreter.read(captureOf())).parseLogId)
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // S3：服务端 needs_review 是唯一阈值（客户端不再自设第二套）
+    // ══════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("服务端 needs_review=true → 不进自动入账（isComplete=false）")
+    fun `needs_review true 进待审`() = runTest {
+        coEvery { aiApi.parse(any()) } returns ok(
+            aiItem(amount = 3200, needsReview = true),
+        )
+        assertFalse(parsed(interpreter.read(captureOf())).isComplete)
+    }
+
+    @Test
+    @DisplayName("服务端 needs_review=false → 自动入账（即使分类泛化）")
+    fun `needs_review false 直接入账`() = runTest {
+        // 分类是「其他」这类泛化值：按旧启発式会算信息不完整，但服务端已判定不需人工确认
+        coEvery { aiApi.parse(any()) } returns ok(
+            aiItem(amount = 3200, categoryName = "其他", needsReview = false),
+        )
+        assertTrue(parsed(interpreter.read(captureOf())).isComplete)
+    }
+
+    @Test
+    @DisplayName("旧服务端（无 needs_review）→ 回退客户端启発式，行为与改造前一致")
+    fun `needs_review 缺失时回退旧行为`() = runTest {
+        coEvery { aiApi.parse(any()) } returns ok(
+            aiItem(amount = 3200, categoryName = "其他", needsReview = null),
+        )
+        assertFalse(parsed(interpreter.read(captureOf())).isComplete, "分类泛化 → 旧行为是待审")
+    }
+
+    @Test
+    @DisplayName("商户名可作描述兜底（AI 没给描述时）")
+    fun `merchant 兜底描述`() = runTest {
+        coEvery { aiApi.parse(any()) } returns ok(
+            aiItem(amount = 3200, description = null, merchant = "星巴克", needsReview = false),
+        )
+        assertEquals("星巴克", parsed(interpreter.read(captureOf())).description)
     }
 }

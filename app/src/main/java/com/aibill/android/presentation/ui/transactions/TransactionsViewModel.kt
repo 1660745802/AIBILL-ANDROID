@@ -10,6 +10,7 @@ import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionQuery
+import com.aibill.android.domain.notification.ParseFeedback
 import com.aibill.android.domain.repository.TransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -37,6 +38,7 @@ import javax.inject.Inject
 class TransactionsViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
+    private val parseFeedback: ParseFeedback,
 ) : ViewModel() {
 
     data class TransactionsUiState(
@@ -350,6 +352,9 @@ class TransactionsViewModel @Inject constructor(
                     // 需主动 refresh 让 LazyPagingItems 重新从 PagingSource 加载，
                     // 删除的条目才会从 UI 上消失。
                     _uiEvent.send(UiEvent.RefreshList)
+                    // AI 反馈：用户删掉了这一笔（契约 §2：删除 = 不出现在 final_items 里）。
+                    // best-effort，内部只在存在 parse_log_id 时才发。
+                    parseFeedback.reportDeleted(id)
                 }
                 is Result.Error -> {
                     lastDeletedTransaction = null

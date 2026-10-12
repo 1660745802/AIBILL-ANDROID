@@ -2,8 +2,11 @@ package com.aibill.android.data.notification
 
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.remote.api.AiApi
+import com.aibill.android.data.remote.dto.request.AiParseRequest
+import com.aibill.android.data.remote.dto.request.ParseSourceDto
 import com.aibill.android.data.remote.dto.response.AiParsedItemDto
 import com.aibill.android.domain.notification.AiCircuitBreaker
+import com.aibill.android.domain.notification.BalanceConsistency
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.NotificationInterpreter
 import com.aibill.android.domain.notification.ParseOutcome
@@ -44,6 +47,7 @@ class NotificationInterpreterImpl @Inject constructor(
     private val categoryLearningEngine: CategoryLearningEngine,
     private val appLogger: AppLogger,
     private val rulesManager: NotificationRulesManager,
+    private val balanceConsistency: BalanceConsistency,
 ) : NotificationInterpreter {
 
     override suspend fun read(capture: Capture): ParseOutcome {
@@ -61,7 +65,20 @@ class NotificationInterpreterImpl @Inject constructor(
         return try {
             appLogger.info("NLS", "调AI: pkg=${capture.packageName} text=${capture.fullText}")
             val cleanedText = cleanMarketingSuffix(capture.fullText)
-            val response = aiApi.parse(mapOf("input" to cleanedText))
+            // 带上上下文（§2）：channel/source 供服务端归因，received_at 让「今天」按
+            // **通知到达时刻**算（跨午夜迟发不会记到明天），title/body 供后续判定用。
+            // 全部可选，旧服务端忽略之。
+            val response = aiApi.parse(
+                AiParseRequest(
+                    input = cleanedText,
+                    channel = capture.channel.logTag.lowercase(),
+                    source = ParseSourceDto(packageName = capture.packageName),
+                    title = capture.title.takeIf(String::isNotBlank),
+                    // body 用**未截营销后缀**的原文：金额佐证看到的应是最全的文本
+                    body = capture.fullText.takeIf(String::isNotBlank),
+                    receivedAt = formatWithOffset(capture.receivedAt),
+                )
+            )
             if (response.code != 0 || response.data == null) {
                 circuitBreaker.recordOutcome(capture.packageName, success = false)
                 // 必须带 message：5001 既可能是模型拒答也可能是超时/超长，
@@ -103,14 +120,40 @@ class NotificationInterpreterImpl @Inject constructor(
 
             val finalCategoryId = learnedCategoryId ?: aiItem.categoryId
 
+            // 「该不该自动入账」的阈值**只在服务端一处实现**（`needs_review`），
+            // 客户端不再自设第二套阈值 —— 旧服务端没这个字段时，才回退到下面这套
+            // 客户端启发式（分类缺失/泛化即算信息不完整），保证行为不变。
+            val clientHeuristicIncomplete = learnedCategoryId == null && (
+                aiItem.categoryId == null ||
+                    aiItem.categoryName.isNullOrBlank() ||
+                    aiItem.categoryName.lowercase() in GENERIC_CATEGORY_NAMES
+                )
+            val needsReview = aiItem.needsReview ?: clientHeuristicIncomplete
+
+            // 余额自洽校验（纯本地）：用「上一条同卡余额 ± 本笔金额 ≈ 本条余额」自证金额没抽错。
+            // 只在「有把握的矛盾」上说话：不一致 → 该笔不自动入账（进待审池），**不拒收**。
+            // 不影响 needs_review 的判定（那是服务端的阈值），两者取「与」。
+            val balanceVerdict = balanceConsistency.checkAndRecord(
+                cardTail = aiItem.cardTail,
+                balanceText = aiItem.balanceText,
+                balanceAfterCents = aiItem.balanceAfterCents,
+                amountCents = aiItem.amount,
+                type = safeType,
+            )
+            if (balanceVerdict == BalanceConsistency.Verdict.INCONSISTENT) {
+                appLogger.warn(
+                    "NLS",
+                    "余额不自洽→待审: card=${aiItem.cardTail} balance=${aiItem.balanceAfterCents} " +
+                        "amount=${aiItem.amount} type=$safeType text=${aiItem.balanceText}"
+                )
+            }
+
             val isComplete = aiItem.amount > 0 &&
                 safeType in VALID_TYPES &&
+                // 本地校验仍是必要条件（金额佐证/范围/类型），它拦的是「幻觉金额」
                 validation.isValid &&
-                (learnedCategoryId != null || (
-                    aiItem.categoryId != null &&
-                        !aiItem.categoryName.isNullOrBlank() &&
-                        aiItem.categoryName.lowercase() !in GENERIC_CATEGORY_NAMES
-                    ))
+                !needsReview &&
+                balanceVerdict != BalanceConsistency.Verdict.INCONSISTENT
 
             ParseOutcome.Parsed(
                 ParsedTransaction(
@@ -120,10 +163,14 @@ class NotificationInterpreterImpl @Inject constructor(
                     categoryId = finalCategoryId,
                     categoryName = aiItem.categoryName,
                     categoryIcon = aiItem.categoryIcon,
-                    description = (aiItem.description ?: aiItem.categoryName)
+                    // S3：商户名可作描述兜底（抽不到商户时为 null，不影响旧行为）
+                    description = (aiItem.description ?: aiItem.merchant ?: aiItem.categoryName)
                         ?.let { sanitizeEcommerceDescription(it) },
                     score = aiItemScore(aiItem),
                     isComplete = isComplete,
+                    // 反馈闭环的钥匙：data 层（快捷解析/模型成功）优先，顶层兼容「模型空结果」形态。
+                    // 两者都无 = 无可反馈对象（客户端不得凭空构造 id）。
+                    parseLogId = response.data.parseLogId ?: response.parseLogId,
                 )
             )
         } catch (e: HttpException) {
@@ -154,6 +201,17 @@ class NotificationInterpreterImpl @Inject constructor(
             ParseOutcome.Unparsed(e.javaClass.simpleName)
         }
     }
+
+    /**
+     * 毫秒时间戳 → 带时区偏移的 ISO-8601（服务端要求，否则 400）。
+     *
+     * 用 `java.time` + 设备时区：服务端只取它的**北京日期**作为「今天」，
+     * 因此这里如实表达「通知在这个设备的什么时候到达」即可。
+     */
+    private fun formatWithOffset(epochMillis: Long): String =
+        java.time.Instant.ofEpochMilli(epochMillis)
+            .atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
 
     /**
      * 清理通知文本中的营销后缀，避免 AI 误识别。

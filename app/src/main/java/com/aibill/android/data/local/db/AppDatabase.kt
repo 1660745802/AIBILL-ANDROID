@@ -24,7 +24,7 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
         CategoryRuleEntity::class,
         AppLogEntity::class,
     ],
-    version = 9, // v8 → v9: notification_records 补两条热路径复合索引（表只增不减，见 ARCHITECTURE §12.1#3）
+    version = 10, // v9 → v10: pending_transactions 加 parse_log_id（AI 反馈闭环的本地锚点）
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {

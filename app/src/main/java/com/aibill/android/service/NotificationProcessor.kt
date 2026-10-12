@@ -152,6 +152,7 @@ class NotificationProcessor @Inject constructor(
                 categoryName = candidate.categoryName,
                 categoryIcon = candidate.categoryIcon,
                 description = candidate.description,
+                parseLogId = candidate.parseLogId,
             )
         )
         return outcome.recorded

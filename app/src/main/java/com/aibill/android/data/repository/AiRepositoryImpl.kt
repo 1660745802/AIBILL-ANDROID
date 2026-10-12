@@ -1,6 +1,7 @@
 package com.aibill.android.data.repository
 
 import com.aibill.android.data.remote.api.AiApi
+import com.aibill.android.data.remote.dto.request.AiParseRequest
 import com.aibill.android.data.remote.safeApiCall
 import com.aibill.android.domain.model.AiParseResult
 import com.aibill.android.domain.model.Result
@@ -18,8 +19,10 @@ class AiRepositoryImpl @Inject constructor(
 
     override suspend fun parseInput(input: String): Result<List<AiParseResult>> {
         // 1. 调用 AI 解析 API（金额/日期/描述/账户等仍由 AI 处理）
+        // 手工入口没有 Capture，只发 input + channel 归因（manual）：
+        // 「今天」就是用户敲字的当下，不需要 received_at。
         val result = safeApiCall {
-            aiApi.parse(mapOf("input" to input))
+            aiApi.parse(AiParseRequest(input = input, channel = "manual"))
         }
 
         return when (result) {

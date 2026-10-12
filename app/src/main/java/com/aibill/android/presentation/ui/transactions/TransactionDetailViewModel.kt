@@ -7,6 +7,8 @@ import androidx.navigation.toRoute
 import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.repository.AccountRepository
+import com.aibill.android.domain.notification.FeedbackItem
+import com.aibill.android.domain.notification.ParseFeedback
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.domain.usecase.CategoryLearningEngine
@@ -33,6 +35,7 @@ class TransactionDetailViewModel @Inject constructor(
     private val categoryLearningEngine: CategoryLearningEngine,
     private val categoryRepository: CategoryRepository,
     private val accountRepository: AccountRepository,
+    private val parseFeedback: ParseFeedback,
 ) : ViewModel() {
 
     private val transactionId: Int = savedStateHandle.toRoute<Route.TransactionDetail>().id
@@ -166,6 +169,23 @@ class TransactionDetailViewModel @Inject constructor(
                         description.isNotBlank()
                     ) {
                         categoryLearningEngine.learnFromCorrection(description, newCategoryId)
+                    }
+                    // AI 反馈：把用户改后的**最终态**回传（契约 §2，best-effort，绝不阻塞保存）。
+                    // amountCents 为空 = 用户没改金额标识（文本为空），此时无法如实描述
+                    // 最终态 → 跳过本次反馈，不编造数据。
+                    if (amountCents != null) {
+                        parseFeedback.reportCorrected(
+                            serverTransactionId = transactionId,
+                            finalItem = FeedbackItem(
+                                type = state.type,
+                                amount = amountCents,
+                                categoryId = state.categoryId,
+                                description = state.description.takeIf(String::isNotBlank),
+                                date = state.date.takeIf(String::isNotBlank),
+                                time = state.time.takeIf(String::isNotBlank),
+                                accountId = state.accountId,
+                            ),
+                        )
                     }
                     _uiState.update { it.copy(isSaving = false) }
                     _uiEvent.send(UiEvent.ShowToast("保存成功 ✅"))

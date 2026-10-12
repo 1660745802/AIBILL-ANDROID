@@ -116,6 +116,7 @@ class NotificationProcessorTest {
             categoryLearningEngine = categoryLearningEngine,
             appLogger = appLogger,
             rulesManager = rulesManager,
+            balanceConsistency = com.aibill.android.data.notification.BalanceConsistencyImpl(),
         )
         processor = NotificationProcessor(
             context = context,

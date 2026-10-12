@@ -20,6 +20,12 @@ data class ParsedTransaction(
     val description: String?,
     val score: Int,
     val isComplete: Boolean,
+    /**
+     * 本次解析在服务端的日志 id（反馈闭环的钥匙，见跨端契约 §1/§2）。
+     *
+     * null = 没有可反馈对象：被服务端预筛挡下、上游超时等形态不产生 `ai_parse_logs` 行。
+     */
+    val parseLogId: Long? = null,
 )
 
 /**

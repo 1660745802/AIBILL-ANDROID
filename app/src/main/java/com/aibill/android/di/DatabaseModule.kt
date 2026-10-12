@@ -61,6 +61,12 @@ object DatabaseModule {
                             "`index_notification_records_parsed_amount_status_received_at` " +
                             "ON `notification_records` (`parsed_amount`, `status`, `received_at`)"
                     )
+                },
+                // v9 → v10：AI 反馈闭环的本地锚点——记住「这一笔是哪次 AI 解析来的」，
+                // 用户改动/删除时才能把纠正回传给服务端（见跨端契约 §2）。
+                // 可空：手工/外部静默入账没有 AI 解析，服务端预筛挡下的形态也没有日志 id。
+                androidx.room.migration.Migration(9, 10) { db ->
+                    db.execSQL("ALTER TABLE pending_transactions ADD COLUMN parse_log_id INTEGER")
                 }
             )
             // 迁移链从 5→6 起：前提「v5 是项目首个发布 schema」写在 AppDatabase.companion 注释里。

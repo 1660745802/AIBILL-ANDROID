@@ -70,6 +70,7 @@ class TransactionsViewModelTest {
         coEvery { categoryRepository.getCategoriesOnce() } returns Result.Success(emptyList())
         viewModel = TransactionsViewModel(
             transactionRepository = transactionRepository,
+        parseFeedback = io.mockk.mockk(relaxed = true),
             categoryRepository = categoryRepository,
         )
     }

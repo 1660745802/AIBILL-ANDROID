@@ -167,6 +167,13 @@ sealed interface RecordIntent {
         val categoryName: String? = null,
         val categoryIcon: String? = null,
         val description: String?,
+        /**
+         * 本笔对应的 AI 解析日志 id（服务端 `ai_parse_logs.id`），用于用户改动时回传反馈。
+         *
+         * 默认 null：其余入账路径（弹窗确认 / 通知中心确认 / 外部静默入账）没有 AI 日志，
+         * 既有调用点与测试不必改签名——只有 AI 自动入账这一条路径会带上它。
+         */
+        val parseLogId: Long? = null,
     ) : RecordIntent {
         override val receipt: ReceiptPolicy get() = ReceiptPolicy.AUTO
     }
