@@ -100,6 +100,29 @@ class CaptureArchiveTest {
         coVerify(exactly = 2) { dao.insert(any()) }
     }
 
+    @Test
+    @DisplayName("落库遇到协程取消要向上抛（取消不是「落库失败」）")
+    fun `落库取消向上抛`() = runTest {
+        coEvery { dao.insert(any()) } throws kotlinx.coroutines.CancellationException("scope closed")
+
+        var rawThrown: Throwable? = null
+        try {
+            archive.captureUnparsed(captureOf(), reason = "IOException")
+        } catch (e: Throwable) {
+            rawThrown = e
+        }
+
+        var authThrown: Throwable? = null
+        try {
+            archive.captureAuthPending(captureOf())
+        } catch (e: Throwable) {
+            authThrown = e
+        }
+
+        assertTrue(rawThrown is kotlinx.coroutines.CancellationException)
+        assertTrue(authThrown is kotlinx.coroutines.CancellationException)
+    }
+
     // ── 重放 → 终态 ──
 
     private fun pendingRow(id: Long) = NotificationRecordEntity(
@@ -157,6 +180,19 @@ class CaptureArchiveTest {
         var called = false
         archive.replay { called = true }
         assertFalse(called)
+    }
+
+    @Test
+    @DisplayName("重放多条：逐条回调，且每一行都各自被标终态")
+    fun `重放多条逐条标终态`() = runTest {
+        coEvery { dao.findAuthPending(any()) } returns listOf(pendingRow(11L), pendingRow(12L))
+        val seen = mutableListOf<Long>()
+
+        archive.replay { seen += it.id }
+
+        assertEquals(listOf(11L, 12L), seen, "每一行都要回调，不能只重放首条")
+        coVerify(exactly = 1) { dao.updateStatus(11L, "auth_replayed", null) }
+        coVerify(exactly = 1) { dao.updateStatus(12L, "auth_replayed", null) }
     }
 
     @Test

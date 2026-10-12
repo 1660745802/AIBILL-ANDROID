@@ -53,13 +53,28 @@ class PaymentAccessibilityRecognitionTest {
     }
 
     @Test
-    fun `retry anchor distinguishes content in the same container`() {
+    fun `retry anchor excludes keyword and mutable amounts`() {
         val anchor = PaymentAccessibilityRecognition.retryAnchor(
-            listOf("支付成功", "星巴克臻选店", "订单号 12345"),
+            listOf("支付成功", "¥12.00", "星巴克臻选店", "订单号 12345"),
             "支付成功",
         )
-        assertTrue(PaymentAccessibilityRecognition.matchesRetryAnchor(anchor, listOf("支付成功", "星巴克臻选店", "订单号 12345", "¥12")))
-        assertFalse(PaymentAccessibilityRecognition.matchesRetryAnchor(anchor, listOf("支付成功", "另一商户", "订单号 99999", "¥12")))
+        // 锚点 = 同一容器里稳定的文本：成功词与金额（不同笔不同）不得入锚；
+        // 否则重试判重被金额变化干扰。
+        assertEquals(setOf("星巴克臻选店", "订单号 12345"), anchor)
+        // 命中阈值 = minOf(2, anchor.size)：≥2 个仍相同才算同一次重试
+        assertTrue(PaymentAccessibilityRecognition.matchesRetryAnchor(anchor, listOf("支付成功", "¥12.00", "星巴克臻选店", "订单号 12345")))
+        assertFalse(PaymentAccessibilityRecognition.matchesRetryAnchor(anchor, listOf("支付成功", "¥12.00", "另一商户", "订单号 99999")))
+    }
+
+    @Test
+    fun `single-element retry anchor degrades threshold to one`() {
+        val anchor = PaymentAccessibilityRecognition.retryAnchor(
+            listOf("支付成功", "星巴克臻选店"),
+            "支付成功",
+        )
+        assertEquals(setOf("星巴克臻选店"), anchor)
+        assertTrue(PaymentAccessibilityRecognition.matchesRetryAnchor(anchor, listOf("星巴克臻选店")))
+        assertFalse(PaymentAccessibilityRecognition.matchesRetryAnchor(anchor, listOf("别的店")))
     }
 
     @Test
@@ -72,9 +87,7 @@ class PaymentAccessibilityRecognitionTest {
     @Test
     fun `root 必须同包（跨包才拒绝，不比较 windowId）`() {
         assertTrue(PaymentAccessibilityRecognition.isRootForEvent("com.example", "com.example"))
-        // 同包一律放行：微信通话 / 支付宝指纹层都是独立 window，
-        // 严格相等会把真交易整批丢掉（2026-10-04 实测漏记，见 isRootForEvent 注释）
-        assertTrue(PaymentAccessibilityRecognition.isRootForEvent("com.example", "com.example"))
+        // 同包不同 windowId（微信通话 / 支付宝指纹层）都是独立 window，严格相等会把真交易整批丢掉，
         // 只有跨包（或 root 为 null）才是真错位
         assertFalse(PaymentAccessibilityRecognition.isRootForEvent("com.other", "com.example"))
         assertFalse(PaymentAccessibilityRecognition.isRootForEvent(null, "com.example"))

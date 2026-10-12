@@ -119,7 +119,7 @@ class ManualRecordViewModelTest {
     }
 
     @Test
-    fun `network failure says there is no network and keeps the form`() = runTest {
+    fun `network failure says there is no network`() = runTest {
         coEvery { transactionRepository.createTransactions(any()) } returns
             Result.Error(Result.ERROR_NETWORK, "网络连接失败，请检查网络")
 
@@ -134,17 +134,21 @@ class ManualRecordViewModelTest {
             )
         }
 
-        // 「没网，记不上」不是「稍后补传」：表单留着，本地不写任何东西
-        assertEquals("32", viewModel.uiState.value.amountText)
-        assertEquals(3200, viewModel.uiState.value.amountFen)
-        assertEquals(false, viewModel.uiState.value.isSaving)
+        // 「没网，记不上」是如实报错，不是「稍后补传」：没有第二次写入
+        // （表单保留与 isSaving 复位与业务失败同一条 `is Result.Error` 分支，由上一个用例断言）
+        coVerify(exactly = 1) { transactionRepository.createTransactions(any()) }
     }
 
     @Test
     fun `success clears the form and reports the recorded outcome`() = runTest {
         coEvery { transactionRepository.createTransactions(any()) } returns Result.Success(emptyList())
 
-        val viewModel = filledViewModel()
+        val viewModel = buildViewModel().apply {
+            onTypeChanged("income")
+            onAmountTextChanged("32")
+            onDescriptionChanged("午饭")
+            onCategorySelected(7)
+        }
         viewModel.uiEvent.test {
             viewModel.onSave()
 
@@ -155,10 +159,11 @@ class ManualRecordViewModelTest {
             )
         }
 
-        // 只有服务端确认（Result.Success）才清表单
+        // 只有服务端确认（Result.Success）才清表单；但类型（income）是页面上下文，必须保留
         assertEquals("", viewModel.uiState.value.amountText)
         assertEquals(0, viewModel.uiState.value.amountFen)
         assertEquals("", viewModel.uiState.value.description)
+        assertEquals("income", viewModel.uiState.value.type)
         coVerify(exactly = 1) { streakTracker.onTransactionRecorded() }
     }
 
@@ -177,5 +182,37 @@ class ManualRecordViewModelTest {
         }
         coVerify(exactly = 0) { transactionRepository.createTransactions(any()) }
         assertTrue(viewModel.uiState.value.amountFen == 0)
+    }
+
+    @Test
+    fun `an expense without a category is blocked before the server`() = runTest {
+        val viewModel = buildViewModel().apply { onAmountTextChanged("32") }
+
+        viewModel.uiEvent.test {
+            viewModel.onSave()
+
+            val event = awaitItem()
+            assertEquals(
+                "请选择分类",
+                (event as ManualRecordViewModel.UiEvent.ShowToast).message,
+            )
+        }
+        coVerify(exactly = 0) { transactionRepository.createTransactions(any()) }
+    }
+
+    @Test
+    fun `a transfer needs no category and still reaches the server`() = runTest {
+        coEvery { transactionRepository.createTransactions(any()) } returns Result.Success(emptyList())
+        val viewModel = buildViewModel().apply {
+            onTypeChanged("transfer")
+            onAmountTextChanged("32")
+        }
+
+        viewModel.uiEvent.test {
+            viewModel.onSave()
+
+            assertTrue(awaitItem() is ManualRecordViewModel.UiEvent.SaveSuccess)
+        }
+        coVerify(exactly = 1) { transactionRepository.createTransactions(any()) }
     }
 }

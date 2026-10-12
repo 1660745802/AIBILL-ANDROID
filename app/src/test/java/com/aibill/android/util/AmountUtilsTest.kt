@@ -87,10 +87,10 @@ class AmountUtilsTest {
         }
 
         @Test
-        fun `空字符串 → null`() = assertNull(AmountUtils.parseExpression(""))
-
-        @Test
-        fun `纯空白 → null`() = assertNull(AmountUtils.parseExpression("   "))
+        fun `空字符串与纯空白 → null`() {
+            assertNull(AmountUtils.parseExpression(""))
+            assertNull(AmountUtils.parseExpression("   "))
+        }
 
         @Test
         fun `非法字符 → null（不抛异常）`() = assertNull(AmountUtils.parseExpression("12abc"))
@@ -110,8 +110,6 @@ class AmountUtilsTest {
             // 修复前这里返回 2147483647 分 = ¥21,474,836.47，一个看起来合法但完全错误的金额，
             // 而 20 个 9 刚好在 onAmountInput 的 20 字符限制内 → 用户可实际触发并存进账单。
             assertNull(AmountUtils.parseExpression("99999999999999999999"))
-            // 同理，刚好在字符上限内的 20 个 9（onAmountInput 可达）
-            assertNull(AmountUtils.parseExpression("99999999999999999999".take(20)))
         }
 
         @Test
@@ -120,19 +118,14 @@ class AmountUtilsTest {
         }
 
         @Test
-        fun `上限边界：恰好等于 MAX_AMOUNT_FEN 仍然通过（确认上限没误伤）`() {
-            // ¥1,000,000 → 100,000,000 分
-            assertEquals(AmountUtils.MAX_AMOUNT_FEN, AmountUtils.parseExpression("1000000"))
+        fun `上限边界：恰好等于 100,000,000 分（¥1,000,000）仍然通过（确认上限没误伤）`() {
+            // 硬编码而不用 AmountUtils.MAX_AMOUNT_FEN：改生产常量必须让本条变红
+            assertEquals(100_000_000, AmountUtils.parseExpression("1000000"))
         }
 
         @Test
         fun `上限边界：刚超过上限即返回 null`() {
             assertNull(AmountUtils.parseExpression("1000000.01"))
-        }
-
-        @Test
-        fun `Int 边界内仍然正常求值（确认上限没有误伤合法金额）`() {
-            assertEquals(2_000_000, AmountUtils.parseExpression("20000"))
         }
     }
 }

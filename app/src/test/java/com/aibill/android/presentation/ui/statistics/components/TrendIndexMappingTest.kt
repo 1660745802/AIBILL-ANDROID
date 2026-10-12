@@ -61,6 +61,10 @@ class TrendIndexMappingTest {
         // 手指落在它左边 0.6 格（归一化 14.4）→ 最近的是 14
         val justLeftOf15 = leftPad + stepX * 15f - stepX * 0.6f
         assertEquals(14, trendIndexForX(x = justLeftOf15, canvasWidth = w, count = count))
+
+        // 越过后半格（归一化 15.6）→ 必须进位到 16（锁住 round，而不是 trunc）
+        val pastMidpoint = leftPad + stepX * 15.6f
+        assertEquals(16, trendIndexForX(x = pastMidpoint, canvasWidth = w, count = count))
     }
 
     @Test

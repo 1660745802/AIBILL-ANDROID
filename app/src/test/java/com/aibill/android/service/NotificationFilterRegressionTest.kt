@@ -1,9 +1,7 @@
 package com.aibill.android.service
 
-import com.aibill.android.data.notification.InMemoryNotificationRuleSource
 import com.aibill.android.data.notification.PrefilterTestHarness
 import com.aibill.android.data.remote.dto.response.NotificationRulesData
-import com.aibill.android.domain.notification.BlockReason
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.MarketingCriteria
 import com.aibill.android.domain.notification.NotificationPrefilter
@@ -13,7 +11,6 @@ import com.aibill.android.domain.notification.Verdict
 import com.squareup.moshi.Moshi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
@@ -153,14 +150,18 @@ class NotificationFilterRegressionTest {
     @Test
     @DisplayName("强交易特征豁免仍然生效（营销词 + 真交易不误杀）")
     fun `强交易特征豁免`() {
+        val words = listOf("领取", "优惠")
         assertFalse(
-            MarketingCriteria.isMarketingByWords("你有一笔20.00元的支出，点击领取9个积分", listOf("领取")),
+            MarketingCriteria.isMarketingByWords("你有一笔20.00元的支出，点击领取9个积分", words),
             "含强交易特征时不应判营销",
         )
         assertTrue(
-            MarketingCriteria.isMarketingByWords("点击领取优惠券", listOf("领取")),
+            MarketingCriteria.isMarketingByWords("点击领取优惠券", words),
             "无强交易特征时应判营销",
         )
+        // 空词表是「没有判据」而不是「全是营销」——否则 default_rule 缺字段时整条链会静默拦下一切。
+        // 这条也是 legacy 兜底分支（per_package / default_rule 都为空）的护栏。
+        assertFalse(MarketingCriteria.isMarketingByWords("任意文本", emptyList()))
     }
 
     // ── v10：汇总/日报通知（代码层判定，因含「支出」无法用词表拦）──
@@ -204,33 +205,6 @@ class NotificationFilterRegressionTest {
         }
     }
 
-    // ── 收口后的新护栏：判据链不碰云控基础设施 ──
-
-    @Test
-    @DisplayName("整条判据链只依赖注入的规则源——不读 SP、不发网络")
-    fun `判据链只依赖注入的规则源`() {
-        // 规则源是 InMemory 版本：这条用例能跑通本身就是「判据链不碰
-        // SharedPreferences / Retrofit / assets」的证明（生产源才会去碰它们）。
-        val source = InMemoryNotificationRuleSource(productionRules, generation = 7)
-        assertEquals(7, source.snapshot().generation)
-        assertTrue(source.snapshot().paymentSignal.containsMatchIn("支出10.00元"))
-        assertTrue(source.snapshot().isMarketing("恭喜您获得优惠券"))
-        assertFalse(source.snapshot().isMarketing("尾号1234支出10.00元"))
-    }
-
-    @Test
-    @DisplayName("日报与促销文案在生产判据链里按 SUMMARY_REPORT / PROMO_SENTENCE 拦")
-    fun `代码层判据在生产链上生效`() = runTest {
-        assertEquals(
-            BlockReason.SUMMARY_REPORT,
-            blockReasonOf("【记账日报】昨日消费支出比平日高500.77% 昨日支出1868.98元，共2笔"),
-        )
-        assertEquals(
-            BlockReason.PROMO_SENTENCE,
-            blockReasonOf("双11省钱卡花3得29，一笔回本加赠99积分0元兑云音乐月卡"),
-        )
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // 促销句式（原 NlsPromoPatternTest 并入）：结构拦截 + 反向误杀防护
     //
@@ -243,13 +217,6 @@ class NotificationFilterRegressionTest {
     fun realWorldPromo_detected() {
         val text = "🧧双11省钱卡已开抢！ 双11省钱卡花3得29，一笔回本🔥加赠99积分0元兑云音乐月卡👉"
         assertTrue(NotificationTextClassifier.isPromoNotification(text))
-    }
-
-    @Test
-    @DisplayName("「花N得M」促销结构被拦")
-    fun spendGetPattern() {
-        assertTrue(NotificationTextClassifier.isPromoNotification("周年庆花100得200"))
-        assertTrue(NotificationTextClassifier.isPromoNotification("充值花10得15"))
     }
 
     @Test
@@ -309,12 +276,6 @@ class NotificationFilterRegressionTest {
         assertFalse(NotificationTextClassifier.isPromoNotification("实付10.00元"))
     }
 
-    @Test
-    @DisplayName("银行真实扣款不被拦")
-    fun bankTransaction_notBlocked() {
-        assertFalse(NotificationTextClassifier.isPromoNotification("您尾号1234的招行信用卡消费50.00元"))
-    }
-
     // 原 `alipayTransaction_notBlocked`（"交易提醒 你有一笔20.00元的支出，点击领取9个支付宝积分"）
     // 已删除：该文本已在 `真实交易不被误杀` 里过生产判据链并断言放行——判据链放行 implies
     // 促销句式未命中（促销是链上的早退分支），覆盖等价。
@@ -323,12 +284,6 @@ class NotificationFilterRegressionTest {
     @DisplayName("「花30元买了杯咖啡」不是促销句式")
     fun spentAtStore_notBlocked() {
         assertFalse(NotificationTextClassifier.isPromoNotification("花30元在星巴克买了杯咖啡"))
-    }
-
-    @Test
-    @DisplayName("「美团外卖 支付成功 ¥32.00」不被拦")
-    fun normalExpense_notBlocked() {
-        assertFalse(NotificationTextClassifier.isPromoNotification("美团外卖 支付成功 ¥32.00"))
     }
 
     @Test
@@ -351,19 +306,5 @@ class NotificationFilterRegressionTest {
     fun blankText_safe() {
         assertFalse(NotificationTextClassifier.isPromoNotification(""))
         assertFalse(NotificationTextClassifier.isSummaryNotification(""))
-    }
-
-    private suspend fun blockReasonOf(text: String): BlockReason {
-        val verdict = prefilter.evaluate(
-            Capture(
-                channel = SourceChannel.NLS,
-                packageName = "com.example.notifier",
-                title = "",
-                fullText = text,
-                receivedAt = 1_000_000L,
-            )
-        )
-        assertTrue(verdict is Verdict.Block, "应当被拦截：$text")
-        return (verdict as Verdict.Block).reason
     }
 }

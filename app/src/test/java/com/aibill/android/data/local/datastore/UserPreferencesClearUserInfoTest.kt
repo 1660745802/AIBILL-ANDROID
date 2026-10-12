@@ -59,14 +59,17 @@ class UserPreferencesClearUserInfoTest {
     }
 
     @Test
-    fun `clearUserInfo removes identity but keeps serverUrl and device settings`() = runBlocking {
+    fun `clearUserInfo removes identity but keeps serverUrl and every device setting`() = runBlocking {
         prefs.setServerUrl("https://bill.example.com/api")
         prefs.setUserInfo(42, "alice", "Alice")
+        prefs.setDefaultAccountId(3)
         prefs.setThemeMode("dark")
         prefs.setNotificationPrivacy(false)
         prefs.setAppLockEnabled(true)
         prefs.setAiParseEnabled(false)
         prefs.setHideFromRecents(true)
+        prefs.setQuickEntryEnabled(true)
+        prefs.setDynamicColorEnabled(true)
 
         prefs.clearUserInfo()
 
@@ -77,12 +80,15 @@ class UserPreferencesClearUserInfoTest {
 
         // 服务器地址必须保留 —— 否则登出后无法再登录（F5）
         assertEquals("https://bill.example.com/api", prefs.serverUrl.first())
-        // 设备设置必须保留
+        // 设备设置与偏好全部保留（defaultAccountId 也不是身份字段）
+        assertEquals(3, prefs.defaultAccountId.first())
         assertEquals("dark", prefs.themeMode.first())
         assertEquals(false, prefs.notificationPrivacy.first())
         assertEquals(true, prefs.appLockEnabled.first())
         assertEquals(false, prefs.aiParseEnabled.first())
         assertEquals(true, prefs.hideFromRecents.first())
+        assertEquals(true, prefs.quickEntryEnabled.first())
+        assertEquals(true, prefs.dynamicColorEnabled.first())
     }
 
     @Test
@@ -95,16 +101,5 @@ class UserPreferencesClearUserInfoTest {
 
         assertNull(prefs.userId.first())
         assertEquals("https://bill.example.com/api", prefs.serverUrl.first())
-    }
-
-    @Test
-    fun `clearUserInfo keeps default account preference`() = runBlocking {
-        // defaultAccountId 不是身份字段（是设备/偏好设置），不应被登出清掉
-        prefs.setDefaultAccountId(3)
-        prefs.setUserInfo(42, "alice", "Alice")
-
-        prefs.clearUserInfo()
-
-        assertEquals(3, prefs.defaultAccountId.first())
     }
 }

@@ -19,14 +19,24 @@ import org.junit.jupiter.api.Test
 class AmountFormatterTest {
 
     @Test
-    @DisplayName("负号在 ¥ 之前，且不丢角分")
-    fun negativeSignPlacement() {
-        assertEquals("-¥32.50", AmountFormatter.toYuanDisplay(-3250))
+    @DisplayName("toYuanDisplay：负号在 ¥ 前、不丢角分、千分位正确")
+    fun toYuanDisplayKeepsSignCentsAndGrouping() {
         assertEquals("¥32.50", AmountFormatter.toYuanDisplay(3250))
-        // -50 分：旧实现 `cents / 100` 截断成 0 → "¥0.50"
+        assertEquals("-¥32.50", AmountFormatter.toYuanDisplay(-3250))
+        // -50 分：旧实现 `cents / 100` 截断成 0 → "¥0.50"（符号和角分全丢）
         assertEquals("-¥0.50", AmountFormatter.toYuanDisplay(-50))
         assertEquals("¥0.50", AmountFormatter.toYuanDisplay(50))
         assertEquals("-¥1.00", AmountFormatter.toYuanDisplay(-100))
+        assertEquals("¥0.00", AmountFormatter.toYuanDisplay(0))
+        assertEquals("¥9.99", AmountFormatter.toYuanDisplay(999))
+        assertEquals("¥1,000.00", AmountFormatter.toYuanDisplay(100000))
+        assertEquals("¥1,234,567.89", AmountFormatter.toYuanDisplay(123456789))
+        assertEquals("¥1,000,000.00", AmountFormatter.toYuanDisplay(100000000))
+        // Int.MIN_VALUE：Math.abs(Int) 对它仍然返回负数（溢出），旧实现输出
+        // "--21,474,836.-48"；`yuanTextToFen` 越界时正好会返回这个值，因此可达。
+        assertEquals("-¥21,474,836.48", AmountFormatter.toYuanDisplay(Int.MIN_VALUE))
+        assertEquals("-¥21,474,836", AmountFormatter.toCompactDisplay(Int.MIN_VALUE))
+        assertEquals("-2147.5万", AmountFormatter.toAxisLabel(Int.MIN_VALUE))
     }
 
     @Test
@@ -44,11 +54,10 @@ class AmountFormatterTest {
     }
 
     @Test
-    @DisplayName("紧凑显示与轴标签也保留负号")
-    fun compactAndAxisKeepSign() {
+    @DisplayName("紧凑显示也保留负号")
+    fun compactKeepsSign() {
         assertEquals("-¥1,234", AmountFormatter.toCompactDisplay(-123456))
         assertEquals("¥1,234", AmountFormatter.toCompactDisplay(123456))
-        assertEquals("¥1,234,567.89", AmountFormatter.toYuanDisplay(123456789))
     }
 
     @Test
@@ -57,19 +66,14 @@ class AmountFormatterTest {
         // ¥1,234 —— 低于一万，必须原样显示；旧实现会输出无意义的 "0.1万"
         assertEquals("1,234", AmountFormatter.toAxisLabel(123456))
         assertEquals("-1,234", AmountFormatter.toAxisLabel(-123456))
+        // 门槛精确落在 ¥10,000 = 1,000,000 分：999999 分仍原样，1000000 分才进万位
+        assertEquals("9,999", AmountFormatter.toAxisLabel(999_999))
+        assertEquals("-9,999", AmountFormatter.toAxisLabel(-999_999))
+        assertEquals("1.0万", AmountFormatter.toAxisLabel(1_000_000))
         // ¥12,345 起才折算
         assertEquals("1.2万", AmountFormatter.toAxisLabel(1234567))
         assertEquals("-1.2万", AmountFormatter.toAxisLabel(-1234567))
         assertEquals("1234.6万", AmountFormatter.toAxisLabel(1234567890))
-    }
-
-    @Test
-    @DisplayName("千分位分组正确")
-    fun thousandsSeparator() {
-        assertEquals("¥0.00", AmountFormatter.toYuanDisplay(0))
-        assertEquals("¥9.99", AmountFormatter.toYuanDisplay(999))
-        assertEquals("¥1,000.00", AmountFormatter.toYuanDisplay(100000))
-        assertEquals("¥1,000,000.00", AmountFormatter.toYuanDisplay(100000000))
     }
 
     @Test

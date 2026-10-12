@@ -11,6 +11,7 @@ import com.aibill.android.domain.repository.TransactionPage
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.service.WidgetSyncScheduler
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
@@ -141,6 +142,39 @@ class HomeViewModelTest {
         }
         assertEquals(false, viewModel.uiState.value.isRefreshing)
         assertEquals(false, viewModel.uiState.value.isLoading)
+    }
+
+    /** 月度汇总成功时，状态字段与 widget 更新必须用同一组值（关联键不能串）。 */
+    @Test
+    fun `monthly summary success feeds both state and widget with matching values`() = runTest {
+        coEvery { statsRepository.getSummary(any(), any()) } returns Result.Success(
+            StatsSummary(expense = 12345, income = 6789, balance = 5556, expenseChange = null),
+        )
+
+        viewModel.refresh()
+
+        assertEquals(12345, viewModel.uiState.value.monthlyExpense)
+        assertEquals(6789, viewModel.uiState.value.monthlyIncome)
+        coVerify(exactly = 1) { widgetSyncScheduler.scheduleMonthlyUpdate(12345, 6789) }
+    }
+
+    /** 月度失败只报自己的错，今日流水照常留在状态里。 */
+    @Test
+    fun `monthly summary failure reports its own error and keeps the today list`() = runTest {
+        coEvery { transactionRepository.getTransactions(any()) } returns Result.Success(
+            TransactionPage(items = listOf(tx("C1")), total = 1),
+        )
+        coEvery { statsRepository.getSummary(any(), any()) } returns Result.Error(-1, "服务器错误")
+
+        viewModel.uiEvent.test {
+            viewModel.refresh()
+
+            val event = awaitItem()
+            assertTrue(event is HomeViewModel.UiEvent.ShowError)
+            assertEquals("加载月度数据失败: 服务器错误", (event as HomeViewModel.UiEvent.ShowError).message)
+        }
+        assertEquals(listOf("C1"), viewModel.uiState.value.todayTransactions.map { it.clientId })
+        assertEquals(false, viewModel.uiState.value.isRefreshing)
     }
 }
 

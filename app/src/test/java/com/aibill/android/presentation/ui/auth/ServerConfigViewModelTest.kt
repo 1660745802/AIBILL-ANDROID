@@ -89,6 +89,21 @@ class ServerConfigViewModelTest {
     }
 
     @Test
+    fun `onSave normalizes a bare host and keeps an already-suffixed api url intact`() = runTest {
+        val viewModel = buildViewModel()
+
+        // 只填域名 → 补 http:// 与 /api
+        viewModel.onUrlChanged("bill.example.com/")
+        viewModel.onSave(clearLocalCache = false)
+        // 已经以 /api 结尾 → 不得再追加一层变成 /api/api
+        viewModel.onUrlChanged("https://h.example/api/")
+        viewModel.onSave(clearLocalCache = false)
+
+        coVerify(exactly = 1) { userPreferences.setServerUrl("http://bill.example.com/api") }
+        coVerify(exactly = 1) { userPreferences.setServerUrl("https://h.example/api") }
+    }
+
+    @Test
     fun `onSave with clearLocalCache - disposes as SwitchingServer and saves the url`() = runTest {
         val viewModel = buildViewModel()
 

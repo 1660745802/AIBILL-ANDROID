@@ -97,38 +97,46 @@ class TokenManagerTest {
     // ==================== endSession：B6 的核心不变量 ====================
 
     @Test
-    fun `endSession SIGNED_OUT clears token and current user but KEEPS lastKnown`() {
-        tokenManager.saveSession("jwt-xyz", 42, "alice", "Alice")
+    fun `endSession clears the session but keeps lastKnown and device keys, for every reason`() {
+        // 两种结束路径的清理动作相同，差异只在持久化的 reason；一一验证不得回归
+        SessionEndReason.entries.forEach { reason ->
+            prefs.edit().clear().commit()
+            tokenManager.saveSession("jwt-xyz", 42, "alice", "Alice")
+            // 设备/其它 key 不属于 session：endSession 用显式 remove 而非 clear()
+            prefs.edit().putString("unrelated_device_key", "keep-me").commit()
 
-        tokenManager.endSession(SessionEndReason.SIGNED_OUT)
+            tokenManager.endSession(reason)
 
-        // session 被清
-        assertNull(tokenManager.getToken())
-        assertFalse(prefs.contains(keyUserId))
-        assertFalse(prefs.contains(keyUsername))
-        assertFalse(prefs.contains(keyNickname))
-        assertFalse(tokenManager.hasToken())
-        // 结束原因被持久化，供冷启动区分「主动退出」
-        assertEquals(SessionEndReason.SIGNED_OUT, tokenManager.getSessionEndReason())
-        assertEquals("signed_out", prefs.getString(keySessionEndReason, null))
-        // ⚠️ B6 的命脉：lastKnown 必须活着，否则「登出→登回同账号」会退化成
-        // 「首次登录」并 deleteAll()，把用户离线记的账物理删除
-        assertEquals(42, tokenManager.getLastKnownUserId())
-        assertEquals(42, prefs.getInt(keyLastKnownUserId, -1))
+            // session 被清
+            assertNull(tokenManager.getToken())
+            assertFalse(prefs.contains(keyUserId))
+            assertFalse(prefs.contains(keyUsername))
+            assertFalse(prefs.contains(keyNickname))
+            assertFalse(tokenManager.hasToken())
+            // 结束原因被持久化，供冷启动区分
+            assertEquals(reason, tokenManager.getSessionEndReason())
+            assertEquals(reason.storedValue, prefs.getString(keySessionEndReason, null))
+            // ⚠️ B6 的命脉：lastKnown 必须活着，否则「登出→登回同账号」会退化成
+            // 「首次登录」并 deleteAll()，把用户离线记的账物理删除
+            assertEquals(42, tokenManager.getLastKnownUserId())
+            assertEquals(42, prefs.getInt(keyLastKnownUserId, -1))
+            // 只删 session 三项 + 写 reason，不能顺手 clear() 整个 prefs
+            assertEquals("keep-me", prefs.getString("unrelated_device_key", null))
+        }
     }
 
     @Test
-    fun `endSession TOKEN_EXPIRED also KEEPS lastKnown (401 path must not regress it)`() {
-        tokenManager.saveSession("jwt-xyz", 42, "alice", "Alice")
+    fun `lastKnown reads back as null for absent or negative stored value (fail-closed)`() {
+        assertNull(tokenManager.getLastKnownUserId()) // key 不存在
 
-        tokenManager.endSession(SessionEndReason.TOKEN_EXPIRED)
+        // 脏/被篡改的负值必须判不可知，而不是当成合法 account id
+        prefs.edit().putInt(keyLastKnownUserId, -5).commit()
+        assertNull(tokenManager.getLastKnownUserId())
 
-        assertNull(tokenManager.getToken())
-        assertFalse(prefs.contains(keyUserId))
-        assertEquals(SessionEndReason.TOKEN_EXPIRED, tokenManager.getSessionEndReason())
-        assertEquals("token_expired", prefs.getString(keySessionEndReason, null))
-        // 401 路径历史上一直保留 lastKnown（B6 之前的行为），不得回归
-        assertEquals(42, tokenManager.getLastKnownUserId())
+        // round-trip 自证：合法值（含边界 0）必须能读回，
+        // 否则上面的 null 可能只是因为 key 名写错而非「负值被拦下」
+        prefs.edit().putInt(keyLastKnownUserId, 0).commit()
+        assertEquals(0, tokenManager.getLastKnownUserId())
     }
 
     @Test

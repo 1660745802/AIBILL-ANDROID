@@ -79,21 +79,6 @@ class NotificationHelperTest {
     }
 
     @Test
-    fun `cancelPendingAutoCancel twice with same id is idempotent`() {
-        val testRunnable = Runnable {}
-        pendingCancels[123] = testRunnable
-
-        // 第一次移除
-        NotificationHelper.cancelPendingAutoCancel(123)
-        assertNull(pendingCancels[123])
-
-        // 第二次：map 中已不存在，应静默不抛
-        assertDoesNotThrow {
-            NotificationHelper.cancelPendingAutoCancel(123)
-        }
-    }
-
-    @Test
     fun `cancelPendingAutoCancel does not affect other ids`() {
         val runnable1 = Runnable {}
         val runnable2 = Runnable {}

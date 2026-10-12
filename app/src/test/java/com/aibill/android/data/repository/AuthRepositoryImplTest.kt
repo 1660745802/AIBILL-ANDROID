@@ -53,9 +53,7 @@ import org.junit.jupiter.api.Test
  *
  * 表清单（哪几张、一起清）由 `LocalDataOwnershipImplTest` 用**真实 Room 按表名**钉住——
  * 那才是清单唯一的落点；收口前两份清单各由本类与 `ServerConfigViewModelTest` 钉，
- * 「清单本身」反而没人钉。两侧用例都在、语义等价：
- * `DATA LOSS regression` / `logout then SAME|DIFFERENT account login`（本类）
- * ＋ 同名的 4 表保留用例（归属 module）。
+ * 「清单本身」反而没人钉。
  */
 class AuthRepositoryImplTest {
 
@@ -129,6 +127,8 @@ class AuthRepositoryImplTest {
                 nickname = "Alice",
             )
         }
+        // DataStore 副本同步写入，供 Flow 订阅
+        coVerify(exactly = 1) { userPreferences.setUserInfo(42, "alice", "Alice") }
     }
 
     @Test
@@ -268,53 +268,72 @@ class AuthRepositoryImplTest {
         coVerify(exactly = 0) { ownership.dispose(any()) }
     }
 
-    // ==================== B6：登出不得成为数据丢失的入口 ====================
+    // ==================== 新增强不变量 ====================
 
     /**
-     * B6 回归：登出后再登回**同一账号**，离线记账必须保留。
+     * B2 的重放判据必须是**处置结果**（`DisposalOutcome.Retained`），不是调用方重算一遍归属。
      *
-     * 历史 bug：`logout()` 调 `clearSessionAndIdentity()` 把 `last_known_user_id` 一起删了，
-     * 于是下次登录归属判据为 null → 判成换号 → 物理删除用户离线记的账，
-     * 而登出弹窗向用户承诺过「本地未同步的数据不会丢失」。
+     * 两处判定打架正是归属 module 收口前的老毛病（见 `LocalDataOwnership` KDoc）：
+     * 若改回 `previousOwnership.isSameAccount(...)`，下面两个方向都会错——
+     * 同号却已被清空时会重放别人的数据，换号却保留了数据时又会漏重放。
      */
     @Test
-    fun `logout then SAME account login - data retained, nothing disposed as account switch`() = runTest {
-        // 登出保留了 last_known_user_id（last_known_user_id = 42）
-        stubOwnership(42, DisposalOutcome.Retained)
-        coEvery { authApi.login(LoginRequest("alice", "pass")) } returns ApiResponse(
+    fun `replayAuthPending follows the disposal outcome, not a recomputed ownership`() = runTest {
+        coEvery { authApi.login(any()) } returns ApiResponse(
             code = 0, data = makeAuthResponse(), message = "ok"
         )
 
-        newRepo().logout()
-        val result = newRepo().login("alice", "pass")
+        // 同号，但处置方报告数据已被清空 → 不重放
+        stubOwnership(lastAccount = 42, outcome = DisposalOutcome.Cleared)
+        newRepo().login("alice", "pass")
+        coVerify(exactly = 0) { notificationProcessor.replayAuthPending() }
 
-        assertTrue(result is com.aibill.android.domain.model.Result.Success)
-        // 核心：走「保留」意图，一个字节都不会少
-        coVerify(exactly = 1) { ownership.dispose(DisposalIntent.SameAccountRelogin) }
-        coVerify(exactly = 0) { ownership.dispose(DisposalIntent.SwitchingAccount) }
-        // 401 卡住的行被复活 → 数据留下了 → 重放待补偿通知
+        // 换号，但处置方报告数据保留 → 重放
+        stubOwnership(lastAccount = 7, outcome = DisposalOutcome.Retained)
+        newRepo().login("alice", "pass")
         coVerify(exactly = 1) { notificationProcessor.replayAuthPending() }
     }
 
     /**
-     * B6 的另一半：**保留身份不等于放弃换号防护**。
-     * 登出后换成另一个账号，仍然必须按换号处置（清本地数据）。
+     * DataStore 副本只是「供 Flow 订阅」，权威 session 在 `TokenManager`。
+     * 写副本失败不得把一次**已经成功**的登录变成失败（ARCHITECTURE §10 降级）。
      */
     @Test
-    fun `logout then DIFFERENT account login - still disposes as SwitchingAccount`() = runTest {
-        // 登出保留了 last_known_user_id = 7，新登录拿到 42 → 换号
-        stubOwnership(7)
-        coEvery { authApi.login(LoginRequest("bob", "pass")) } returns ApiResponse(
+    fun `login stays Success when the DataStore userInfo copy fails (degrade)`() = runTest {
+        stubOwnership(42, DisposalOutcome.Retained)
+        coEvery { authApi.login(any()) } returns ApiResponse(
             code = 0, data = makeAuthResponse(), message = "ok"
         )
+        coEvery { userPreferences.setUserInfo(any(), any(), any()) } throws
+            RuntimeException("datastore down")
 
-        newRepo().logout()
-        val result = newRepo().login("bob", "pass")
+        val result = newRepo().login("alice", "pass")
 
         assertTrue(result is com.aibill.android.domain.model.Result.Success)
-        // 跨账号防护不得因为保留 last_known_user_id 而削弱
-        coVerify(exactly = 1) { ownership.dispose(DisposalIntent.SwitchingAccount) }
-        coVerify(exactly = 0) { ownership.dispose(DisposalIntent.SameAccountRelogin) }
-        coVerify(exactly = 0) { notificationProcessor.replayAuthPending() }
+        coVerify(exactly = 1) { tokenManager.saveSession(any(), any(), any(), any()) }
+    }
+
+    /** 注册失败（如用户名已被占用）同样是一个字节的本地数据都不能动。 */
+    @Test
+    fun `register error - no disposal, no saveSession, return Error`() = runTest {
+        coEvery { authApi.register(any()) } returns ApiResponse<AuthResponse>(
+            code = 409, data = null, message = "用户名已存在"
+        )
+
+        val result = newRepo().register("bob", "pass", "INV-1", "Bob")
+
+        assertTrue(result is com.aibill.android.domain.model.Result.Error)
+        coVerify(exactly = 0) { ownership.dispose(any()) }
+        coVerify(exactly = 0) { tokenManager.saveSession(any(), any(), any(), any()) }
+    }
+
+    /** 登出的 DataStore 清理失败必须降级：session 已经结束，不得把登出变成抛异常。 */
+    @Test
+    fun `logout tolerates clearUserInfo failure and still ends the session`() = runTest {
+        coEvery { userPreferences.clearUserInfo() } throws RuntimeException("datastore down")
+
+        newRepo().logout() // 不得抛异常
+
+        coVerify(exactly = 1) { tokenManager.endSession(SessionEndReason.SIGNED_OUT) }
     }
 }

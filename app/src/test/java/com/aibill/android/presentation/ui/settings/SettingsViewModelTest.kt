@@ -82,25 +82,26 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun `turning the switch off writes the preference and the exposed flow reads the new value`() = runTest {
+    fun `toggling the gate writes the preference and the exposed flow follows`() = runTest {
         val viewModel = buildViewModel()
         assertEquals(true, viewModel.aiParseEnabled.value)
 
         viewModel.onAiParseChanged(false)
-
         coVerify(exactly = 1) { userPreferences.setAiParseEnabled(false) }
-        assertEquals(false, viewModel.aiParseEnabled.value)
-    }
-
-    @Test
-    fun `turning the switch back on is also reflected`() = runTest {
-        aiParse.value = false
-        val viewModel = buildViewModel()
         assertEquals(false, viewModel.aiParseEnabled.value)
 
         viewModel.onAiParseChanged(true)
-
         coVerify(exactly = 1) { userPreferences.setAiParseEnabled(true) }
         assertEquals(true, viewModel.aiParseEnabled.value)
+    }
+
+    @Test
+    fun `display name falls back from blank nickname and username to 用户`() {
+        every { userPreferences.nickname } returns flowOf("   ")
+        every { userPreferences.username } returns flowOf("bob")
+        assertEquals("bob", buildViewModel().displayName.value)
+
+        every { userPreferences.username } returns flowOf("")
+        assertEquals("用户", buildViewModel().displayName.value)
     }
 }

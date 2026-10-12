@@ -15,6 +15,7 @@ import com.aibill.android.service.SmsRules
 import com.aibill.android.service.WechatRules
 import com.aibill.android.util.AppLogger
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
@@ -144,6 +145,40 @@ class ScoredAdmissionTest {
         assertEquals("更全", admitted.single().description)
     }
 
+    /**
+     * 评分窗口是**闭区间**：`receivedAt` 差恰好 10s 仍算同一笔。
+     *
+     * 变异点：把 `(candidate.receivedAt - existing.receivedAt) <= scoreWindowMs`
+     * 改成 `<`，后到的跨渠道视图会另开窗口并 cancel 首条的定时任务，本用例变红。
+     */
+    @Test
+    @DisplayName("评分窗口闭区间：receivedAt 差恰好 10s 仍算同一笔，不另开窗口")
+    fun `评分窗口恰好10s边界`() = runTest(testDispatcher) {
+        val admitted = mutableListOf<ParsedTransaction>()
+        admission.submit(candidate(2500, score = 5, channel = SourceChannel.NLS)) { admitted += it }
+        runCurrent()
+
+        // 时钟推到窗口边界，但不 runCurrent：此刻定时任务尚未执行，窗口仍在池中
+        advanceTimeBy(10_000)
+        admission.submit(
+            candidate(
+                2500,
+                score = 2,
+                channel = SourceChannel.A11Y,
+                packageName = "com.eg.android.AlipayGphone",
+                receivedAt = baseTime + 10_000,
+            )
+        ) { admitted += it }
+        runCurrent()
+
+        assertEquals(1, admitted.size, "恰好 10s 属于同一评分窗口，不应被拆成两个窗口")
+        assertEquals(
+            SourceChannel.NLS,
+            admitted.single().capture.channel,
+            "同一窗口内低分不替换，仍产出首条",
+        )
+    }
+
     @Test
     @DisplayName("同渠道同包名同金额 10s 内 = 两笔真交易：前一笔立即产出，新交易开新窗口")
     fun `同来源同金额视为两笔`() = runTest(testDispatcher) {
@@ -213,6 +248,10 @@ class ScoredAdmissionTest {
         runCurrent()
 
         assertEquals(1, admitted.size, "跨渠道同一笔只应入一笔")
+        // 关联键：DB 兜底查重必须用「金额 + receivedAt-60s + 包名」，用 channel 或 wall clock 都错
+        coVerify(exactly = 1) {
+            dao.findRecentConfirmedFromOtherChannel(8800, baseTime - 60_000, "com.tencent.mm")
+        }
     }
 
     @Test
@@ -251,6 +290,9 @@ class ScoredAdmissionTest {
         runCurrent()
 
         assertTrue(admitted.isEmpty(), "DB 里已有同金额的其他渠道记录 → 不产出")
+        coVerify(exactly = 1) {
+            dao.findRecentConfirmedFromOtherChannel(300, baseTime - 60_000, "com.tencent.mm")
+        }
     }
 
     // ── 写库在锁外 ──

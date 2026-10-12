@@ -217,6 +217,34 @@ class StatisticsViewModelTest {
         assertEquals(summaryFor(2222).expense, viewModel.uiState.value.summary?.expense)
     }
 
+    /** Tab 切换必须把新类型传给分类/趋势查询（否则图表停在旧类型上）。 */
+    @Test
+    fun `tab change forwards the new type to category and trend queries`() = runTest {
+        advanceUntilIdle()
+        coEvery { statsRepository.getByCategory(now.year, now.monthValue, "income") } returns
+            Result.Success(listOf(categoryFor(99)))
+        coEvery { statsRepository.getTrend(now.year, now.monthValue, "daily", "income") } returns
+            Result.Success(listOf(trendFor(99)))
+
+        viewModel.onTabChanged("income")
+        advanceUntilIdle()
+
+        assertEquals("income", viewModel.uiState.value.selectedTab)
+        assertEquals("cat-99", viewModel.uiState.value.categoryStats.firstOrNull()?.categoryName)
+        assertEquals(9900, viewModel.uiState.value.trendData.firstOrNull()?.amount)
+    }
+
+    /** 摘要失败必须把 message 记进 state，不能静默吞掉。 */
+    @Test
+    fun `summary failure records the error message`() = runTest {
+        coEvery { statsRepository.getSummary(now.year, now.monthValue) } returns Result.Error(-1, "boom")
+
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertEquals("boom", viewModel.uiState.value.error)
+    }
+
     /** 按 ViewModel 相同的进位规则计算偏移 delta 个月后的 (year, month) */
     private fun shiftMonths(year: Int, month: Int, delta: Int): Pair<Int, Int> {
         val total = year * 12 + (month - 1) + delta

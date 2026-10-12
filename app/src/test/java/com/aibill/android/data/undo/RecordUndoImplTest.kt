@@ -10,9 +10,11 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -156,37 +158,31 @@ class RecordUndoImplTest {
     // 这些行没有「服务端到底有没有这笔」的证据：`pending` 可能正在上传、也可能从没发出去，
     // `failed` 里的 401 也只是「那一次被拒」，本地重登后还可能再发。删本地就可能留下
     // 服务端看不见的幽灵账，因此一律什么都不删 + 如实说明。
+    // 未知 status（`uploading_v2`）同样落 else：`!= "synced"` 这类 fail-open 判据
+    // 会把任何新状态当成「未上传 → 删本地」，是白名单 `when` 明确挡掉的退化。
 
     @Test
-    fun `legacy pending row - no evidence about the server, deletes nothing`() = runTest {
-        coEvery { pendingTransactionDao.findByClientId(clientId) } returns localEntity("pending")
+    fun `non synced rows - fail closed regardless of status or recorded reason`() = runTest {
+        val rows = listOf(
+            localEntity("pending"),
+            // 401 也救不了它：那次 401 之后本地并没有删行，服务端状态依然只能靠猜。
+            localEntity("failed", lastError = "Token expired, need re-login"),
+            localEntity("failed", lastError = "Server response missing clientId match (created/duplicates both empty)"),
+            localEntity("failed", lastError = "Max retry count exceeded"),
+            localEntity("failed", lastError = null),
+            localEntity("uploading_v2"),
+        )
 
-        val outcome = undo.undo(clientId)
-
-        coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
-        coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
-        coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(UndoOutcome.ServerStateUnknown, outcome)
-        assertEquals(MSG_FAILED_UNCHANGED, outcome.userMessage)
-        assertNoActionOrUploadClaim(outcome.userMessage)
-        assertNotClaimedUndone(outcome)
-    }
-
-    @Test
-    fun `legacy failed row - deletes nothing regardless of the recorded reason`() = runTest {
-        // 401 也救不了它：那次 401 之后本地并没有删行，服务端状态依然只能靠猜。
-        listOf(
-            "Token expired, need re-login",
-            "Server response missing clientId match (created/duplicates both empty)",
-            "Max retry count exceeded",
-            null,
-        ).forEach { reason ->
-            coEvery { pendingTransactionDao.findByClientId(clientId) } returns
-                localEntity("failed", lastError = reason)
+        rows.forEach { row ->
+            coEvery { pendingTransactionDao.findByClientId(clientId) } returns row
 
             val outcome = undo.undo(clientId)
 
-            assertEquals(UndoOutcome.ServerStateUnknown, outcome, "reason=$reason")
+            assertEquals(
+                UndoOutcome.ServerStateUnknown,
+                outcome,
+                "status=${row.syncStatus} lastError=${row.lastError}",
+            )
             assertEquals(MSG_FAILED_UNCHANGED, outcome.userMessage)
             assertNoActionOrUploadClaim(outcome.userMessage)
             assertNotClaimedUndone(outcome)
@@ -194,23 +190,6 @@ class RecordUndoImplTest {
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-    }
-
-    @Test
-    fun `unknown sync status - deletes nothing instead of treating it as unsynced`() = runTest {
-        // `!= "synced"` 这类 fail-open 判据会把任何新状态当成「未上传→删本地」。
-        coEvery { pendingTransactionDao.findByClientId(clientId) } returns
-            localEntity("uploading_v2")
-
-        val outcome = undo.undo(clientId)
-
-        coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
-        coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
-        coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(UndoOutcome.ServerStateUnknown, outcome)
-        assertEquals(MSG_FAILED_UNCHANGED, outcome.userMessage)
-        assertNoActionOrUploadClaim(outcome.userMessage)
-        assertNotClaimedUndone(outcome)
     }
 
     // ==================== synced + 有 serverId：先服务端，成功才删本地 ====================
@@ -237,40 +216,46 @@ class RecordUndoImplTest {
         }
 
     @Test
-    fun `synced with serverId - server delete fails keeps local row and never claims undone`() = runTest {
-        coEvery { pendingTransactionDao.findByClientId(clientId) } returns
-            localEntity("synced", serverTransactionId = serverId)
-        coEvery {
-            transactionRepository.deleteTransaction(serverId)
-        } returns Result.Error(5001, "删除失败")
+    fun `synced with serverId - any non success server result keeps the local row`() = runTest {
+        listOf(
+            Result.Error(5001, "删除失败"),
+            Result.Loading,
+        ).forEach { serverResult ->
+            coEvery { pendingTransactionDao.findByClientId(clientId) } returns
+                localEntity("synced", serverTransactionId = serverId)
+            coEvery { transactionRepository.deleteTransaction(serverId) } returns serverResult
 
-        val outcome = undo.undo(clientId)
+            val outcome = undo.undo(clientId)
 
-        coVerify(exactly = 1) { transactionRepository.deleteTransaction(serverId) }
-        // 服务端还在，本地行必须留着，用户才能在流水页看到并重试。
-        coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
-        coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(UndoOutcome.ServerStillHasIt, outcome)
-        assertEquals(MSG_FAILED_MANUAL, outcome.userMessage)
-        // 服务端**确有**这笔 ⇒ 必须把处置入口指出来（防「一刀切改保守」也是信息丢失）
-        assertTrue(outcome.userMessage.contains("流水页"))
-        assertNotClaimedUndone(outcome)
+            coVerify(atLeast = 1) { transactionRepository.deleteTransaction(serverId) }
+            // 服务端还在，本地行必须留着，用户才能在流水页看到并重试。
+            coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
+            coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
+            assertEquals(UndoOutcome.ServerStillHasIt, outcome, "result=$serverResult")
+            assertEquals(MSG_FAILED_MANUAL, outcome.userMessage)
+            // 服务端**确有**这笔 ⇒ 必须把处置入口指出来（防「一刀切改保守」也是信息丢失）
+            assertTrue(outcome.userMessage.contains("流水页"))
+            assertNotClaimedUndone(outcome)
+        }
     }
 
     @Test
-    fun `synced with serverId - non success result (Loading) treated as failure`() = runTest {
+    fun `synced with serverId - cancellation propagates and the local row is kept`() = runTest {
         coEvery { pendingTransactionDao.findByClientId(clientId) } returns
             localEntity("synced", serverTransactionId = serverId)
-        coEvery { transactionRepository.deleteTransaction(serverId) } returns Result.Loading
+        coEvery { transactionRepository.deleteTransaction(serverId) } throws CancellationException("cancelled")
 
-        val outcome = undo.undo(clientId)
+        var propagated: CancellationException? = null
+        try {
+            undo.undo(clientId)
+        } catch (e: CancellationException) {
+            propagated = e
+        }
 
-        coVerify(exactly = 1) { transactionRepository.deleteTransaction(serverId) }
+        assertNotNull(propagated, "取消必须原样抛出，不能被吞成 ServerStillHasIt")
+        // fail-closed：取消时本地行必须留存
         coVerify(exactly = 0) { pendingTransactionDao.deleteByClientId(any()) }
         coVerify(exactly = 0) { transactionRepository.getTransactions(any()) }
-        assertEquals(UndoOutcome.ServerStillHasIt, outcome)
-        assertEquals(MSG_FAILED_MANUAL, outcome.userMessage)
-        assertTrue(outcome.userMessage.contains("流水页"))
     }
 
     // ==================== synced 但无 serverId：无处可删，诚实报失败 ====================

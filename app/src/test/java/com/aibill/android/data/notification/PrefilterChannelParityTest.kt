@@ -30,6 +30,12 @@ class PrefilterChannelParityTest {
     private suspend fun verdictOf(capture: Capture): Verdict =
         PrefilterTestHarness.newPrefilter(rules).evaluate(capture)
 
+    private suspend fun blockReasonOf(channel: SourceChannel, text: String): BlockReason {
+        val verdict = verdictOf(Capture(channel, "com.example.notifier", "", text, 1_000_000L))
+        assertTrue(verdict is Verdict.Block, "$channel 应当被拦截：$text")
+        return (verdict as Verdict.Block).reason
+    }
+
     /** 同一段文本分别按三个渠道的来源形态喂进判据链（来源形态是 adapter 的职责）。 */
     private fun threeChannels(text: String, title: String, packageName: String): List<Capture> =
         SourceChannel.entries.map { channel ->
@@ -76,6 +82,44 @@ class PrefilterChannelParityTest {
         for (channel in SourceChannel.entries) {
             val verdict = verdictOf(Capture(channel, "com.example.notifier", "", ad, 1_000_000L))
             assertEquals(BlockReason.MARKETING, (verdict as Verdict.Block).reason, "${channel} 应拦营销文案")
+        }
+    }
+
+    /**
+     * **判定顺序本身是行为**：汇总(4) / 促销(5) 必须早于营销词(6)。
+     *
+     * 两条文案都含营销词且**不含任何强交易特征**（否则营销分支本就不会命中，
+     * 顺序就测不出来了）；文案①另有「昨日…共N笔」汇总特征，文案②另有「花3得29」促销句式。
+     * 若顺序被调换，这里会得到 MARKETING（词表拦不住日报/促销的正是这条顺序）。
+     */
+    @Test
+    @DisplayName("判定顺序：汇总/促销早于营销词，三渠道同结论")
+    fun `汇总与促销早于营销词`() = runTest {
+        val summaryAndMarketing = "恭喜您，昨日共2笔达标，点击领取奖励"
+        val promoAndMarketing = "恭喜您，花3得29，点击领取优惠券"
+        for (channel in SourceChannel.entries) {
+            assertEquals(
+                BlockReason.SUMMARY_REPORT,
+                blockReasonOf(channel, summaryAndMarketing),
+                "$channel 汇总特征必须先于营销词命中",
+            )
+            assertEquals(
+                BlockReason.PROMO_SENTENCE,
+                blockReasonOf(channel, promoAndMarketing),
+                "$channel 促销句式必须先于营销词命中",
+            )
+        }
+    }
+
+    @Test
+    @DisplayName("空文本与系统分组摘要：三渠道同口径拦截")
+    fun `空文本与分组摘要三渠道一致`() = runTest {
+        for (channel in SourceChannel.entries) {
+            assertEquals(BlockReason.BLANK_TEXT, blockReasonOf(channel, ""))
+            assertEquals(
+                BlockReason.SYSTEM_GROUP_SUMMARY,
+                blockReasonOf(channel, "微信正在运行\n点击查看详情"),
+            )
         }
     }
 

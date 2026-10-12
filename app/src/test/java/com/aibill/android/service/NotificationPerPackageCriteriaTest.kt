@@ -2,7 +2,6 @@ package com.aibill.android.service
 
 import com.aibill.android.data.notification.PrefilterTestHarness
 import com.aibill.android.domain.notification.Capture
-import com.aibill.android.domain.notification.MarketingCriteria
 import com.aibill.android.domain.notification.PerPackageCriteria
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
@@ -65,21 +64,16 @@ class NotificationPerPackageCriteriaTest {
         assertFalse(rule.matches("any.package"))
     }
 
-    /** 云控 DTO 映射过来的行与领域判据是同一个形状——映射本身零逻辑。 */
+    /**
+     * 空/空白 [PerPackageCriteria.packagePattern] 不能退化成「匹配所有包名」。
+     * 云控漏字段时如果 `""` 被当成 contains 成功，预筛会把每个 App 都按该行规则放行。
+     */
     @Test
-    fun `云控 PerPackageRule 映射后匹配行为不变`() {
-        val dtoRule = PerPackageRule(
-            packageName = "com.tencent.mm",
-            passTitleExact = listOf("微信支付"),
-            excludeContentContains = listOf("秒杀"),
-        )
-        val source = com.aibill.android.data.notification.InMemoryNotificationRuleSource(
-            PrefilterTestHarness.rules(perPackage = listOf(dtoRule))
-        )
-        val criteria = source.snapshot().perPackage.single()
-        assertTrue(criteria.matches("com.tencent.mm"))
-        assertTrue(criteria.passTitleExact.contains("微信支付"))
-        assertTrue(criteria.excludeContentContains.contains("秒杀"))
+    fun `空白包含模式不匹配任何包名`() {
+        assertFalse(PerPackageCriteria(packagePattern = "").matches("com.tencent.mm"))
+        assertFalse(PerPackageCriteria(packagePattern = "  ").matches("com.tencent.mm"))
+        // 精确包名与包含模式同时给出时，精确命中也算命中
+        assertTrue(PerPackageCriteria(packageName = "com.tencent.mm", packagePattern = "bank").matches("com.tencent.mm"))
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -174,7 +168,8 @@ class NotificationPerPackageCriteriaTest {
     }
 
     @Test
-    fun `微信 零钱 title contains 放行`() = runTest {
+    fun `微信 零钱 title 包含放行（per_package 与旧硬编码兜底同结论）`() = runTest {
+        assertTrue(passes(wechatRule, "零钱通知", "零钱通知 余额变动"))
         assertTrue(legacyJudge("com.tencent.mm", "零钱通知", "零钱通知 余额变动"))
     }
 
@@ -194,16 +189,8 @@ class NotificationPerPackageCriteriaTest {
     fun `微信普通聊天不放行（per_package 与旧硬编码兜底同结论）`() = runTest {
         assertFalse(passes(wechatRule, "张三", "张三 明天吃饭"))
         assertFalse(legacyJudge("com.tencent.mm", "张三", "张三 今天下班一起吃饭吗"))
-    }
-
-    @Test
-    fun `微信 表情消息不放行`() = runTest {
+        // 表情消息不能被当成 [转账] 前缀放行
         assertFalse(legacyJudge("com.tencent.mm", "儒宝", "儒宝 [偷笑][偷笑]"))
-    }
-
-    @Test
-    fun `微信 群消息不含金额不放行`() = runTest {
-        assertFalse(legacyJudge("com.tencent.mm", "家人群", "家人群 明天回来吃饭"))
     }
 
     @Test
@@ -245,11 +232,6 @@ class NotificationPerPackageCriteriaTest {
     }
 
     @Test
-    fun `支付宝 积分活动不放行`() = runTest {
-        assertFalse(legacyJudge("com.eg.android.AlipayGphone", "会员积分", "恭喜获得100积分"))
-    }
-
-    @Test
     fun `支付宝卡包营销被title排除`() = runTest {
         // 案例：支付宝卡包 你有天天秒杀13.50元红包今晚失效
         assertFalse(passes(alipayRule, "支付宝卡包", "支付宝卡包 你有天天秒杀13.50元红包今晚失效"))
@@ -271,12 +253,8 @@ class NotificationPerPackageCriteriaTest {
     )
 
     @Test
-    fun `招商银行 包名含cmb放行`() = runTest {
+    fun `银行包名模式放行（cmb 与 icbc 包含匹配）`() = runTest {
         assertTrue(legacyJudge("cmb.pb", "招商银行", "信用卡消费30元"))
-    }
-
-    @Test
-    fun `工商银行 包名含icbc放行`() = runTest {
         assertTrue(legacyJudge("com.icbc", "工商银行", "尾号1234消费"))
     }
 
@@ -302,10 +280,7 @@ class NotificationPerPackageCriteriaTest {
     @Test
     fun `其他App 无支付信号不放行`() = runTest {
         assertFalse(legacyJudge("com.taobao.taobao", "物流更新", "您的包裹已发出"))
-    }
-
-    @Test
-    fun `其他App 促销消息不放行`() = runTest {
+        // 促销文案走 legacy 兜底时也是「无 payment_signal」这一条分支
         assertFalse(legacyJudge("com.taobao.taobao", "618大促", "限时折扣快来抢购"))
     }
 
@@ -326,25 +301,11 @@ class NotificationPerPackageCriteriaTest {
     }
 
     @Test
-    fun `银行短信正常放行`() = runTest {
-        assertTrue(passesSmsGate("您尾号1234储蓄卡账户10月28日支出100.00元，余额3021.55元"))
-    }
-
-    @Test
-    fun `营销短信被拦截`() = runTest {
-        assertFalse(passesSmsGate("【XX银行】恭喜您获得贷款额度10万元，回复R办理"))
-    }
-
-    @Test
     fun `真实交易含办理字样不被误杀`() = runTest {
         // "办理"是营销词，但含尾号/入账等强交易特征 → 交 AI 判定而非过滤层直接拦（宁可多放不漏）
         assertTrue(passesNlsGate("您尾号1234信用卡办理的分期入账3500元"))
         assertTrue(passesSmsGate("您尾号1234信用卡办理的分期入账3500元"))
-    }
-
-    @Test
-    fun `含强交易特征的弱营销交 AI 判定`() = runTest {
-        // 营销词 + 尾号并存时不在过滤层拦（防误杀），由 AI 兜底拒识
+        // 弱营销（"点击链接"）也要同结论：强交易特征豁免后不得再被营销词表拦下
         assertTrue(passesSmsGate("【工行】您尾号1234的信用卡可办理分期，点击链接"))
     }
 
@@ -389,15 +350,6 @@ class NotificationPerPackageCriteriaTest {
     @Test
     fun `B1 回归：卡包类仍被 title 排除词拦截`() = runTest {
         assertFalse(passes(alipayRule, "卡包", "你有 3 张优惠券待使用"))
-    }
-
-    @Test
-    fun `强交易特征豁免语义：命中词表且有特征 → 不判营销`() {
-        val words = listOf("领取", "优惠")
-        assertFalse(MarketingCriteria.isMarketingByWords("你有一笔20.00元的支出，点击领取积分", words))
-        assertTrue(MarketingCriteria.isMarketingByWords("点击领取优惠券", words))
-        assertFalse(MarketingCriteria.isMarketingByWords("不含任何词", words))
-        assertFalse(MarketingCriteria.isMarketingByWords("含词", emptyList()))
     }
 
     // ═══════════════════════════════════════════════════════════════

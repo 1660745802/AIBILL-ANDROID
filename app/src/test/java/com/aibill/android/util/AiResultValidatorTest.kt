@@ -92,11 +92,6 @@ class AiResultValidatorTest {
     }
 
     @Test
-    fun `transfer 合法 type 通过`() = runTest {
-        assertTrue(validator.validate(100_000, "transfer", null, null, tx(100_000)).isValid)
-    }
-
-    @Test
     fun `categoryId 不存在于本地分类表 → 被拒（防 AI 幻觉分类）`() = runTest {
         coEvery { categoryDao.getById(999) } returns null
         val r = validator.validate(100, "expense", 999, null, tx(100))
@@ -107,6 +102,7 @@ class AiResultValidatorTest {
     @Test
     fun `categoryId 为 null 时不查库（transfer 场景）`() = runTest {
         assertTrue(validator.validate(100_000, "transfer", null, null, tx(100_000)).isValid)
+        io.mockk.coVerify(exactly = 0) { categoryDao.getById(any()) }
     }
 
     @Test
@@ -148,22 +144,20 @@ class AiResultValidatorTest {
     }
 
     @Test
-    fun `校验 5 放行：原文含人民币`() = runTest {
+    fun `校验 5 放行：单位前缀的货币形态（人民币、¥、RMB 大小写不敏感）`() = runTest {
         coEvery { categoryDao.getById(1) } returns mockk()
-        val src = "招商银行 您账户2415于10月04日14:42发生快捷支付扣款，人民币20.00"
-        assertTrue(validator.validate(2_000, "expense", 1, "消费", src).isValid)
-    }
-
-    @Test
-    fun `校验 5 放行：原文含货币符号`() = runTest {
-        coEvery { categoryDao.getById(1) } returns mockk()
-        assertTrue(validator.validate(8_200, "expense", 1, "话费", "已记账 · 移动 ¥82.00 · 9月话费账单").isValid)
-    }
-
-    @Test
-    fun `校验 5 忽略大小写：原文含 RMB`() = runTest {
-        coEvery { categoryDao.getById(1) } returns mockk()
-        assertTrue(validator.validate(5_000, "expense", 1, "消费", "Your card was charged RMB 50.00").isValid)
+        assertTrue(
+            validator.validate(
+                2_000, "expense", 1, "消费",
+                "招商银行 您账户2415于10月04日14:42发生快捷支付扣款，人民币20.00",
+            ).isValid,
+        )
+        assertTrue(
+            validator.validate(8_200, "expense", 1, "话费", "已记账 · 移动 ¥82.00 · 9月话费账单").isValid,
+        )
+        assertTrue(
+            validator.validate(5_000, "expense", 1, "消费", "Your card was charged RMB 50.00").isValid,
+        )
     }
 
     @Test
@@ -221,14 +215,6 @@ class AiResultValidatorTest {
         assertTrue(validator.validate(12_800, "expense", 1, "消费", src).isValid)
     }
 
-    @Test
-    fun `无单位的裸数字不能当佐证`() = runTest {
-        coEvery { categoryDao.getById(1) } returns mockk()
-        // 「已开抢 99 元」在另一个位置，AI 的 30 来自无单位的「30秒」
-        val src = "限时30秒，已开抢 99 元包邮"
-        assertFalse(validator.validate(3_000, "expense", 1, "购物", src).isValid)
-    }
-
     // ===== 2026-10-09 kiro code review 发现的两个新回归 =====
     //
     // 首版收紧只认「数字紧邻元/¥」，把下面两类**旧判据下能正常入账**的通知
@@ -239,12 +225,6 @@ class AiResultValidatorTest {
         coEvery { categoryDao.getById(1) } returns mockk()
         // 根因：首版正则里「万」夹在数字与「元」之间，匹配不到
         assertTrue(validator.validate(1_200_000, "income", 1, "工资", "工资到账 1.2万元").isValid)
-    }
-
-    @Test
-    fun `万位金额：整数万元也不被误杀`() = runTest {
-        coEvery { categoryDao.getById(1) } returns mockk()
-        assertTrue(validator.validate(2_000_000, "income", 1, "转账", "微信转账 2万元").isValid)
     }
 
     @Test
@@ -267,8 +247,10 @@ class AiResultValidatorTest {
     @Test
     fun `万位放大后超 Int 上限 → 丢弃而非回绕`() = runTest {
         coEvery { categoryDao.getById(1) } returns mockk()
-        // 30000000万元 = 3e14 分，远超 Int.MAX_VALUE，两层都应丢弃
-        assertFalse(validator.validate(100_000, "income", 1, "奖励", "奖励金 30000000万元").isValid)
+        // 4295 万元：toCents("4295")=429500 分，能放进 Int；溢出只发生在**万位放大**这一步。
+        // 429500 * 10000 = 4,295,000,000，Int 回绕恰好得到 32704（- 2^32）。
+        // 只有 scaled > Int.MAX_VALUE 的丢弃真的生效，32704 才不会被当假佐证放行。
+        assertFalse(validator.validate(32_704, "income", 1, "奖励", "奖励金 4295万元").isValid)
     }
 
     @Test

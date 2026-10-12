@@ -120,7 +120,8 @@ class MonthlySummaryWidget : GlanceAppWidget() {
      */
     private fun yuanDigits(cents: Int): String {
         val negative = cents < 0
-        val abs = Math.abs(cents)
+        // 同 AmountFormatter：先升 Long 再 abs，否则 Int.MIN_VALUE 会输出 "--21,474,836.-48"
+        val abs = Math.abs(cents.toLong())
         return (if (negative) "-" else "") + String.format(
             Locale.US,
             "%,d.%02d",

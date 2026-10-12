@@ -268,6 +268,22 @@ class NotificationProcessorTest {
     }
 
     @Test
+    @DisplayName("信息完整但校验不过（fail-closed）→ 也进待审池，不得静默丢弃")
+    fun `校验不过进待审不丢弃`() = runTest(testDispatcher) {
+        coEvery { aiApi.parse(any()) } returns aiOk(makeAiItem())
+        coEvery { aiResultValidator.validate(any(), any(), any(), any(), any()) } returns
+            AiResultValidator.ValidationResult(isValid = false, errors = listOf("金额佐证失败"))
+
+        processor.process(captureOf(text = "支付成功 ¥99.00"))
+        runCurrent()
+        advanceTimeBy(11_000)
+        runCurrent()
+
+        coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
+        assertEquals(1, rowsWithStatus("parsed").size, "校验不过必须留痕待审（fail-closed），不能当作「非账」丢掉")
+    }
+
+    @Test
     @DisplayName("信息完整但服务端没确认 → 也降级进待审池，且不发「已记录」回执")
     fun `服务端未确认降级待审`() = runTest(testDispatcher) {
         coEvery { aiApi.parse(any()) } returns aiOk(makeAiItem())

@@ -10,6 +10,7 @@ import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
 import com.aibill.android.domain.notification.AiCircuitBreaker
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -115,6 +116,63 @@ class PrefilterStateGateTest {
         assertTrue(nls.evaluate(capture(channel = SourceChannel.NLS, packageName = "com.b.app", now = 1_100L)) is Verdict.Pass)
     }
 
+    /**
+     * 窗口的**闭/开区间**是行为：生产用 `<` 判「未过期」，所以恰好 5s / 5min
+     * 应当落到下一道闸（或放行），而不是被当前闸拦下。
+     *
+     * 变异点：把 `(now - lastSeen) < CONTENT_DEDUP_WINDOW_MS` 改成 `<=`，
+     * 或把 `(now - lastAiCall) < AI_CONTENT_MEMORY_MS` 改成 `<=`，本用例都会红。
+     */
+    @Test
+    @DisplayName("窗口边界：距上次恰好 5s / 5min 不算命中")
+    fun `窗口边界的闭开区间`() = runTest {
+        // 恰好 5s：不被内存去重拦（`< 5000` 不成立），但仍在 5min 内容记忆内
+        val fiveSeconds = prefilter()
+        assertTrue(fiveSeconds.evaluate(capture(channel = SourceChannel.NLS, now = 1_000L)) is Verdict.Pass)
+        assertEquals(
+            BlockReason.AI_MEMORY,
+            reason(fiveSeconds.evaluate(capture(channel = SourceChannel.NLS, now = 6_000L))),
+            "距上次恰好 5s 不应命中 5s 去重",
+        )
+
+        // 恰好 5min：不被长窗内容记忆拦（`< 300000` 不成立）→ 放行
+        val beforeBoundary = prefilter()
+        assertTrue(beforeBoundary.evaluate(capture(channel = SourceChannel.NLS, now = 1_000L)) is Verdict.Pass)
+        assertEquals(
+            BlockReason.AI_MEMORY,
+            reason(beforeBoundary.evaluate(capture(channel = SourceChannel.NLS, now = 300_999L))),
+        )
+
+        // 单开一条链测「恰好 5min 放行」：上一条被拦的投递会刷新 5s 去重键，不能复用它
+        val atBoundary = prefilter()
+        assertTrue(atBoundary.evaluate(capture(channel = SourceChannel.NLS, now = 1_000L)) is Verdict.Pass)
+        assertTrue(
+            atBoundary.evaluate(capture(channel = SourceChannel.NLS, now = 301_000L)) is Verdict.Pass,
+            "距首次恰好 5min 应重新放行",
+        )
+    }
+
+    @Test
+    @DisplayName("自身通知(0) 早于内容去重(1)：同一条自身通知连投两次都是 SELF_NOTIFICATION")
+    fun `自身通知早于内容去重`() = runTest {
+        val nls = prefilter()
+        repeat(2) { i ->
+            assertEquals(
+                BlockReason.SELF_NOTIFICATION,
+                reason(
+                    nls.evaluate(
+                        capture(
+                            channel = SourceChannel.NLS,
+                            packageName = PrefilterTestHarness.OWN_PACKAGE,
+                            now = 1_000L + i * 1_000L,
+                        )
+                    )
+                ),
+                "自身通知应在任何状态闸之前早退（本次第 ${i + 1} 条）",
+            )
+        }
+    }
+
     @Test
     @DisplayName("长窗内容记忆(5min)：只拦 NLS；不同内容照常放行")
     fun `长窗内容记忆`() = runTest {
@@ -179,24 +237,31 @@ class PrefilterStateGateTest {
     @Test
     @DisplayName("DB 1s 去重只拦 NLS；SMS/A11Y 即便查到同内容也放行")
     fun `DB去重窗口`() = runTest {
-        val dao = mockk<NotificationRecordDao>(relaxed = true)
-        coEvery { dao.findDuplicate(any(), any(), any()) } returns
-            NotificationRecordEntity(
-                packageName = "com.example.notifier",
-                title = null,
-                content = REAL_TRADE,
-                receivedAt = 1L,
-            )
+        fun daoWithHit(): NotificationRecordDao = mockk<NotificationRecordDao>(relaxed = true).also {
+            coEvery { it.findDuplicate(any(), any(), any()) } returns
+                NotificationRecordEntity(
+                    packageName = "com.example.notifier",
+                    title = null,
+                    content = REAL_TRADE,
+                    receivedAt = 1L,
+                )
+        }
 
-        val nls = prefilter(dao = dao)
+        val nlsDao = daoWithHit()
+        val nls = prefilter(dao = nlsDao)
         assertEquals(BlockReason.DB_DUPLICATE, reason(nls.evaluate(capture(channel = SourceChannel.NLS, now = 1_000L))))
+        // 关联键：查重必须用「包名 + 正文 + 1s 前的截止时刻」，否则 DB 兜底形同虚设
+        coVerify(exactly = 1) { nlsDao.findDuplicate("com.example.notifier", REAL_TRADE, 0L) }
 
         for (channel in listOf(SourceChannel.SMS, SourceChannel.A11Y)) {
+            // 每个渠道一个独立 DAO：即便它能查回同内容，也不该被查询（否则无法验证「不查」）
+            val dao = daoWithHit()
             val other = prefilter(dao = dao)
             assertTrue(
                 other.evaluate(capture(channel = channel, now = 1_000L)) is Verdict.Pass,
                 "$channel 不走 DB 内容去重（那是 NLS 的噪音闸）",
             )
+            coVerify(exactly = 0) { dao.findDuplicate(any(), any(), any()) }
         }
     }
 

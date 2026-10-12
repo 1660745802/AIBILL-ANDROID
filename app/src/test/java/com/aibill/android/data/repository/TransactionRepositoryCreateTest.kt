@@ -122,6 +122,47 @@ class TransactionRepositoryCreateTest {
     }
 
     @Test
+    fun `an unconfirmed item in the batch fails the whole call`() = runTest {
+        // 逐条核对：一批里有一条没被确认，就不能整体报成功
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            val request = firstArg<CreateTransactionRequest>()
+            ApiResponse(
+                code = 0,
+                data = CreateTransactionResponse(
+                    created = listOf(dtoFor(request.items[0])),
+                    duplicates = emptyList(),
+                ),
+                message = "ok",
+            )
+        }
+
+        val result = repository.createTransactions(listOf(tx("A"), tx("B")))
+
+        assertTrue(result is Result.Error, "B 没被确认就不能报成功")
+        assertEquals("服务端未确认这笔记录", (result as Result.Error).message)
+    }
+
+    @Test
+    fun `a created entry with a different client id does not confirm this item`() = runTest {
+        // 匹配必须按 client_id：只看「created 非空」会把别的账当成自己的
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            val request = firstArg<CreateTransactionRequest>()
+            ApiResponse(
+                code = 0,
+                data = CreateTransactionResponse(
+                    created = listOf(dtoFor(request.items[0]).copy(clientId = "someone-else")),
+                    duplicates = emptyList(),
+                ),
+                message = "ok",
+            )
+        }
+
+        val result = repository.createTransactions(listOf(tx("C-X")))
+
+        assertTrue(result is Result.Error, "client_id 对不上就不算确认")
+    }
+
+    @Test
     fun `business error code is surfaced as is`() = runTest {
         coEvery { transactionApi.createTransactions(any()) } returns
             ApiResponse(code = 422, data = null, message = "金额必须大于 0")

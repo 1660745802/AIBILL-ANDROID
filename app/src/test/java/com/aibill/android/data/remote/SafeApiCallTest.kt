@@ -16,12 +16,12 @@ import retrofit2.Response
 import java.io.IOException
 
 /**
- * 覆盖 PR M7：safeApiCall reified 内联函数的 8 条核心行为
+ * 覆盖 PR M7：safeApiCall reified 内联函数的 7 条核心行为
  *
  * 关键不变量：
  * 1. code==0 + data!=null → Result.Success(data)
- * 2. code==0 + data=null + T=Unit → Result.Success(Unit)（DELETE 类接口）
- * 3. code==0 + data=null + T=Any → Result.Success(Unit)
+ * 2. code==0 + data=null + T=Unit/Any → Result.Success(Unit)（DELETE 类接口）
+ * 3. code==0 + data=null + T!=Unit/Any → Result.Error(-3, "API 返回数据为空")
  * 4. code==0 + data=null + T!=Unit/Any → Result.Error(-3, "API 返回数据为空")
  * 5. code!=0 → Result.Error(code, message)
  * 6. IOException → Result.Error(ERROR_NETWORK, "网络连接失败...")
@@ -40,19 +40,18 @@ class SafeApiCallTest {
     }
 
     @Test
-    fun `code 0, data null, T is Unit - returns Success(Unit) (DELETE class API)`() = runTest {
-        val result = safeApiCall<Unit> {
+    fun `code 0, data null, T is Unit or Any - returns Success(Unit) (DELETE class API)`() = runTest {
+        val unitResult = safeApiCall<Unit> {
             ApiResponse<Unit>(code = 0, data = null, message = "ok")
         }
-        assertTrue(result is Result.Success)
-    }
+        assertTrue(unitResult is Result.Success)
+        assertEquals(Unit, (unitResult as Result.Success).data)
 
-    @Test
-    fun `code 0, data null, T is Any - returns Success(Unit) (generic DELETE API)`() = runTest {
-        val result = safeApiCall<Any> {
+        val anyResult = safeApiCall<Any> {
             ApiResponse<Any>(code = 0, data = null, message = "ok")
         }
-        assertTrue(result is Result.Success)
+        assertTrue(anyResult is Result.Success)
+        assertEquals(Unit, (anyResult as Result.Success).data)
     }
 
     @Test
@@ -68,25 +67,21 @@ class SafeApiCallTest {
     }
 
     @Test
-    fun `code 5001 AI 失败 - returns Error with business code and message preserved`() = runTest {
-        val result = safeApiCall<String> {
-            ApiResponse(code = 5001, data = null, message = "AI 解析失败")
+    fun `code != 0 - returns Error with business code and message preserved`() = runTest {
+        // 注入/业务错误码原样透传（401 的 emit 由拦截器负责，这里只保证 Error 本身正确）
+        listOf(
+            5001 to "AI 解析失败",
+            401 to "Unauthorized",
+            -7 to "自定义业务错误",
+        ).forEach { (code, message) ->
+            val result = safeApiCall<String> {
+                ApiResponse(code = code, data = null, message = message)
+            }
+            assertTrue(result is Result.Error, "code=$code")
+            val err = result as Result.Error
+            assertEquals(code, err.code)
+            assertEquals(message, err.message)
         }
-        assertTrue(result is Result.Error)
-        val err = result as Result.Error
-        assertEquals(5001, err.code)
-        assertEquals("AI 解析失败", err.message)
-    }
-
-    @Test
-    fun `code 401 - returns Error with 401 (interceptor handles emit separately)`() = runTest {
-        val result = safeApiCall<String> {
-            ApiResponse(code = 401, data = null, message = "Unauthorized")
-        }
-        assertTrue(result is Result.Error)
-        val err = result as Result.Error
-        assertEquals(401, err.code)
-        assertEquals("Unauthorized", err.message)
     }
 
     @Test

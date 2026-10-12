@@ -80,6 +80,10 @@ class CaptureArchiveImpl @Inject constructor(
                 )
             )
             true
+        } catch (e: CancellationException) {
+            // 与 replayAuthPending 同一判据：取消不是「落库失败」。吞掉会让调用方在
+            // 已取消的协程里继续跑（发通知 / 再查库），破坏结构化取消。
+            throw e
         } catch (e: Exception) {
             appLogger.error("NLS", "原文捕获写入失败(status=$status): ${e.message}")
             false

@@ -141,6 +141,10 @@ class NotificationInterpreterTest {
     fun `空 items 判定非账`() = runTest {
         coEvery { aiApi.parse(any()) } returns ok()
         assertEquals(ParseOutcome.NotATransaction, interpreter.read(captureOf()))
+        // AI 明确回了 200/空 items = 一次成功的 AI 调用，不能计入熔断失败；
+        // 否则「AI 正常但判定非账」的界面会把包名拉黑（真交易被静音）。
+        verify { circuitBreaker.recordOutcome(pkg, success = true, now = any()) }
+        verify(exactly = 0) { circuitBreaker.recordOutcome(pkg, success = false, now = any()) }
     }
 
     @Test
@@ -168,10 +172,12 @@ class NotificationInterpreterTest {
     }
 
     @Test
-    @DisplayName("401 → AuthExpired（会话过期，不是解析失败）")
+    @DisplayName("401 → AuthExpired（会话过期，不是解析失败），并计入熔断失败")
     fun `401 会话过期`() = runTest {
         coEvery { aiApi.parse(any()) } throws httpErr(401)
         assertEquals(ParseOutcome.AuthExpired, interpreter.read(captureOf()))
+        // 401 是真正的调用失败，必须上报熔断（否则 401 风暴不会触发静音）
+        verify { circuitBreaker.recordOutcome(pkg, success = false, now = any()) }
     }
 
     @Test
@@ -211,11 +217,14 @@ class NotificationInterpreterTest {
     }
 
     @Test
-    @DisplayName("设置里关闭 AI 解析 → Disabled，且不调 AI")
+    @DisplayName("设置里关闭 AI 解析 → Disabled，且不调 AI / 不查学习 / 不记熔断")
     fun `关闭 AI 不调`() = runTest {
         every { userPreferences.aiParseEnabled } returns flowOf(false)
         assertEquals(ParseOutcome.Disabled, interpreter.read(captureOf()))
         coVerify(exactly = 0) { aiApi.parse(any()) }
+        // 总闸必须排在分类学习之前：关掉 AI 就不该再读学习表，也不该产生熔断副作用
+        coVerify(exactly = 0) { categoryLearningEngine.matchCategory(any()) }
+        verify(exactly = 0) { circuitBreaker.recordOutcome(any(), any(), any()) }
     }
 
     // ── 解析出什么 ──
@@ -251,6 +260,9 @@ class NotificationInterpreterTest {
         val tx = parsed(interpreter.read(captureOf()))
         assertEquals(42, tx.categoryId)
         assertTrue(tx.isComplete)
+        // 关联键：学习表以「商家/描述」为键，必须拿**完整通知文本**去匹配；
+        // 只用 title（常为「微信支付」这类泛化词）会让学习命中永远失效。
+        coVerify(exactly = 1) { categoryLearningEngine.matchCategory("微信支付 已支付¥32.00 午餐") }
     }
 
     @Test

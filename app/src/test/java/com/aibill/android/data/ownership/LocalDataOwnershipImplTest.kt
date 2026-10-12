@@ -2,12 +2,16 @@ package com.aibill.android.data.ownership
 
 import androidx.room.Room
 import com.aibill.android.data.local.dao.AccountDao
+import com.aibill.android.data.local.dao.AppLogDao
 import com.aibill.android.data.local.dao.CategoryDao
+import com.aibill.android.data.local.dao.CategoryRuleDao
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.db.AppDatabase
 import com.aibill.android.data.local.entity.AccountEntity
+import com.aibill.android.data.local.entity.AppLogEntity
 import com.aibill.android.data.local.entity.CategoryEntity
+import com.aibill.android.data.local.entity.CategoryRuleEntity
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.remote.interceptor.TokenManager
@@ -43,7 +47,7 @@ import org.robolectric.annotation.Config
  *
  * 归属断言（谁是同号）与意图选择（`AuthRepositoryImplTest`）分属两层：
  * 本类守「意图兑现成什么」，`AuthRepositoryImplTest` 的 `DATA LOSS regression`
- * 与 `logout then SAME/DIFFERENT account login` 守「意图有没有选对」。
+ * 守「意图有没有选对」。
  *
  * ## 真实的是什么，mock 的又是什么
  *
@@ -71,6 +75,8 @@ class LocalDataOwnershipImplTest {
     private lateinit var categoryDao: CategoryDao
     private lateinit var accountDao: AccountDao
     private lateinit var notificationDao: NotificationRecordDao
+    private lateinit var categoryRuleDao: CategoryRuleDao
+    private lateinit var appLogDao: AppLogDao
     private lateinit var ownership: LocalDataOwnershipImpl
 
     private val tokenManager: TokenManager = mockk(relaxed = true)
@@ -87,6 +93,8 @@ class LocalDataOwnershipImplTest {
         categoryDao = db.categoryDao()
         accountDao = db.accountDao()
         notificationDao = db.notificationRecordDao()
+        categoryRuleDao = db.categoryRuleDao()
+        appLogDao = db.appLogDao()
 
         ownership = LocalDataOwnershipImpl(
             tokenManager = tokenManager,
@@ -174,15 +182,7 @@ class LocalDataOwnershipImplTest {
         assertRows(1, 1, 1, 2)
     }
 
-    /** 同号重登不排任何东西：没有待上传的行要推。 */
-    @Test
-    fun `same account relogin schedules nothing`() = runTest {
-        seedAllFourTables()
-
-        ownership.dispose(DisposalIntent.SameAccountRelogin)
-
-        assertRows(1, 1, 1, 2)
-    }
+    /** 同号重登不排任何东西：没有待上传的行要推（同号保留由 DATA LOSS regression 钉住）。 */
 
     // ==================== 换号 / 换服务器：同一份 4 表清单 ====================
 
@@ -213,14 +213,24 @@ class LocalDataOwnershipImplTest {
         assertRows(0, 0, 0, 0)
     }
 
-    /** 清空换服务器时同一份清单：4 张表一张不剩。 */
+    /**
+     * 清单是「4 张」而不是「全部」：`category_rules`（本地分类规则）与 `app_logs`
+     * 是设备级/可重建数据，历史上换号时也从未清过。往 `clearOwnedTables` 里多塞一个
+     * `deleteAll()` 本用例立刻红——这是「清单只在一处」最容易出的第二种错。
+     */
     @Test
-    fun `clearing empties every owned table`() = runTest {
+    fun `switching does not touch unmanaged tables (category_rules + app_logs)`() = runTest {
         seedAllFourTables()
+        seedUnmanagedTables()
+        assertEquals(listOf(1, 1), unmanagedCounts())
+
+        ownership.dispose(DisposalIntent.SwitchingAccount)
+        assertRows(0, 0, 0, 0)
+        assertEquals(listOf(1, 1), unmanagedCounts())
 
         ownership.dispose(DisposalIntent.SwitchingServer)
-
         assertRows(0, 0, 0, 0)
+        assertEquals(listOf(1, 1), unmanagedCounts())
     }
 
     // ==================== 夹具 ====================
@@ -265,15 +275,29 @@ class LocalDataOwnershipImplTest {
         )
     }
 
-    /**
-     * 按**表名**数行；顺序固定为「本地用户数据」的清单顺序。
-     */
-    private fun rowCounts(): List<Int> = OWNED_TABLES.map { table ->
+    /** 不在归属清单里的设备级数据，用于验证「换号不碰它们」。 */
+    private suspend fun seedUnmanagedTables() {
+        categoryRuleDao.insertOrUpdate(
+            CategoryRuleEntity(keyword = "午饭", categoryId = 1),
+        )
+        appLogDao.insert(
+            AppLogEntity(level = "INFO", tag = "test", message = "hello"),
+        )
+    }
+
+    private fun countRows(table: String): Int =
         db.query("SELECT COUNT(*) FROM $table", arrayOf<Any?>()).use { cursor ->
             cursor.moveToFirst()
             cursor.getInt(0)
         }
-    }
+
+    /**
+     * 按**表名**数行；顺序固定为「本地用户数据」的清单顺序。
+     */
+    private fun rowCounts(): List<Int> = OWNED_TABLES.map { table -> countRows(table) }
+
+    /** 刻意不属于清单的 2 张表的行数。 */
+    private fun unmanagedCounts(): List<Int> = UNMANAGED_TABLES.map { table -> countRows(table) }
 
     /** 失败信息里带上表名与顺序，否则「第 2 张表没清空」这种问题很难一眼看出来。 */
     private fun assertRows(vararg expected: Int) {
@@ -288,5 +312,8 @@ class LocalDataOwnershipImplTest {
             "accounts",
             "notification_records",
         )
+
+        /** `LocalDataOwnershipImpl` 刻意保留、不随账号变的设备级数据。 */
+        private val UNMANAGED_TABLES = listOf("category_rules", "app_logs")
     }
 }

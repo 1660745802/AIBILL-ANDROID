@@ -83,6 +83,25 @@ class NotificationRuleSourceAdaptersTest {
         assertFalse(InMemoryNotificationRuleSource(rules).snapshot().isKnownSource("com.example.unrelated"))
     }
 
+    /**
+     * 营销词表是两份云控词表的**并集**：sms.spam_keywords 与 nls.default_rule.exclude_content_contains。
+     *
+     * 变异点：把 deriveSnapshot 里的 `spamKeywords + defaultExcludeContent` 改成只取其中一份，
+     * 本用例会红（另一份词表静默失效，营销推送会穿透到 AI）。
+     */
+    @Test
+    @DisplayName("营销词表 = sms.spam_keywords ∪ default_rule.exclude_content_contains")
+    fun `营销词表是两份词表的并集`() {
+        val snapshot = InMemoryNotificationRuleSource(
+            PrefilterTestHarness.rules(
+                spamKeywords = listOf("恭喜"),
+                defaultExcludeContent = listOf("秒杀"),
+            )
+        ).snapshot()
+        assertTrue(snapshot.isMarketing("恭喜您获得奖励"), "sms.spam_keywords 侧应生效")
+        assertTrue(snapshot.isMarketing("限时秒杀"), "default_rule.exclude_content_contains 侧应生效")
+    }
+
     /** 走生产映射把云控 DTO 变成规则模型（同 `NotificationRulesMapping`，不重抄一份）。 */
     private fun cloudRules(): NotificationRules = NotificationRulesMapping.fromDto(
         NotificationRulesDto(

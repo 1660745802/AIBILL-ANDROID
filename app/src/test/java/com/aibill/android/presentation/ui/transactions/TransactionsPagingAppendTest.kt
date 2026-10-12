@@ -125,6 +125,9 @@ class TransactionsPagingAppendTest {
         composeTestRule.waitForIdle()
 
         val requested = source.requestedPages.toList()
+        // 首刷必须真取过第一页，否则下面的断言可能是假阳性
+        assertTrue("必须至少请求过 page 1，实际 $requested", requested.contains(1))
+        // 关键回归：见文件头。只请求了 [1] 就说明渲染里只用了 peek()
         assertTrue(
             "首刷只请求了 $requested。" +
                 "必须还发出了 page 2 的 Append 请求 —— " +
@@ -132,30 +135,5 @@ class TransactionsPagingAppendTest {
                 "Paging 收不到 access hint，列表会永远停在第一批（= 真实事故「翻到底只到当月」）。",
             requested.contains(2),
         )
-    }
-
-    @Test
-    fun `首刷确实只取第一页 —— 验证测试本身有效`() {
-        val pageSize = 20
-        val source = RecordingPagingSource(pageSize = pageSize, totalPages = 5)
-        val pager = Pager(
-            config = PagingConfig(pageSize = pageSize, initialLoadSize = pageSize),
-            pagingSourceFactory = { source },
-        )
-
-        composeTestRule.setContent {
-            val items = pager.flow.collectAsLazyPagingItems()
-            TransactionsPagingList(
-                pagingItems = items,
-                listState = rememberLazyListState(),
-                onItemClick = { },
-                onLongPress = { },
-                modifier = Modifier.height(400.dp),
-            )
-        }
-        composeTestRule.waitForIdle()
-
-        // 第一页一定被请求了 —— 否则上一条测试可能是假阳性
-        assertTrue("必须至少请求过 page 1", source.requestedPages.contains(1))
     }
 }

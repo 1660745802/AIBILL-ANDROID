@@ -103,8 +103,6 @@ class NotificationCenterViewModelTest {
             val event = awaitItem()
             assertEquals("记账失败：分类不存在", (event as NotificationCenterViewModel.UiEvent.ShowToast).message)
         }
-        // 失败不学习：账都没记上，谈不上「用户改对了分类」
-        coVerify(exactly = 0) { learningEngine.learnFromCorrection(any(), any()) }
     }
 
     @Test
@@ -149,6 +147,73 @@ class NotificationCenterViewModelTest {
             val event = awaitItem()
             assertEquals("该笔已确认，请勿重复操作", (event as NotificationCenterViewModel.UiEvent.ShowToast).message)
         }
+        coVerify(exactly = 0) { recordIntake.intake(any()) }
+    }
+
+    @Test
+    fun `confirm with edit success learns the trimmed description with the chosen category`() = runTest {
+        coEvery { reviewQueue.findById(1L) } returns parsedRecord()
+        coEvery { recordIntake.intake(any()) } returns RecordOutcome(clientId = "C-1")
+
+        val viewModel = buildViewModel()
+        viewModel.uiEvent.test {
+            viewModel.confirmWithEdit(
+                id = 1L,
+                type = "expense",
+                amountCents = 100,
+                description = "  午饭  ",
+                categoryId = 7,
+            )
+
+            val event = awaitItem()
+            assertEquals("已记账 ✓", (event as NotificationCenterViewModel.UiEvent.ShowToast).message)
+        }
+        // 学的是用户改对的那一档：描述经 trim、分类是手选的 id
+        coVerify(exactly = 1) { learningEngine.learnFromCorrection("午饭", 7) }
+    }
+
+    @Test
+    fun `confirm with edit failure does not learn and does not claim success`() = runTest {
+        coEvery { reviewQueue.findById(1L) } returns parsedRecord()
+        coEvery { recordIntake.intake(any()) } returns RecordOutcome(
+            clientId = "C-1",
+            failure = RecordFailure.Rejected(422, "分类不存在"),
+        )
+
+        val viewModel = buildViewModel()
+        viewModel.uiEvent.test {
+            viewModel.confirmWithEdit(
+                id = 1L,
+                type = "expense",
+                amountCents = 100,
+                description = "午饭",
+                categoryId = 7,
+            )
+
+            val event = awaitItem()
+            assertEquals("记账失败：分类不存在", (event as NotificationCenterViewModel.UiEvent.ShowToast).message)
+        }
+        // 服务端没确认就是没记上：不许学习（学的是「用户改对了分类」）
+        coVerify(exactly = 0) { learningEngine.learnFromCorrection(any(), any()) }
+    }
+
+    @Test
+    fun `confirm with edit rejects a non-positive amount before reading the queue`() = runTest {
+        val viewModel = buildViewModel()
+        viewModel.uiEvent.test {
+            viewModel.confirmWithEdit(
+                id = 1L,
+                type = "expense",
+                amountCents = 0,
+                description = "午饭",
+                categoryId = 7,
+            )
+
+            val event = awaitItem()
+            assertEquals("请输入有效金额", (event as NotificationCenterViewModel.UiEvent.ShowToast).message)
+        }
+        // 金额闸门在 findById 之前：非法输入连队列都不读（fail-closed）
+        coVerify(exactly = 0) { reviewQueue.findById(any()) }
         coVerify(exactly = 0) { recordIntake.intake(any()) }
     }
 }

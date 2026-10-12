@@ -95,7 +95,7 @@ class TransactionsViewModelTest {
     }
 
     @Test
-    fun `delete failure emits Toast only, no RefreshList`() = runTest {
+    fun `delete failure reports the error, emits nothing else, and clears the undo slot`() = runTest {
         coEvery { transactionRepository.deleteTransaction(42) } returns Result.Error(-1, "网络失败")
 
         viewModel.uiEvent.test {
@@ -106,27 +106,12 @@ class TransactionsViewModelTest {
                 TransactionsViewModel.UiEvent.ShowToast("删除失败: 网络失败"),
                 awaitItem(),
             )
-            expectNoEvents() // 断言失败时无 RefreshList
-        }
-    }
+            expectNoEvents() // 失败时不得再发 RefreshList
 
-    @Test
-    fun `delete failure clears lastDeleted so undo is no-op (regression for sticky undo bug)`() = runTest {
-        coEvery { transactionRepository.deleteTransaction(42) } returns Result.Error(-1, "网络失败")
-
-        viewModel.uiEvent.test {
-            viewModel.onDeleteTransaction(sampleTx)
-            advanceUntilIdle()
-            assertEquals(
-                TransactionsViewModel.UiEvent.ShowToast("删除失败: 网络失败"),
-                awaitItem(),
-            )
-
-            // 删除失败后 lastDeletedTransaction 必须被清空——否则用户撤销一个根本没删成功的项会乱来
+            // 没删成功就没有可撤销的东西：lastDeleted 必须清空，撤销是 no-op
             viewModel.undoDelete()
             advanceUntilIdle()
-
-            expectNoEvents()  // undoDelete 应立刻 return，不发任何事件
+            expectNoEvents()
         }
         coVerify(exactly = 0) { transactionRepository.restoreTransaction(any<Int>()) }
     }
@@ -156,5 +141,47 @@ class TransactionsViewModelTest {
             expectNoEvents()
         }
         coVerify(exactly = 1) { transactionRepository.restoreTransaction(42) }
+    }
+
+    @Test
+    fun `undo failure reports the error and does not refresh the list`() = runTest {
+        coEvery { transactionRepository.deleteTransaction(42) } returns Result.Success(Unit)
+        coEvery { transactionRepository.restoreTransaction(42) } returns Result.Error(-1, "网络失败")
+
+        viewModel.uiEvent.test {
+            // 先制造一次成功删除，拿到可撤销的槽位
+            viewModel.onDeleteTransaction(sampleTx)
+            advanceUntilIdle()
+            assertEquals(TransactionsViewModel.UiEvent.ShowDeleteUndo, awaitItem())
+            assertEquals(TransactionsViewModel.UiEvent.RefreshList, awaitItem())
+
+            viewModel.undoDelete()
+            advanceUntilIdle()
+
+            assertEquals(TransactionsViewModel.UiEvent.ShowToast("撤销失败: 网络失败"), awaitItem())
+            expectNoEvents() // 撤销失败不得谎报「已恢复」，也不该刷新
+        }
+        coVerify(exactly = 1) { transactionRepository.restoreTransaction(42) }
+    }
+
+    @Test
+    fun `deleting a row without an id cannot reach the repository`() = runTest {
+        val noId = sampleTx.copy(id = null)
+
+        viewModel.uiEvent.test {
+            viewModel.onDeleteTransaction(noId)
+            advanceUntilIdle()
+
+            assertEquals(
+                TransactionsViewModel.UiEvent.ShowToast("无法删除：找不到这条记录"),
+                awaitItem(),
+            )
+            expectNoEvents()
+        }
+        coVerify(exactly = 0) { transactionRepository.deleteTransaction(any()) }
+        // lastDeleted 已清空：随后撤销是 no-op，不会去 create
+        viewModel.undoDelete()
+        advanceUntilIdle()
+        coVerify(exactly = 0) { transactionRepository.createTransactions(any()) }
     }
 }

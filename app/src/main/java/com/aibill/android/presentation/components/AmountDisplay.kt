@@ -42,7 +42,9 @@ object AmountFormatter {
      */
     fun toYuanDisplay(amountFen: Int): String {
         val negative = amountFen < 0
-        val abs = Math.abs(amountFen)
+        // abs 必须先升 Long：Int.MIN_VALUE 的 Math.abs 仍是负数（溢出），
+        // 会打印成 --21,474,836.-48。而 yuanTextToFen 越界时正好返回 Int.MIN_VALUE。
+        val abs = Math.abs(amountFen.toLong())
         return (if (negative) "-" else "") +
             "¥" + String.format(Locale.US, "%,d.%02d", abs / 100, abs % 100)
     }
@@ -62,15 +64,15 @@ object AmountFormatter {
         return sign + "¥" + String.format(
             Locale.US,
             "%,d.%02d",
-            Math.abs(amountFen) / 100,
-            Math.abs(amountFen) % 100,
+            Math.abs(amountFen.toLong()) / 100,
+            Math.abs(amountFen.toLong()) % 100,
         )
     }
 
     /** 分 → 千分位无小数（用于超大额的紧凑展示，如 ¥12,345）；负数保留符号 */
     fun toCompactDisplay(amountFen: Int): String {
         val negative = amountFen < 0
-        val abs = Math.abs(amountFen)
+        val abs = Math.abs(amountFen.toLong())
         return (if (negative) "-" else "") +
             "¥" + String.format(Locale.US, "%,d", abs / 100)
     }
@@ -88,7 +90,7 @@ object AmountFormatter {
      */
     fun toAxisLabel(amountFen: Int): String {
         val negative = amountFen < 0
-        val abs = Math.abs(amountFen)
+        val abs = Math.abs(amountFen.toLong())
         val body = if (abs >= WAN_FEN) {
             String.format(Locale.US, "%.1f万", abs / WAN_FEN.toDouble())
         } else {

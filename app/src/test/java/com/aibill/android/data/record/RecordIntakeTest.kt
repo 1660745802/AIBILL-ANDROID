@@ -18,6 +18,7 @@ import com.aibill.android.domain.record.ReceiptPolicy
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakInfo
 import com.aibill.android.domain.usecase.StreakTracker
+import com.aibill.android.service.NotificationRules
 import com.aibill.android.service.NotificationRulesManager
 import com.aibill.android.service.WidgetDataUpdater
 import com.aibill.android.util.NotificationHelper
@@ -26,17 +27,23 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
+import io.mockk.slot
 import io.mockk.unmockkObject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import retrofit2.HttpException
+import retrofit2.Response
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
@@ -44,35 +51,14 @@ import java.util.Locale
 /**
  * 入账 module（[RecordIntake]）的行为测试：**服务端先确认，本地才落库**。
  *
- * ## 为什么 interface 就是测试面
+ * 4 个意图 subtype 是 4 条历史入账路径的全部差异，因此这里逐个钉：
+ * 顺序（submit → write → confirm-record → widget → receipt）、
+ * 只在服务端确认后写入、失败什么都不写、幂等（duplicates 算确认）、
+ * locale 不变（ISO `YYYY-MM-DD`，不是佛历年 / 阿拉伯数字）。
  *
- * 收口前，6 条「记一笔」写入路径各自手写、各自无测试；任何一条不变量的改动要改 6 处，
- * 于是漏过一次——4 条路径用 `SimpleDateFormat(Locale.getDefault())` 落 date/time，
- * 泰语 locale 下写进库的是佛历年 `2569-…`、阿拉伯语 locale 下是阿拉伯数字，
- * 而服务端契约是 `YYYY-MM-DD`。收口后这 6 条路径共用同一个入口，
- * **入口就是全部写入行为的测试面**：字段装配、调用顺序、locale 不变都在这里钉。
- *
- * ## 本类**不用** [com.aibill.android.data.record.DirectRecordWriter]
- *
- * `DirectRecordWriter` 的三步写入（建审计行 → 写缓存行 → 回填 `status` + `linked_client_id`）
- * 由 `DirectRecordWriterTest` **直接驱动**并逐行断言（含两表关联键）。
- * 本类注入的是匿名 `object : RecordWriter`：它只关心入账 module 自己的顺序与字段，
- * 用 fake 记录调用序列（`submit` / `write` / `confirm-record` / `widget` / `receipt`）
- * 才能断言到「AUTO 把 streak 插在落库与刷 widget 之间」这种次序不变量。
- *
- * ⚠️ 因此「第三步真的回填了审计记录」在本类**看不到**——若有人删掉
- * `RecordWriter.applyRecordWrite` 的第三步，本类**仍然全绿**。
- * 这正是收口当时留下的覆盖缺口（类 KDoc 写着「为什么用 DirectRecordWriter」，
- * 代码却注入的是匿名 object），已在架构候选 3 补上。
- *
- * ⚠️ 本类同样**不覆盖**事务回滚（那要 Robolectric/Room 集成测试）；
- * 「三步写在一个事务里」这条由生产 [com.aibill.android.data.record.RoomRecordWriter]
- * 的实现保证，不由本类保证。
- *
- * ## 时钟是注入的
- *
- * 时刻固定为 2026-07-10T12:30:00Z，于是「落库字段对不对」可以被全等断言，
- * 而不是只能断言到「是今天」。locale 不变测试也靠它把「佛历年」这个坑钉死。
+ * 三步写入与两表关联键（`updateStatus(confirmId, "confirmed", pending.clientId)`）
+ * 由 [DirectRecordWriterTest] 直接驱动断言，本类注入匿名 `RecordWriter` 只关心 module 顺序。
+ * locale 用注入时钟（2026-07-10T04:30:00Z = 12:30 +08:00）把「佛历年」的坑钉死。
  */
 @DisplayName("RecordIntake：入账 module 的字段、顺序与 locale 不变")
 class RecordIntakeTest {
@@ -121,8 +107,7 @@ class RecordIntakeTest {
                 calls += "write"
                 val newId = write.newRecord?.also { insertedRecords += it }?.let { 7L }
                 insertedRows += write.pending
-                // 回填既有审计记录这一步由 DirectRecordWriter 做，这里只记顺序
-                // （第三步本身由 DirectRecordWriterTest 断言）
+                // 第三步（回填既有审计行）由 DirectRecordWriterTest 断言，这里只记顺序
                 if (write.confirmRecordId != null || newId != null) calls += "confirm-record"
                 return newId
             }
@@ -154,33 +139,61 @@ class RecordIntakeTest {
         unmockkObject(NotificationHelper)
     }
 
+    // ── 意图构造器（把用例正文压到只剩断言）───────────────────────────
+
+    private fun autoIntent(
+        amount: Int = 3200,
+        categoryId: Int? = 7,
+        description: String? = "午餐",
+    ) = RecordIntent.NotificationAuto(
+        captured = capturedNotification(),
+        amount = amount,
+        type = "expense",
+        categoryId = categoryId,
+        categoryName = "餐饮",
+        categoryIcon = "🍜",
+        description = description,
+    )
+
+    private fun confirmIntent(
+        recordId: Long = 42L,
+        amount: Int = 2500,
+        description: String? = "午饭",
+        learn: Boolean = false,
+    ) = RecordIntent.NotificationConfirm(
+        recordId = recordId,
+        packageName = "com.tencent.mm",
+        amount = amount,
+        type = "expense",
+        description = description,
+        learn = learn,
+    )
+
+    private fun center(
+        recordId: Long = 9L,
+        amount: Int = 100,
+        description: String? = "午饭",
+    ) = RecordIntent.NotificationCenterConfirm(
+        recordId = recordId,
+        packageName = "com.tencent.mm",
+        amount = amount,
+        type = "expense",
+        description = description,
+    )
+
+    private fun capturedNotification() = CapturedNotification(
+        packageName = "com.tencent.mm",
+        title = "微信支付",
+        content = "支付成功 ¥32.00",
+        receivedAt = 1_753_000_000_000L,
+    )
+
     /** 服务端回执：`code==0` + `created[]` 按 `client_id` 回认。 */
     private fun confirmed(request: CreateTransactionRequest): ApiResponse<CreateTransactionResponse> =
         ApiResponse(
             code = 0,
             data = CreateTransactionResponse(
-                created = request.items.map { item ->
-                    TransactionDto(
-                        id = SERVER_ID,
-                        clientId = item.clientId,
-                        type = item.type,
-                        amount = item.amount,
-                        categoryId = item.categoryId,
-                        categoryName = null,
-                        categoryIcon = null,
-                        accountId = item.accountId,
-                        accountName = null,
-                        targetAccountId = item.targetAccountId,
-                        targetAccountName = null,
-                        description = item.description,
-                        date = item.date,
-                        time = item.time,
-                        tags = null,
-                        source = item.source,
-                        createdAt = null,
-                        updatedAt = null,
-                    )
-                },
+                created = request.items.map { dtoFor(it.clientId, it.amount, it.type) },
                 duplicates = emptyList(),
             ),
             message = "ok",
@@ -194,11 +207,25 @@ class RecordIntakeTest {
             message = "ok",
         )
 
-    private fun capturedNotification() = CapturedNotification(
-        packageName = "com.tencent.mm",
-        title = "微信支付",
-        content = "支付成功 ¥32.00",
-        receivedAt = 1_753_000_000_000L,
+    private fun dtoFor(clientId: String, amount: Int = 100, type: String = "expense") = TransactionDto(
+        id = SERVER_ID,
+        clientId = clientId,
+        type = type,
+        amount = amount,
+        categoryId = null,
+        categoryName = null,
+        categoryIcon = null,
+        accountId = null,
+        accountName = null,
+        targetAccountId = null,
+        targetAccountName = null,
+        description = null,
+        date = "2026-07-10",
+        time = "12:30",
+        tags = null,
+        source = null,
+        createdAt = null,
+        updatedAt = null,
     )
 
     private fun onlyRow(): PendingTransactionEntity {
@@ -206,93 +233,35 @@ class RecordIntakeTest {
         return insertedRows.single()
     }
 
+    private fun assertWroteNothing() {
+        assertTrue(insertedRows.isEmpty(), "本地一个字节都不能写")
+        assertTrue(insertedRecords.isEmpty(), "审计行也不能建")
+        assertFalse(calls.contains("write"), "写入器不得被调用")
+    }
+
     // ═══════════════════════════════════════════════════════════════
-    // 顺序不变量：先服务端确认 → 再写本地 → 再发回执
+    // 意图 1：AI 自动入账
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("AI 自动入账：送服务端 → 写库 → 刷 widget → 回执，学习在回执之后")
-    fun `notification auto keeps submit-then-write order`() = runTest {
+    @DisplayName("AI 自动入账：先服务端确认→写库→刷 widget→回执→学习，且只此路径刷 streak")
+    fun `auto keeps order and is the only path with streak and learning`() = runTest {
         coEvery { streakTracker.onTransactionRecorded() } returns StreakInfo()
+        coEvery { learningEngine.matchCategory(any()) } returns 3
 
-        intake.intake(
-            RecordIntent.NotificationAuto(
-                captured = capturedNotification(),
-                amount = 3200,
-                type = "expense",
-                categoryId = 7,
-                categoryName = "餐饮",
-                categoryIcon = "🍜",
-                description = "午餐",
-            )
-        )
+        val outcome = intake.intake(autoIntent())
 
+        // 顺序：服务端确认 → 跨表写入（含回填审计行）→ 刷 widget → 发回执；学习在回执之后
         assertEquals(listOf("submit", "write", "confirm-record", "widget", "receipt"), calls)
-        // streak 只在这一条路径刷，且在落库之后、刷 widget 之前
         coVerify(exactly = 1) { streakTracker.onTransactionRecorded() }
-    }
+        // 不预测：学习命中在 NotificationProcessor 里就算好了，挪进来会改变待审/入库判定
+        coVerify(exactly = 0) { learningEngine.matchCategory(any()) }
+        coVerify(exactly = 1) { learningEngine.learnFromCorrection("午餐", 7) }
 
-    @Test
-    @DisplayName("弹窗确认 / 通知中心单条确认：同样是先服务端确认再写本地")
-    fun `confirm intents keep submit-then-write order`() = runTest {
-        intake.intake(
-            RecordIntent.NotificationConfirm(
-                recordId = 42L,
-                packageName = "com.tencent.mm",
-                amount = 100,
-                type = "expense",
-                description = "午饭",
-                learn = false,
-            )
-        )
-        assertEquals(listOf("submit", "write", "confirm-record", "widget", "receipt"), calls)
-
-        calls.clear()
-        intake.intake(
-            RecordIntent.NotificationCenterConfirm(
-                recordId = 43L,
-                packageName = "com.tencent.mm",
-                amount = 100,
-                type = "expense",
-                description = "午饭",
-            )
-        )
-        assertEquals(listOf("submit", "write", "confirm-record", "widget"), calls)
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // 意图 1：AI 自动入账（NotificationProcessor.directInsert）
-    // ═══════════════════════════════════════════════════════════════
-
-    @Test
-    @DisplayName("AI 自动入账：写全字段 + 新建审计记录 + 回填 clientId")
-    fun `notification auto writes the full row`() = runTest {
-        val outcome = intake.intake(
-            RecordIntent.NotificationAuto(
-                captured = capturedNotification(),
-                amount = 3200,
-                type = "expense",
-                categoryId = 7,
-                categoryName = "餐饮",
-                categoryIcon = "🍜",
-                description = "午餐",
-            )
-        )
-
+        // 服务端确认后才写；本地缓存只装已确认的那一笔
         val row = onlyRow()
         assertEquals(outcome.clientId, row.clientId)
-        // 新建审计行的 id 要随结果回传（它就是回执的通知 id / 撤销的定位键）
-        assertEquals(7L, outcome.recordId)
-        assertTrue(outcome.recorded, "服务端确认了才算记上")
         assertTrue(row.clientId.isNotBlank(), "clientId 是幂等与撤销的唯一凭据")
-        assertEquals(3200, row.amount)
-        assertEquals("expense", row.type)
-        assertEquals(7, row.categoryId)
-        assertEquals("餐饮", row.categoryName)
-        assertEquals("🍜", row.categoryIcon)
-        assertEquals("午餐", row.description)
-        assertEquals("app_notification", row.source)
-        assertEquals("微信支付", row.sourceDetail)
         assertEquals("synced", row.syncStatus)
         assertEquals(SERVER_ID, row.serverTransactionId)
         assertEquals("2026-07-10", row.date)
@@ -300,123 +269,90 @@ class RecordIntakeTest {
         assertEquals(fixedInstant.toString(), row.clientCreatedAt)
         assertNull(row.aiRawInput)
 
-        // 新建审计记录（status 直接是 confirmed），随后回填 linked_client_id
+        // 新建审计行直接 confirmed，id 随结果回传（回执通知 id / 撤销定位键）
+        assertEquals(7L, outcome.recordId)
+        assertTrue(outcome.recorded)
         assertEquals(1, insertedRecords.size)
         val record = insertedRecords.single()
-        assertEquals("com.tencent.mm", record.packageName)
-        assertEquals("微信支付", record.title)
-        assertEquals("支付成功 ¥32.00", record.content)
-        assertEquals(3200, record.parsedAmount)
         assertEquals("confirmed", record.status)
+        assertEquals(3200, record.parsedAmount)
+        assertEquals("支付成功 ¥32.00", record.content)
     }
 
     @Test
-    @DisplayName("AI 自动入账：只这条路径刷 streak / 读隐私档 / 学分类")
-    fun `notification auto is the only path with streak privacy and learning`() = runTest {
-        coEvery { learningEngine.matchCategory(any()) } returns 3
-        coEvery { streakTracker.onTransactionRecorded() } returns StreakInfo()
-
-        intake.intake(
-            RecordIntent.NotificationAuto(
-                captured = capturedNotification(),
-                amount = 3200,
-                type = "expense",
-                categoryId = 7,
-                description = "午餐",
+    @DisplayName("回执隐私档：AI 自动读用户偏好，弹窗确认写死 false")
+    fun `auto reads privacy preference while confirm hardcodes false`() = runTest {
+        every { userPreferences.notificationPrivacy } returns flowOf(true)
+        val privacy = slot<Boolean>()
+        every {
+            NotificationHelper.showAutoRecordedNotification(
+                any(), any(), any(), any(), any(), capture(privacy), any(), any(),
             )
-        )
+        } answers { calls += "receipt"; Unit }
 
-        // 不预测分类：学习命中在 NotificationProcessor.process() 里就算好了，
-        // 且它还参与「信息是否完整」的判定，挪进 module 会改变待审/入库判定
-        coVerify(exactly = 0) { learningEngine.matchCategory(any()) }
-        coVerify(exactly = 1) { learningEngine.learnFromCorrection("午餐", 7) }
-        coVerify(exactly = 1) { streakTracker.onTransactionRecorded() }
+        intake.intake(autoIntent())
+        assertTrue(privacy.captured, "AI 自动入账必须读隐私档")
+
+        intake.intake(confirmIntent())
+        assertFalse(privacy.captured, "弹窗确认回执隐私档写死 false")
     }
 
     @Test
-    @DisplayName("回执策略由意图决定：auto / confirm-receipt / none")
-    fun `receipt policy is decided by the intent`() {
-        assertEquals(
-            ReceiptPolicy.AUTO,
-            RecordIntent.NotificationAuto(capturedNotification(), 1, "expense", null, description = null).receipt,
-        )
-        assertEquals(
-            ReceiptPolicy.CONFIRM_RECEIPT,
-            RecordIntent.NotificationConfirm(1L, "p", 1, "expense", null, learn = false).receipt,
-        )
-        assertEquals(
-            ReceiptPolicy.NONE,
-            RecordIntent.NotificationCenterConfirm(1L, "p", 1, "expense", null).receipt,
-        )
-        assertEquals(
-            ReceiptPolicy.NONE,
-            RecordIntent.ExternalQuickRecord(1, "expense", null).receipt,
-        )
+    @DisplayName("来源名映射：AI 自动走云控，弹窗确认走硬编码——历史差异保留")
+    fun `auto reads the cloud source mapping while confirm uses the hardcoded one`() = runTest {
+        val cloudRules = mockk<NotificationRules>(relaxed = true)
+        every { cloudRules.sourceMapping } returns mapOf("com.tencent.mm" to "微信云控")
+        every { rulesManager.getRules() } returns cloudRules
+
+        intake.intake(autoIntent())
+        assertEquals("微信云控", onlyRow().sourceDetail)
+
+        insertedRows.clear()
+        intake.intake(confirmIntent())
+        assertEquals("微信支付", insertedRows.single().sourceDetail)
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 意图 2：弹窗确认 / 弹窗带备注确认（NotificationActionReceiver）
+    // 意图 2：弹窗确认 / 弹窗带备注确认
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("弹窗确认：预测分类但不学习、隐私写死 false、不写分类 name/icon")
-    fun `notification confirm predicts but does not learn`() = runTest {
+    @DisplayName("弹窗确认：先服务端确认再写库，预测分类但不学习，只写 category_id")
+    fun `confirm keeps order and predicts without learning`() = runTest {
         coEvery { learningEngine.matchCategory("午饭") } returns 5
 
-        intake.intake(
-            RecordIntent.NotificationConfirm(
-                recordId = 42L,
-                packageName = "com.tencent.mm",
-                amount = 2500,
-                type = "expense",
-                description = "午饭",
-                learn = false,
-            )
-        )
+        intake.intake(confirmIntent())
 
+        assertEquals(listOf("submit", "write", "confirm-record", "widget", "receipt"), calls)
         coVerify(exactly = 1) { learningEngine.matchCategory("午饭") }
         // handleConfirm 的历史行为就是不学习，与带备注确认的差异保留
         coVerify(exactly = 0) { learningEngine.learnFromCorrection(any(), any()) }
 
         val row = onlyRow()
         assertEquals(5, row.categoryId)
-        // 只写分类 id，不写 name/icon（与手工记账写冗余 name/icon 的差异保留）
+        // 只写分类 id，不写 name/icon（与手工记账 / 通知中心写冗余 name/icon 的差异保留）
         assertNull(row.categoryName)
         assertNull(row.categoryIcon)
-        // 弹窗确认读**硬编码**来源名映射（不带云控），与 AI 自动路径的差异保留
-        assertEquals("微信支付", row.sourceDetail)
         assertEquals("app_notification", row.source)
-        assertEquals("2026-07-10", row.date)
-        assertEquals("12:30", row.time)
     }
 
     @Test
-    @DisplayName("弹窗带备注确认：同样预测分类，并额外学习")
-    fun `notification confirm with note learns`() = runTest {
+    @DisplayName("弹窗带备注确认：额外学习，且用 trim 后的描述")
+    fun `confirm with note learns the trimmed description`() = runTest {
         coEvery { learningEngine.matchCategory("  公司食堂  ") } returns 5
 
-        intake.intake(
-            RecordIntent.NotificationConfirm(
-                recordId = 42L,
-                packageName = "com.tencent.mm",
-                amount = 2500,
-                type = "expense",
-                description = "  公司食堂  ",
-                learn = true,
-            )
-        )
+        intake.intake(confirmIntent(description = "  公司食堂  ", learn = true))
 
-        // 学习用的是 trim 后的描述（与原 handleConfirmWithNote 一致）
         coVerify(exactly = 1) { learningEngine.learnFromCorrection("公司食堂", 5) }
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 意图 3：通知中心单条 / 批量确认（NotificationCenterViewModel）
+    // 意图 3：通知中心单条 / 批量确认
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("通知中心确认：不预测、不学习、不发回执，标签逗号拼接")
-    fun `notification center confirm never predicts nor learns`() = runTest {
+    @DisplayName("通知中心确认：不预测不学习无回执，冗余写分类 name/icon，标签逗号拼接")
+    fun `center confirm never predicts nor learns`() = runTest {
         intake.intake(
             RecordIntent.NotificationCenterConfirm(
                 recordId = 9L,
@@ -431,58 +367,32 @@ class RecordIntakeTest {
             )
         )
 
+        // 无 "receipt"：用户已经在界面上看到结果
+        assertEquals(listOf("submit", "write", "confirm-record", "widget"), calls)
         coVerify(exactly = 0) { learningEngine.matchCategory(any()) }
         coVerify(exactly = 0) { learningEngine.learnFromCorrection(any(), any()) }
-        assertFalse(calls.contains("receipt"), "通知中心确认不另发回执：用户已经在界面上看到结果")
 
         val row = onlyRow()
         assertEquals(3, row.categoryId)
         assertEquals("交通", row.categoryName)
         assertEquals("🚗", row.categoryIcon)
         assertEquals("出差,报销", row.tags)
-        assertEquals("synced", row.syncStatus)
-        assertEquals(SERVER_ID, row.serverTransactionId)
     }
 
     @Test
-    @DisplayName("批量确认：逐笔各自送服务端，成功几笔就如实报几笔")
+    @DisplayName("批量确认：逐笔各自送服务端、成功几笔如实报几笔；无新建审计行 id 可回传")
     fun `batch confirm reports per record`() = runTest {
         val outcomes = (0 until 3).map { i ->
-            intake.intake(
-                RecordIntent.NotificationCenterConfirm(
-                    recordId = i.toLong(),
-                    packageName = "com.tencent.mm",
-                    amount = 100 * (i + 1),
-                    type = "expense",
-                    description = "第 $i 笔",
-                )
-            )
+            intake.intake(center(recordId = i.toLong(), amount = 100 * (i + 1), description = "第 $i 笔"))
         }
 
         assertTrue(outcomes.all { it.recorded }, "全部成功时不得报失败")
+        assertTrue(outcomes.all { it.recordId == null }, "通知中心确认不改既有审计行，没有 id 可回传")
+        assertTrue(outcomes.all { it.failure == null })
         assertEquals(3, insertedRows.size)
-        assertEquals(3, calls.count { it == "widget" })
         // 每笔都各自送了一次服务端（幂等靠 client_id，不靠「攒一批」）
         assertEquals(3, calls.count { it == "submit" })
-    }
-
-    @Test
-    @DisplayName("单条确认：服务端确认后 recorded=true，且不回传新建审计行 id")
-    fun `single confirm reports recorded`() = runTest {
-        val single = intake.intake(
-            RecordIntent.NotificationCenterConfirm(
-                recordId = 1L,
-                packageName = "com.tencent.mm",
-                amount = 100,
-                type = "expense",
-                description = "单条",
-            )
-        )
-
-        assertTrue(single.recorded)
-        assertNull(single.failure)
-        // 通知中心确认不改既有审计行 → 没有新建的审计 id 可回传
-        assertNull(single.recordId)
+        assertEquals(3, calls.count { it == "widget" })
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -490,94 +400,120 @@ class RecordIntakeTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("服务端未回执 created：不写缓存、不写审计行、不发回执，失败原样带回")
-    fun `no server confirmation means nothing is written`() = runTest {
+    @DisplayName("服务端没确认：业务错误 / 未回执 / 没网都一行不写、不发回执")
+    fun `failure paths write nothing and report the reason`() = runTest {
+        // code==0 却两个回执列表都没这条
+        coEvery { transactionApi.createTransactions(any()) } answers { calls += "submit"; unconfirmed() }
+        var outcome = intake.intake(autoIntent())
+        assertTrue(outcome.failure is RecordFailure.Rejected, "code==0 却没回执 = 服务端没确认")
+        assertNull(outcome.recordId, "没确认就没有审计行 id 可回传")
+        assertWroteNothing()
+
+        // 业务错误：code 原样带回
         coEvery { transactionApi.createTransactions(any()) } answers {
             calls += "submit"
-            unconfirmed()
+            ApiResponse(code = 422, data = null, message = "金额必须大于 0")
         }
+        outcome = intake.intake(center(recordId = 9L))
+        assertEquals(422, (outcome.failure as RecordFailure.Rejected).code)
+        assertWroteNothing()
 
-        val outcome = intake.intake(
-            RecordIntent.NotificationAuto(
-                captured = capturedNotification(),
-                amount = 3200,
-                type = "expense",
-                categoryId = 7,
-                description = "午餐",
-            )
-        )
+        // 请求根本没送达
+        coEvery { transactionApi.createTransactions(any()) } throws java.io.IOException("no route")
+        outcome = intake.intake(RecordIntent.ExternalQuickRecord(amount = 100, type = "expense", description = "午饭"))
+        assertEquals(RecordFailure.Offline, outcome.failure)
+        assertEquals("没网，记不上", RecordFailure.Offline.userMessage)
+        assertWroteNothing()
 
-        assertFalse(outcome.recorded)
-        val failure = outcome.failure
-        assertTrue(failure is RecordFailure.Rejected, "code==0 却没回执 = 服务端没确认")
-        assertNull(outcome.recordId, "没确认就没有审计行 id 可回传")
-        assertTrue(insertedRows.isEmpty(), "本地一个字节都不能写")
-        assertTrue(insertedRecords.isEmpty(), "审计行也不能建")
-        assertFalse(calls.contains("write"), "写入器不得被调用")
         assertFalse(calls.contains("receipt"), "没记上就不许发「已记录」回执")
         assertFalse(calls.contains("widget"), "没记上就不刷统计")
-        // 通知中心确认（弹窗/通知中心共用的失败面）同样什么都不写
-        calls.clear()
-        val confirmOutcome = intake.intake(
-            RecordIntent.NotificationCenterConfirm(
-                recordId = 9L,
-                packageName = "com.tencent.mm",
-                amount = 100,
-                type = "expense",
-                description = "午饭",
-            )
-        )
-        assertFalse(confirmOutcome.recorded)
-        assertTrue(insertedRows.isEmpty())
-        assertFalse(calls.contains("write"))
-        assertFalse(calls.contains("widget"))
     }
 
     @Test
-    @DisplayName("服务端把这一笔回在 duplicates[] 里也算确认：落缓存、不发失败回执")
-    fun `duplicates count as server confirmation`() = runTest {
-        // RetryInterceptor 对 IOException 会重发同一个 body：首次请求其实已落库、
-        // 只是响应丢了，重发拿到的就是 duplicates[]。判成失败 = 谎报「没记上」，
-        // 用户重记（新 clientId）= 重复账。
+    @DisplayName("duplicates 按 client_id 匹配才算确认：匹配=记上，不匹配=没确认")
+    fun `duplicates count only when the clientId matches`() = runTest {
+        // RetryInterceptor 对 IOException 重发同一 body：首次其实已落库，重发拿到 duplicates[]
         coEvery { transactionApi.createTransactions(any()) } answers {
             calls += "submit"
             duplicatesApiResponse(firstArg())
         }
 
-        val outcome = intake.intake(
-            RecordIntent.NotificationConfirm(
-                recordId = 42L,
-                packageName = "com.tencent.mm",
-                amount = 2500,
-                type = "expense",
-                description = "午饭",
-                learn = false,
-            )
-        )
+        val outcome = intake.intake(confirmIntent())
 
         assertTrue(outcome.recorded, "服务端已有这笔 = 记上了")
-        assertNull(outcome.failure)
         val row = onlyRow()
+        // 两表关联键：写进缓存的 clientId 就是服务端回认、撤销定位用的那一个
+        assertEquals(outcome.clientId, row.clientId)
         assertEquals("synced", row.syncStatus)
         assertEquals(SERVER_ID, row.serverTransactionId)
-        // 确认路径照常：写库 + 审计行回填 + 刷 widget + 轻回执
         assertTrue(calls.contains("write"))
         assertTrue(calls.contains("receipt"))
+
+        // duplicates 里是**别的** clientId：不算确认，什么都不写
+        calls.clear()
+        insertedRows.clear()
+        insertedRecords.clear()
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            calls += "submit"
+            ApiResponse(
+                code = 0,
+                data = CreateTransactionResponse(created = emptyList(), duplicates = listOf(dtoFor("someone-else"))),
+                message = "ok",
+            )
+        }
+        val missed = intake.intake(confirmIntent())
+        assertTrue(missed.failure is RecordFailure.Rejected, "匹配必须按 client_id，不能只看 duplicates 非空")
+        assertWroteNothing()
     }
 
     @Test
-    @DisplayName("请求根本没送达：失败原因标成网络不可达（RecordFailure.Offline），同样什么都不写")
-    fun `network failure is reported as connectivity failure and writes nothing`() = runTest {
-        coEvery { transactionApi.createTransactions(any()) } throws java.io.IOException("no route")
+    @DisplayName("判定顺序：业务错误码优先于回执匹配")
+    fun `business error code wins over a matching receipt`() = runTest {
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            calls += "submit"
+            val request = firstArg<CreateTransactionRequest>()
+            ApiResponse(
+                code = 5001,
+                data = CreateTransactionResponse(created = listOf(dtoFor(request.items[0].clientId)), duplicates = emptyList()),
+                message = "系统繁忙",
+            )
+        }
 
-        val outcome = intake.intake(
-            RecordIntent.ExternalQuickRecord(amount = 100, type = "expense", description = "午饭"),
-        )
+        val outcome = intake.intake(confirmIntent())
 
-        assertEquals(RecordFailure.Offline, outcome.failure)
-        assertFalse(outcome.recorded)
-        assertTrue(insertedRows.isEmpty())
-        assertEquals("没网，记不上", RecordFailure.Offline.userMessage)
+        // 业务码分支必须先于回执匹配：否则一条 code!=0 的回执里若碰巧带了匹配 id，
+        // 就会被当成「记上了」。服务端 message 也要原样透出。
+        assertEquals(5001, (outcome.failure as RecordFailure.Rejected).code)
+        assertEquals("系统繁忙", (outcome.failure as RecordFailure.Rejected).reason)
+        assertWroteNothing()
+    }
+
+    @Test
+    @DisplayName("HTTP 错误：映射成携带 HTTP 状态码的 Rejected，不谎报没网")
+    fun `http failure is rejected with its http code`() = runTest {
+        coEvery { transactionApi.createTransactions(any()) } throws
+            HttpException(Response.error<Any>(500, "{}".toResponseBody(null)))
+
+        val outcome = intake.intake(autoIntent())
+
+        assertEquals(500, (outcome.failure as RecordFailure.Rejected).code)
+        assertWroteNothing()
+    }
+
+    @Test
+    @DisplayName("取消必须原样传播，不能被当成记账失败吞掉")
+    fun `cancellation propagates instead of being swallowed`() = runTest {
+        coEvery { transactionApi.createTransactions(any()) } throws CancellationException("cancelled")
+
+        var propagated: CancellationException? = null
+        try {
+            intake.intake(autoIntent())
+        } catch (e: CancellationException) {
+            propagated = e
+        }
+
+        assertNotNull(propagated, "取消必须原样抛出")
+        assertWroteNothing()
     }
 
     @Test
@@ -593,15 +529,7 @@ class RecordIntakeTest {
             }
         }
 
-        val outcome = buildIntake(silentWriter).intake(
-            RecordIntent.NotificationAuto(
-                captured = capturedNotification(),
-                amount = 3200,
-                type = "expense",
-                categoryId = 7,
-                description = "午餐",
-            )
-        )
+        val outcome = buildIntake(silentWriter).intake(autoIntent())
 
         assertNull(outcome.recordId, "拿不到 id 就如实返回 null")
         assertFalse(calls.contains("receipt"), "没有 id 就不发回执：宁可没有回执，也不能盖掉真实通知")
@@ -611,14 +539,7 @@ class RecordIntakeTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 意图 4：外部 Intent 静默入账（ExternalActionReceiver）
-    //
-    // 这两条断言原先住在 `ExternalActionReceiverTest`，直接调接收器上的
-    // `internal suspend fun handleAutoConfirmRecord`——那是为绕开 Hilt 门禁
-    // （`Hilt_ExternalActionReceiver.onReceive` / `goAsync()` 都会 `inject()`）
-    // 而留的后门。候选 5 撤掉后门：写入逻辑本来就在本 module 里，用例随之搬到这里。
-    // 接收器里剩下的「权限被拒 / autoConfirm=false 不写库」两条分支**仍不可测**
-    // （它们需要 `@HiltAndroidApp` 的 Application），见 ARCHITECTURE §11.3。
+    // 意图 4：外部 Intent 静默入账
     // ═══════════════════════════════════════════════════════════════
 
     @Test
@@ -629,23 +550,18 @@ class RecordIntakeTest {
         )
 
         assertEquals(listOf("submit", "write"), calls)
-        // 不刷 widget（其余通知路径都刷）——原实现就没有刷，保留
+        // 不刷 widget、不翻审计表（其余通知路径都刷）
         assertFalse(calls.contains("widget"))
-        // 不翻审计表
         assertTrue(insertedRecords.isEmpty())
 
         val row = onlyRow()
-        // 意图载荷原样落库：外部 Intent 的金额/类型/描述不能被同步逻辑改动
         assertEquals(2590, row.amount)
         assertEquals("expense", row.type)
         assertEquals("咖啡", row.description)
         assertEquals(outcome.clientId, row.clientId)
-        // clientId 是撤销与幂等的唯一凭据（AutoRecordActionReceiver 按它查行），
-        // 空值会让这笔账永远无法被撤销。
         assertTrue(row.clientId.isNotBlank())
         assertEquals("external_intent", row.source)
-        // 来源标记的**具体值**：tasker_quick_record 是 AutoRecord 与本入口的区分依据，
-        // 丢了它两类记录在服务端就分不出来。
+        // 来源标记的具体值：tasker_quick_record 是 AutoRecord 与本入口的区分依据
         assertEquals("tasker_quick_record", row.sourceDetail)
         assertEquals("synced", row.syncStatus)
         assertEquals("2026-07-10", row.date)
@@ -654,77 +570,41 @@ class RecordIntakeTest {
         assertEquals("2026-07-10T12:30", row.clientCreatedAt)
     }
 
-    @Test
-    @DisplayName("静默入账：服务端拒绝时一行都不写，失败也不抛出去")
-    fun `external quick record writes nothing when the server rejects`() = runTest {
-        coEvery { transactionApi.createTransactions(any()) } answers {
-            calls += "submit"
-            ApiResponse(code = 422, data = unconfirmed().data, message = "金额必须大于 0")
-        }
-
-        // 不抛即通过：静默入账跑在 ApplicationScope 上，异常逃出去 = 崩进程
-        // （本工程没有全局 CoroutineExceptionHandler）。
-        val outcome = intake.intake(
-            RecordIntent.ExternalQuickRecord(amount = 100, type = "expense", description = "午饭"),
-        )
-
-        assertFalse(outcome.recorded)
-        val failure = outcome.failure
-        assertTrue(failure is RecordFailure.Rejected)
-        assertEquals(422, (failure as RecordFailure.Rejected).code)
-        assertTrue(insertedRows.isEmpty(), "服务端没确认就一行都不能落")
-        assertFalse(calls.contains("write"))
-    }
-
     // ═══════════════════════════════════════════════════════════════
-    // locale 不变：这是本切片存在的核心理由
+    // 回执策略 + locale 不变
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("泰语 locale 下落库日期仍是 ISO 年份，不是佛历年 2569")
-    fun `thai locale still yields ISO gregorian year`() = runTest {
-        withDefaultLocale(Locale("th", "TH")) {
-            intake.intake(
-                RecordIntent.NotificationConfirm(
-                    recordId = 1L,
-                    packageName = "com.tencent.mm",
-                    amount = 100,
-                    type = "expense",
-                    description = "午饭",
-                    learn = false,
-                )
-            )
-        }
-
-        val date = onlyRow().date
-        // 佛历年日历下 SimpleDateFormat("yyyy-MM-dd", th-TH) 会写进 "2569-07-10"
-        assertFalse(date.startsWith("2569"), "落库日期不能是佛历年：$date")
-        assertEquals("2026-07-10", date)
-        // 必须能被 ISO 解析器读回来（服务端按 YYYY-MM-DD 解析）
-        assertEquals(2026, java.time.LocalDate.parse(date).year)
+    @DisplayName("回执策略由意图决定：auto / confirm-receipt / none")
+    fun `receipt policy is decided by the intent`() {
+        assertEquals(ReceiptPolicy.AUTO, autoIntent().receipt)
+        assertEquals(ReceiptPolicy.CONFIRM_RECEIPT, confirmIntent().receipt)
+        assertEquals(ReceiptPolicy.NONE, center().receipt)
+        assertEquals(ReceiptPolicy.NONE, RecordIntent.ExternalQuickRecord(1, "expense", null).receipt)
     }
 
     @Test
-    @DisplayName("阿拉伯语 locale 下落库日期/时间仍是 ASCII 数字")
-    fun `arabic locale still yields ascii digits`() = runTest {
-        withDefaultLocale(Locale("ar", "EG")) {
-            intake.intake(
-                RecordIntent.NotificationCenterConfirm(
-                    recordId = 1L,
-                    packageName = "com.tencent.mm",
-                    amount = 100,
-                    type = "expense",
-                    description = "午饭",
-                )
-            )
-        }
+    @DisplayName("泰语 / 阿拉伯语 locale 下落库日期仍是 ISO 公历、ASCII 数字")
+    fun `non gregorian locales still yield ISO ascii date and time`() = runTest {
+        mapOf(
+            Locale("th", "TH") to "2569", // 佛历年
+            Locale("ar", "EG") to "٢٠٢٦", // 阿拉伯数字
+        ).forEach { (locale, localizedYear) ->
+            insertedRows.clear()
+            withDefaultLocale(locale) {
+                intake.intake(confirmIntent())
+            }
 
-        val row = onlyRow()
-        assertEquals("2026-07-10", row.date)
-        assertEquals("12:30", row.time)
-        // 阿拉伯语 locale 下 SimpleDateFormat 会写出 ٢٠٢٦-٠٧-١٠，必须一个非 ASCII 字符都不剩
-        assertTrue(row.date.all { it.code < 128 }, "落库日期必须全是 ASCII：${row.date}")
-        assertTrue((row.time ?: "").all { it.code < 128 }, "落库时间必须全是 ASCII：${row.time}")
+            val row = onlyRow()
+            val date = row.date
+            assertFalse(date.startsWith(localizedYear), "locale=$locale 落库日期不能本地化：$date")
+            assertEquals("2026-07-10", date)
+            assertEquals("12:30", row.time)
+            assertTrue(date.all { it.code < 128 }, "落库日期必须全是 ASCII：$date")
+            assertTrue((row.time ?: "").all { it.code < 128 }, "落库时间必须全是 ASCII：${row.time}")
+            // 服务端按 ISO YYYY-MM-DD 解析
+            assertEquals(2026, java.time.LocalDate.parse(date).year)
+        }
     }
 
     private companion object {

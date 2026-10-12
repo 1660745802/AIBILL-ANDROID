@@ -126,21 +126,21 @@ class NotificationRulesManagerTest {
     }
 
     @Test
-    @DisplayName("5. fetchRules() 非200状态码 → 不更新SP")
+    @DisplayName("5. fetchRules() 非200状态码（503）→ Failed 带状态码且不更新SP")
     fun fetchRules_non200_noUpdate() = runTest {
         every { prefs.getString(any(), any()) } returns null
 
-        // 模拟 500 错误
         coEvery { api.getRules(any()) } returns Response.error(
-            500,
-            okhttp3.ResponseBody.create(null, "Internal Server Error")
+            503,
+            okhttp3.ResponseBody.create(null, "Service Unavailable")
         )
 
         io.mockk.clearMocks(editor, answers = false)
-        val result = manager.fetchRules()
+        val result = manager.fetchRules() as NotificationRulesManager.RulesFetchResult.Failed
 
+        // 错误文案要能告诉用户哪一侧出错（失败也必须带码，不能默吞）
+        assertTrue(result.message.contains("503"))
         verify(exactly = 0) { editor.putString("notification_rules_json", any()) }
-        assertTrue(result is NotificationRulesManager.RulesFetchResult.Failed)
     }
 
     @Test
@@ -203,17 +203,23 @@ class NotificationRulesManagerTest {
     }
 
     @Test
-    @DisplayName("9. fetchRules() 500 → Failed 且带状态码")
-    fun fetchRules_500_reportsFailedWithCode() = runTest {
+    @DisplayName("9. fetchRules() 失败时保留已生效规则（fail-closed，不清回默认）")
+    fun fetchRules_failure_keepsCachedRules() = runTest {
+        val dto = makeMinimalDto()
         every { prefs.getString(any(), any()) } returns null
-        coEvery { api.getRules(any()) } returns Response.error(
-            503,
-            okhttp3.ResponseBody.create(null, "Service Unavailable")
+        coEvery { api.getRules(any()) } returns Response.success(
+            NotificationRulesResponse(code = 0, data = NotificationRulesData(version = 2, updatedAt = null, rules = dto)),
         )
+        manager.fetchRules()
+        val cached = manager.getRules()
+        assertEquals("支付成功", cached.a11y.successKeywords.first())
 
-        val result = manager.fetchRules() as NotificationRulesManager.RulesFetchResult.Failed
+        // 第二次拉取断网：云控挂了不能把本地已生效的规则清回默认值
+        coEvery { api.getRules(any()) } throws java.io.IOException("offline")
+        val result = manager.fetchRules()
 
-        assertTrue(result.message.contains("503"))
+        assertTrue(result is NotificationRulesManager.RulesFetchResult.Failed)
+        assertEquals(cached, manager.getRules())
     }
 
     @Test
