@@ -1,0 +1,136 @@
+{
+  "source": "GET /api/config/notification-rules → data.rules.precheck（原样，未裁剪/未重排）",
+  "content_hash": "4a74ba0a13aef8dc22a37bc01ad99ebaeb1c665054366f31bc95d6f0f8c1f391",
+  "version": 1,
+  "corpus_hash": "025e7de0a94002cead2472031b250a570865231bc18bcf8a25a11cd1e152afe6",
+  "precheck": {
+    "schema": 1,
+    "derived_from": "src/ai/verify.ts",
+    "channel_agnostic": true,
+    "signals": {
+      "money": {
+        "pattern": "[¥￥]\\s*((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))(?!\\d)|(?:人民币|RMB|CNY)\\s*((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))(?!\\d)|(?<![\\d.,])((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))\\s*(?:元|圆|块钱|块|人民币|RMB|CNY)(?!\\d)",
+        "flags": "gi"
+      },
+      "verb": {
+        "pattern": "(?:支付成功|付款成功|已支付|扣款|扣费|消费|到账|入账|收款|转账|退款|缴费|还款|充值|代扣|已付|支出|付款|免密|快捷支付|动账|入账工资|报销|退货)",
+        "flags": ""
+      },
+      "bare_amount": {
+        "pattern": "(?<![\\d.])\\d{2,}(?:\\.\\d{1,2})?(?![\\d.])",
+        "flags": ""
+      },
+      "bare_amount_max_len": 30
+    },
+    "rules": [
+      {
+        "id": "precheck.social_redpacket",
+        "tier": 0,
+        "type": "regex",
+        "pattern": "\\[(?:QQ|微信|支付宝)红包\\]|群发红包|口令红包|红包\\s*[:：]",
+        "flags": "",
+        "desc": "强噪声（social_redpacket）：命中即不调模型，即使文本里有金额"
+      },
+      {
+        "id": "precheck.coupon_facevalue",
+        "tier": 0,
+        "type": "regex",
+        "pattern": "立减金|(?:(?:红包|券|京东卡|购物卡|礼品卡|卡券)[\\s\\S]{0,20}?(?:最高减|满减|直减|领取|去领|获得|恭喜|受邀|优惠|专属|失效|过期|作废|到期|待领|即将|名额有限|点击参与)|(?:最高减|满减|直减|恭喜|受邀|专属优惠|名额有限)[\\s\\S]{0,20}?(?:红包|券|京东卡|购物卡|礼品卡))",
+        "flags": "",
+        "desc": "强噪声（coupon_facevalue）：命中即不调模型，即使文本里有金额"
+      },
+      {
+        "id": "precheck.reward_ad",
+        "tier": 0,
+        "type": "regex",
+        "pattern": "(?:访谈|调研|问卷|招募|寻找玩家|内测|公测|试玩|招募令|任务奖励|领取奖励|加群|扫码进群|推广|代理|加盟)",
+        "flags": "",
+        "desc": "强噪声（reward_ad）：命中即不调模型，即使文本里有金额"
+      },
+      {
+        "id": "precheck.self_report",
+        "tier": 0,
+        "type": "regex",
+        "pattern": "记账日报|昨日支出|本月支出|本周支出|上周支出",
+        "flags": "",
+        "desc": "强噪声（self_report）：命中即不调模型，即使文本里有金额"
+      },
+      {
+        "id": "precheck.order_state",
+        "tier": 0,
+        "type": "regex",
+        "pattern": "(?<![\\d.])(?:加入购物车|立即购买|去支付|确认订单|查看物流|再次购买|已签收|待发货|待收货|提交订单|交易已取消|申请售后)(?![\\d.])",
+        "flags": "",
+        "desc": "强噪声（order_state）：命中即不调模型，即使文本里有金额"
+      },
+      {
+        "id": "precheck.spam_sms",
+        "tier": 0,
+        "type": "regex",
+        "pattern": "(?<![\\d.])(?:退订|贷款|借款|提额|回复TD|点击链接)(?![\\d.])",
+        "flags": "",
+        "desc": "强噪声（spam_sms）：命中即不调模型，即使文本里有金额"
+      },
+      {
+        "id": "precheck.money+verb",
+        "tier": 1,
+        "type": "predicate",
+        "expr": "money && verb",
+        "desc": "金额 + 交易动词 → 一定调模型"
+      },
+      {
+        "id": "precheck.marketing",
+        "tier": 0,
+        "type": "regex",
+        "pattern": "(?<![\\d.])(?:双11|双十一|开抢|预售|加赠|赠品|优惠券|神券|秒杀|闪购|拼团|满减|立减|直降|到手|价保|返现|一分钱|一分钱领|待领取|即将失效|余额即将不足|余额有变动|还款日|京东卡|礼品卡|购物卡|现金奖励|任务)(?![\\d.])",
+        "flags": "",
+        "desc": "弱噪声（marketing）：仅在没有 money+verb 正向信号时才拦"
+      },
+      {
+        "id": "precheck.zero_yuan",
+        "tier": 0,
+        "type": "regex",
+        "pattern": "(?<![\\d.])0\\s*元(?:兑|领|购|买|花|起|下单|抽奖)(?![\\d.])",
+        "flags": "",
+        "desc": "弱噪声（zero_yuan）：仅在没有 money+verb 正向信号时才拦"
+      },
+      {
+        "id": "precheck.unrelated",
+        "tier": 0,
+        "type": "regex",
+        "pattern": "(?<![\\d.])(?:点赞|关注|转发|群发|朋友圈|聊天|视频通话|直播|首页|空间)(?![\\d.])",
+        "flags": "",
+        "desc": "弱噪声（unrelated）：仅在没有 money+verb 正向信号时才拦"
+      },
+      {
+        "id": "precheck.money_only",
+        "tier": 2,
+        "type": "predicate",
+        "expr": "money",
+        "desc": "只有金额 → 调模型，出站需金额佐证"
+      },
+      {
+        "id": "precheck.bare_amount",
+        "tier": 2,
+        "type": "predicate",
+        "expr": "len<=30 && bare_amount",
+        "desc": "短句（≤30 字）光杆数字 → 调模型，出站需金额佐证"
+      },
+      {
+        "id": "precheck.verb_only",
+        "tier": 3,
+        "type": "predicate",
+        "expr": "verb",
+        "desc": "只有交易动词 → 调模型"
+      },
+      {
+        "id": "precheck.no_signal",
+        "tier": 4,
+        "type": "fallback",
+        "desc": "无任何信号 → 不调模型（兜底，排最后）"
+      }
+    ],
+    "should_call_ai": "tier in (1,2,3)",
+    "corroboration_required": "tier in (2,3)"
+  }
+}

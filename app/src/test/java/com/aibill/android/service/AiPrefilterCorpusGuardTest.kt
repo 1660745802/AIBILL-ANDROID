@@ -33,16 +33,21 @@ import java.io.File
  * ⚠️ 不要用 `tier ∈ {1,2,3}` 当「真交易」的代理：a11y 的「待付款页/零钱余额页」也会落 tier1，
  *    那是服务端已知问题（动词表含充值/提现），把它们要求成 pass 会写出假护栏。
  *
+ * ④ 落地后：这里注入一份接近契约 §3 的云控 `precheck` 夹具，P0 断言因此同时覆盖
+ * 「客户端自有判据不误杀」与「客户端 precheck 不误杀」（服务端判据不可用的场景由
+ * `PrecheckPrefilterWiringTest` 单独守降级）。
+ *
  * 两边 reason **不是同一套分类学**（客户端是判据链的 BlockReason，服务端是 classifyNotification
- * 的 tier/reason），所以这里**不去断言 `expect_client` 里那些服务端 reason id**——那需要在
- * precheck 下发（契约 §8 ④）之后才谈得上；在 ④ 之前硬对齐只会造出第三种口径。
+ * 的 tier/reason），所以这里**不去断言 `expect_client` 里的 `precheck.*` reason id**。
  *
  * `channel == "manual"` 的用例**跳过**：手工记账不经过预筛（直接调 AI），拿它断言预筛是错的。
  */
 class AiPrefilterCorpusGuardTest {
 
     private val prefilter = PrefilterTestHarness.newPrefilterWithSource(
-        InMemoryNotificationRuleSource(PrefilterTestHarness.rules()),
+        InMemoryNotificationRuleSource(
+            PrefilterTestHarness.rules(precheck = PrefilterTestHarness.precheckSpec())
+        ),
     )
 
     private data class Case(

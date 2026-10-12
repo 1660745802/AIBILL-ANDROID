@@ -22,7 +22,48 @@ data class NotificationRulesDto(
     @Json(name = "a11y") val a11y: A11yRulesDto?,
     @Json(name = "sms") val smsRules: SmsRulesDto?,
     @Json(name = "source_mapping") val sourceMapping: Map<String, String>?,
-    @Json(name = "processor") val processor: ProcessorRulesDto?
+    @Json(name = "processor") val processor: ProcessorRulesDto?,
+    /** 入站预筛判据（跨端契约 §3）。旧服务端没有此键 → null → 客户端行为与今天一致。 */
+    @Json(name = "precheck") val precheck: PrecheckDto? = null,
+)
+
+/**
+ * `precheck` 下发载荷（跨端契约 §3）。字段全部可空：任一缺失都只降级不崩。
+ *
+ * `bare_amount_max_len` 是 `signals` 的**同层兄弟**（不是 `bare_amount` 对象里的字段）。
+ */
+@JsonClass(generateAdapter = true)
+data class PrecheckDto(
+    @Json(name = "schema") val schema: Int?,
+    @Json(name = "signals") val signals: PrecheckSignalsDto?,
+    @Json(name = "rules") val rules: List<PrecheckRuleDto>?,
+)
+
+@JsonClass(generateAdapter = true)
+data class PrecheckSignalsDto(
+    @Json(name = "money") val money: PrecheckSignalDto?,
+    @Json(name = "verb") val verb: PrecheckSignalDto?,
+    @Json(name = "bare_amount") val bareAmount: PrecheckSignalDto?,
+    @Json(name = "bare_amount_max_len") val bareAmountMaxLen: Int?,
+)
+
+/** `pattern` + `flags` 必须成对；缺 `flags` 即该 signal 不可用（见 `PrecheckCompiler`）。 */
+@JsonClass(generateAdapter = true)
+data class PrecheckSignalDto(
+    @Json(name = "pattern") val pattern: String?,
+    @Json(name = "flags") val flags: String?,
+)
+
+/** `type` = regex（pattern+flags）/ predicate（expr）/ fallback（无字段）。 */
+@JsonClass(generateAdapter = true)
+data class PrecheckRuleDto(
+    @Json(name = "id") val id: String?,
+    @Json(name = "tier") val tier: Int?,
+    @Json(name = "type") val type: String?,
+    @Json(name = "pattern") val pattern: String?,
+    @Json(name = "flags") val flags: String?,
+    @Json(name = "expr") val expr: String?,
+    @Json(name = "desc") val desc: String?,
 )
 
 @JsonClass(generateAdapter = true)

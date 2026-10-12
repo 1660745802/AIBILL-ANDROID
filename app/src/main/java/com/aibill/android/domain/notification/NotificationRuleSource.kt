@@ -37,6 +37,10 @@ interface NotificationRuleSource {
  * @param bankPackagePatterns 银行包名**模式**（无法预展开成包名集合，见 [isKnownSource]）
  * @param perPackage 按包名配置的通用放行/排除规则
  * @param legacy 旧硬编码分支（per_package 与 default_rule 都落空时的向后兼容兜底）
+ * @param precheck 服务端下发的入站预筛判据（已编译 Regex）；[PrecheckRules.EMPTY] = 降级放行
+ * @param marketingSuffixCutoffs 营销后缀截断词（`processor.marketing_suffix_cutoffs`）——
+ *   预筛用它算 precheck 的输入串，与转发给 AI 的 `input` 保持一致
+ * @param marketingCommaKeywords 营销词首次出现处截断（`processor.marketing_comma_keywords`）
  */
 data class NotificationRuleSnapshot(
     val generation: Int,
@@ -47,6 +51,9 @@ data class NotificationRuleSnapshot(
     val bankPackagePatterns: List<String>,
     val perPackage: List<PerPackageCriteria>,
     val legacy: LegacyCriteria,
+    val precheck: PrecheckRules = PrecheckRules.EMPTY,
+    val marketingSuffixCutoffs: List<String> = emptyList(),
+    val marketingCommaKeywords: List<String> = emptyList(),
 ) {
 
     /**

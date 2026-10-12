@@ -54,6 +54,11 @@ internal fun deriveSnapshot(rules: NotificationRules, generation: Int, logger: A
             wechatAmountSymbols = rules.nls.wechat.amountSymbols,
             alipayAllowedTitleKeywords = rules.nls.alipay.allowedTitleKeywords,
         ),
+        // precheck 与其它判据同一代际：编译一次、随代际更新（全或无的容错语义在 PrecheckCompiler）。
+        precheck = PrecheckCompiler.compile(rules.precheck, logger),
+        // 营销后缀截断词随代际进快照：预筛要用它算出与请求 `input` 一致的串。
+        marketingSuffixCutoffs = rules.processor.marketingSuffixCutoffs,
+        marketingCommaKeywords = rules.processor.marketingCommaKeywords,
     )
 }
 

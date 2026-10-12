@@ -4,6 +4,7 @@ import com.aibill.android.data.notification.CloudNotificationRuleSource
 import com.aibill.android.data.notification.NotificationPrefilterImpl
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.NotificationRuleSource
+import com.aibill.android.domain.notification.PrefilterReport
 import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.service.NotificationRulesManager
 import com.aibill.android.util.AppLogger
@@ -46,4 +47,16 @@ object NotificationPrefilterModule {
     @Provides
     @Singleton
     fun providePrefilterStats(impl: com.aibill.android.data.notification.PrefilterStatsImpl): PrefilterStats = impl
+
+    /**
+     * ⑤ 拦截计数上报（跨端契约 §4）。
+     *
+     * ⚠️ 触发只挂在后台任务（[com.aibill.android.service.RulesSyncWorker]），不用前台定时器；
+     * 实现本身 best-effort（失败只记日志、下窗口重发）。
+     */
+    @Provides
+    @Singleton
+    fun providePrefilterReport(
+        impl: com.aibill.android.data.notification.PrefilterReportImpl,
+    ): PrefilterReport = impl
 }

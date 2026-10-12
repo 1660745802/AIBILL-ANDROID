@@ -14,6 +14,9 @@ import com.aibill.android.service.PerPackageRule
 import com.aibill.android.service.ProcessorRules
 import com.aibill.android.service.SmsRules
 import com.aibill.android.service.WechatRules
+import com.aibill.android.domain.notification.PrecheckRuleSpec
+import com.aibill.android.domain.notification.PrecheckSignalSpec
+import com.aibill.android.domain.notification.PrecheckSpec
 import com.aibill.android.util.AppLogger
 import io.mockk.coEvery
 import io.mockk.every
@@ -103,6 +106,9 @@ internal object PrefilterTestHarness {
         sourceMapping: Map<String, String> = emptyMap(),
         smsPackages: List<String> = emptyList(),
         legacy: LegacyFixtures = LegacyFixtures(),
+        precheck: PrecheckSpec = PrecheckSpec.EMPTY,
+        marketingSuffixCutoffs: List<String> = emptyList(),
+        marketingCommaKeywords: List<String> = emptyList(),
     ): NotificationRules = NotificationRules(
         nls = NlsRules(
             paymentSignalRegex = paymentSignalRegex,
@@ -133,6 +139,56 @@ internal object PrefilterTestHarness {
         ),
         sms = SmsRules(spamKeywords = spamKeywords),
         sourceMapping = sourceMapping,
-        processor = ProcessorRules(10, 60, emptyList(), emptyList(), 10_000_000, 1),
+        processor = ProcessorRules(10, 60, marketingSuffixCutoffs, marketingCommaKeywords, 10_000_000, 1),
+        precheck = precheck,
     )
+
+    /**
+     * 一份接近服务端 `precheck` 载荷的 spec（形状/顺序按跨端契约 §3），供单测注入。
+     *
+     * `rules[].id` 逐字用契约里的 `precheck.<reason>`；`tier` 对应契约表。
+     * 这不是「客户端再抄一份词表」：它是**测试夹具**（客户端运行期只消费云控下发）。
+     */
+    fun precheckSpec(
+        schema: Int = PrecheckSpec.SUPPORTED_SCHEMA,
+        bareAmountMaxLen: Int = PrecheckSpec.DEFAULT_BARE_AMOUNT_MAX_LEN,
+        moneyFlags: String? = "gi",
+        rules: List<PrecheckRuleSpec> = defaultPrecheckRules(),
+        extraSignals: Map<String, PrecheckSignalSpec> = emptyMap(),
+    ): PrecheckSpec = PrecheckSpec(
+        schema = schema,
+        signals = linkedMapOf(
+            "money" to PrecheckSignalSpec(MONEY_PATTERN, moneyFlags),
+            "verb" to PrecheckSignalSpec(VERB_PATTERN, "i"),
+            "bare_amount" to PrecheckSignalSpec(BARE_AMOUNT_PATTERN, "i"),
+        ).apply { putAll(extraSignals) },
+        bareAmountMaxLen = bareAmountMaxLen,
+        rules = rules,
+    )
+
+    /** 契约 §3 的 14 条判据里客户端真正会走到的顺序（简化为可断言的最小集）。 */
+    fun defaultPrecheckRules(): List<PrecheckRuleSpec> = listOf(
+        PrecheckRuleSpec("precheck.strong_noise", tier = 0, type = "regex", pattern = STRONG_NOISE_PATTERN, flags = "i"),
+        PrecheckRuleSpec("precheck.money_verb", tier = 1, type = "predicate", expr = "money && verb"),
+        PrecheckRuleSpec("precheck.weak_noise", tier = 0, type = "regex", pattern = WEAK_NOISE_PATTERN, flags = "i"),
+        PrecheckRuleSpec("precheck.money_only", tier = 2, type = "predicate", expr = "money"),
+        PrecheckRuleSpec("precheck.bare_amount", tier = 2, type = "predicate", expr = "len<=30 && bare_amount"),
+        PrecheckRuleSpec("precheck.verb_only", tier = 3, type = "predicate", expr = "verb"),
+        PrecheckRuleSpec("precheck.no_signal", tier = 4, type = "fallback"),
+    )
+
+    /** 金额信号（锚定货币/数字，避免把纯文字判成金额）。 */
+    const val MONEY_PATTERN = "[¥￥]\\s*\\d|\\d+(\\.\\d+)?\\s*元|rmb\\s*\\d"
+
+    /** 交易动词。 */
+    const val VERB_PATTERN = "支付|付款|消费|扣款|转账|收款|退款|到账|入账|充值|提现|支出|收入"
+
+    /** 光杆数字（「午饭32」）。 */
+    const val BARE_AMOUNT_PATTERN = "(^|\\s)\\d+(\\.\\d+)?(\\s|$)"
+
+    /** 强噪声（验证码/广告）。 */
+    const val STRONG_NOISE_PATTERN = "验证码|校验码|广告|退订回T"
+
+    /** 弱噪声（仅无正向信号时才拦）。 */
+    const val WEAK_NOISE_PATTERN = "为您推荐|优惠活动"
 }

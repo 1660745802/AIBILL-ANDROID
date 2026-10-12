@@ -6,17 +6,21 @@ import com.aibill.android.domain.notification.AiCircuitBreaker
 import com.aibill.android.domain.notification.BlockReason
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.MarketingCriteria
+import com.aibill.android.domain.notification.MarketingSuffixCleaner
 import com.aibill.android.domain.notification.NotificationRuleSnapshot
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.domain.notification.NotificationTextClassifier
 import com.aibill.android.domain.notification.PerPackageCriteria
+import com.aibill.android.domain.notification.PrecheckJudge
+import com.aibill.android.domain.notification.PrecheckVerdict
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
 import com.aibill.android.util.AppLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,6 +38,7 @@ import javax.inject.Singleton
  * 0 自身通知   → 1 内存内容去重(5s)【仅 NLS】→ 2 空文本 → 3 系统分组摘要
  * → 4 日报汇总 → 5 促销句式 → 6 营销词 → 7 账务判据
  * → 8 长窗 AI 内容记忆(5min)【仅 NLS】→ 9 单包 AI 熔断【仅 NLS】→ 10 DB 1s 去重【仅 NLS】
+ * → 11 云控 precheck（tier 0/4 拦、1-3 放行；不可用/未知 schema 降级放行）
  * ```
  *
  * - **1 必须排在所有早退分支之前**：系统「正在运行」分组摘要会以完全相同的文本
@@ -87,6 +92,9 @@ class NotificationPrefilterImpl @Inject constructor(
 
     /** 去重日志采样：同一包名的去重命中日志最小间隔 */
     private val lastDedupLoggedAt = ConcurrentHashMap<String, Long>()
+
+    /** 「云控规则不可用」诊断只按代际记一次（量纲是规则数，不是通知数） */
+    private val lastUnusableRuleGeneration = AtomicInteger(NO_GENERATION)
 
     override suspend fun evaluate(capture: Capture): Verdict {
         val packageName = capture.packageName
@@ -229,7 +237,45 @@ class NotificationPrefilterImpl @Inject constructor(
             }
         }
 
-        return Verdict.Pass(capture).also { stats.recordPassed() }
+        // 11. 云控 precheck：服务端下发的**同源**入站判据（跨端契约 §3）。
+        //     在整条客户端自有判据链之后执行；顺序即判据顺序，取第一条命中的 tier。
+        recordUnusablePrecheckRules(rules)
+        // 输入串与转发给 AI / 服务端的 `input` 一致：先做营销后缀清洗再判
+        // （bare_amount 的 len<=30 必须与请求体里的 input 同口径，否则 30 字边界两端分叉）。
+        val precheckInput = MarketingSuffixCleaner.clean(
+            text = fullText,
+            suffixCutoffs = rules.marketingSuffixCutoffs,
+            commaKeywords = rules.marketingCommaKeywords,
+        )
+        return when (val verdict = PrecheckJudge.evaluate(precheckInput, rules.precheck)) {
+            is PrecheckVerdict.Blocked -> block(
+                capture,
+                BlockReason.PRECHECK,
+                "云控 precheck 拦截: rule=${verdict.ruleId} tier=${verdict.tier} " +
+                    "pkg=$packageName text=${fullText.take(50)}",
+                // 键就是服务端 rule_id（`precheck.<reason>`），⑤ 对账无需映射表
+                statsKey = verdict.ruleId,
+            )
+            // Pass 与 NotAvailable 都放行：判据不可用（无云控 / schema 不认识）时**降级放行**
+            // —— 宁可多发一次请求，不可静默丢账。
+            PrecheckVerdict.Pass, PrecheckVerdict.NotAvailable ->
+                Verdict.Pass(capture).also { stats.recordPassed(capture.channel) }
+        }
+    }
+
+    /**
+     * 云控 precheck 里有规则被逐条丢弃（未知 expr / 缺 flags / 引用缺失 signal）：
+     * 只按**代际**记一次诊断计数 `precheck_unknown_expr`——量纲是「规则数」，不是「通知数」。
+     * 逐条日志已由 `PrecheckCompiler` 在派生快照时打出。
+     */
+    private fun recordUnusablePrecheckRules(snapshot: NotificationRuleSnapshot) {
+        if (snapshot.precheck.unusableRuleIds.isEmpty()) return
+        val seen = lastUnusableRuleGeneration.get()
+        if (seen != snapshot.generation &&
+            lastUnusableRuleGeneration.compareAndSet(seen, snapshot.generation)
+        ) {
+            stats.recordUnusablePrecheckRule()
+        }
     }
 
     /**
@@ -325,8 +371,9 @@ class NotificationPrefilterImpl @Inject constructor(
         reason: BlockReason,
         message: String,
         log: Boolean = true,
+        statsKey: String = PrefilterStats.clientOnlyKey(reason),
     ): Verdict.Block {
-        stats.recordBlocked(reason)
+        stats.recordBlocked(capture.channel, statsKey)
         if (log) appLogger.debug(capture.channel.logTag, message)
         return Verdict.Block(reason, message)
     }
@@ -337,6 +384,9 @@ class NotificationPrefilterImpl @Inject constructor(
 
     private companion object {
         const val DB_DEDUP_WINDOW_MS = 1_000L
+
+        /** 还没有记录过任何规则的代际 */
+        const val NO_GENERATION = Int.MIN_VALUE
 
         /** 内部内容去重窗口：同内容 hash 在此窗口内只处理一次 */
         const val CONTENT_DEDUP_WINDOW_MS = 5_000L

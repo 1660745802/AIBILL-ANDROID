@@ -1,6 +1,7 @@
 package com.aibill.android.data
 
 import com.aibill.android.data.remote.dto.response.NotificationRulesData
+import com.aibill.android.domain.notification.PrecheckSpec
 import com.aibill.android.service.NotificationRulesMapping
 import com.squareup.moshi.Moshi
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -63,9 +64,13 @@ class NotificationRulesForwardCompatTest {
         "\"processor\":{\"scoring_window_seconds\"",
         """
         "precheck":{"schema":1,"derived_from":"ai/verify.ts","channel_agnostic":true,
-                    "signals":{"money":"…","verb":"…","bare_amount":"…","bare_amount_max_len":30},
-                    "rules":[{"id":"precheck.strong_noise","tier":0,"pattern":"…"},
-                             {"id":"precheck.money+verb","tier":null,"pattern":"…"}],
+                    "signals":{"money":{"pattern":"rmb|¥","flags":"gi"},
+                               "verb":{"pattern":"支付|消费","flags":"i"},
+                               "bare_amount":{"pattern":"[0-9]+","flags":"i"},
+                               "bare_amount_max_len":30},
+                    "rules":[{"id":"precheck.strong_noise","tier":0,"type":"regex","pattern":"验证码","flags":"i"},
+                             {"id":"precheck.money_verb","tier":1,"type":"predicate","expr":"money && verb"},
+                             {"id":"precheck.no_signal","tier":4,"type":"fallback"}],
                     "should_call_ai":"tier in (1,2,3)","corroboration_required":"tier in (2,3)"},
         "testcases":[{"id":"nls-wechat-paid","text":"微信支付 已支付¥32.50","expect_txn":true}],
         "some_future_key_the_client_knows_nothing_about":{"nested":[1,2,3]},
@@ -88,6 +93,10 @@ class NotificationRulesForwardCompatTest {
         assertEquals(baseline.sms.spamKeywords, withNew.sms.spamKeywords)
         assertEquals(baseline.sourceMapping, withNew.sourceMapping)
         assertEquals(baseline.processor, withNew.processor)
+        // ④ 落地后 precheck 是**已知键**：新载荷要真被消费，旧载荷保持 EMPTY（行为不变）
+        assertEquals(PrecheckSpec.EMPTY, baseline.precheck)
+        assertEquals(1, withNew.precheck.schema)
+        assertEquals(3, withNew.precheck.rules.size)
     }
 
     @Test

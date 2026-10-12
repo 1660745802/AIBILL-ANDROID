@@ -31,6 +31,13 @@ package com.aibill.android.domain.notification
  * 下游明写「同渠道同包名同金额 = 两笔真实交易」，对 SMS/A11Y 闸住同文本的第二条就是丢账。
  * 理由与历史依据见 `data/notification/NotificationPrefilterImpl` 的类 KDoc。
  *
+ * ## 与云控 `precheck` 的关系
+ *
+ * 本链是客户端**自有**判据（自身通知 / 系统摘要 / 日报 / 促销 / 营销 / 账务判据 / 状态闸），
+ * 与云控 `precheck`（服务端 tier 档位链，见 `domain/notification/Precheck.kt`）是两套分类学，
+ * 服务端与契约都明确**不做映射表**。云控判据在本链**之后**执行：命中 tier 0/4 → 拦并按其
+ * `rule_id` 计数；不可用 → 降级放行。
+ *
  * ## 时间口径
  *
  * 判定链里的所有窗口都以 [Capture.receivedAt] 为「现在」——候选进入本 module 的那一刻。
@@ -121,4 +128,13 @@ enum class BlockReason {
 
     /** DB 1s 去重命中（同包名 + 同内容刚写过，**仅 NLS**） */
     DB_DUPLICATE,
+
+    /**
+     * 云控 `precheck` 判据命中 tier ∈ {0,4}（跨端契约 §3）。
+     *
+     * 与上面所有分支的区别：它是**服务端下发的同源判据**，命中规则 id 会原样作为
+     * ⑤ 上报的键（`precheck.<reason>`），与 `ai_parse_filters` 同口径。
+     * 排在整条链**最后**（所有客户端自有判据之后），不可用/未知 schema 时降级放行。
+     */
+    PRECHECK,
 }

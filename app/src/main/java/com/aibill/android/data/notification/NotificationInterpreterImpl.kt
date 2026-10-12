@@ -214,26 +214,18 @@ class NotificationInterpreterImpl @Inject constructor(
             .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
 
     /**
-     * 清理通知文本中的营销后缀，避免 AI 误识别。
-     * 支付宝"交易提醒"格式：真实交易信息 + "点击领取XX" 营销。
-     * 截掉"点击"之后的所有内容。
+     * 清理通知文本中的营销后缀（转发给 AI 的 `input` 就是清洗后的文本）。
+     *
+     * 实现已抽到 [com.aibill.android.domain.notification.MarketingSuffixCleaner]：
+     * 预筛的 `precheck` 也要用**同一个串**算 `bare_amount` 长度（否则 30 字边界两端分叉）。
      */
     private fun cleanMarketingSuffix(text: String): String {
         val rules = rulesManager.getRules().processor
-        // 1. 直接截断的营销前缀（从云控规则读取）
-        for (cutoff in rules.marketingSuffixCutoffs) {
-            val idx = text.indexOf(cutoff)
-            if (idx > 0) return text.substring(0, idx).trim()
-        }
-        // 2. 营销词首次出现处截断。
-        //    原实现要求「逗号**之后**才看营销词」，而营销文案的分隔符常常是换行/空格：
-        //    「…12包抽纸0元领千份放量！\n实付159元再享40元红包返利>」里的 \n 不是「，」
-        //    → commaIdx = -1 → 整段营销文案原样送 AI，把促销推送记成真实支出。
-        for (keyword in rules.marketingCommaKeywords) {
-            val idx = text.indexOf(keyword)
-            if (idx > 0) return text.substring(0, idx).trim()
-        }
-        return text
+        return com.aibill.android.domain.notification.MarketingSuffixCleaner.clean(
+            text = text,
+            suffixCutoffs = rules.marketingSuffixCutoffs,
+            commaKeywords = rules.marketingCommaKeywords,
+        )
     }
 
     /**

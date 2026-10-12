@@ -9,22 +9,27 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.aibill.android.domain.notification.PrefilterReport
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import java.util.concurrent.TimeUnit
 
 /**
  * 规则同步 Worker
  *
- * 每 6 小时从服务端拉取最新通知记账规则。
- * 支持 ETag/304，版本未变不会重复下载。
+ * 每 6 小时从服务端拉取最新通知记账规则（ETag/304）。
+ *
+ * 同时承担 ⑤ 拦截计数上报（跨端契约 §4）：同一个后台任务，**不用前台定时器**；
+ * 上报是 best-effort，失败只记日志、下个窗口重发。
  */
 @HiltWorker
 class RulesSyncWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val rulesManager: NotificationRulesManager,
+    private val prefilterReport: PrefilterReport,
 ) : CoroutineWorker(appContext, workerParams) {
 
     companion object {
@@ -52,13 +57,22 @@ class RulesSyncWorker @AssistedInject constructor(
     }
 
     override suspend fun doWork(): Result {
-        return try {
+        try {
             rulesManager.fetchRules()
             Timber.d("Rules sync completed")
-            Result.success()
         } catch (e: Exception) {
             Timber.w(e, "Rules sync failed, will retry next cycle")
-            Result.success() // 不 retry，等下个周期
+            // 不 retry，等下个周期
         }
+
+        // ⑤ 上报在规则同步之外：两者独立 best-effort（规则同步失败不应吞掉计数上报）。
+        try {
+            prefilterReport.report(System.currentTimeMillis())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "Filter report failed, kept for next cycle")
+        }
+        return Result.success()
     }
 }

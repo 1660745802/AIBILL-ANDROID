@@ -4,6 +4,7 @@ import android.app.Application
 import com.aibill.android.data.remote.api.NotificationRulesApi
 import com.aibill.android.data.remote.dto.response.NotificationRulesDto
 import com.aibill.android.data.remote.dto.response.NotificationRulesData
+import com.aibill.android.domain.notification.PrecheckSpec
 import com.squareup.moshi.Moshi
 import timber.log.Timber
 import java.io.IOException
@@ -230,6 +231,8 @@ data class NotificationRules(
     val sms: SmsRules,
     val sourceMapping: Map<String, String>,
     val processor: ProcessorRules,
+    /** 入站预筛判据（跨端契约 §3）。默认空 = 云控未下发/旧服务端，行为与今天一致。 */
+    val precheck: PrecheckSpec = PrecheckSpec.EMPTY,
 )
 
 data class NlsRules(

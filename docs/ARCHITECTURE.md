@@ -116,6 +116,7 @@ L1 预筛 NotificationPrefilter（三渠道同一套文本判据 + 每源状态�
   0 自身通知 → 1 内存去重(5s)【NLS】 → 2 空文本 → 3 系统分组摘要
   → 4 日报汇总 → 5 促销句式 → 6 营销词 → 7 账务判据
   → 8 长窗内容记忆(5min)【NLS】 → 9 AI 熔断【NLS，仅查 AiCircuitBreaker】 → 10 DB 1s 去重【NLS】
+  → 11 云控 precheck（服务端同源判据：tier 0/4 拦、1-3 放行；不可用/schema 不认识降级放行）
         ↓
 L2 解析与校验 NotificationInterpreter
   CategoryLearningEngine 命中 → 直接给分类；否则 AI /api/ai/parse
@@ -156,6 +157,13 @@ L4 路由 NotificationProcessor（协调者）
 **判据数据源可替换**：生产 `CloudNotificationRuleSource`（云控 + ETag + 代际缓存）、
 单测 `InMemoryNotificationRuleSource`（固定规则，零 IO）。回归护栏直接打生产判据
 （`scripts/rules.json` → 生产映射 → 生产链），不是复刻。
+
+**云控 `precheck` 与客户端自有判据的关系**：两者是**两套分类学**（客户端：自身通知/系统摘要/
+日报/促销/营销/账务判据/状态闸；服务端：tier 档位链），契约明确**不做映射表**。因此客户端在
+自有判据链**之后**、调模型**之前**原样执行服务端下发的 `precheck`：命中 tier 0/4 → 拦（`BlockReason.PRECHECK`，
+计数键 = 服务端 `rule_id`），tier 1-3 → 放行；无云控或 `schema` 不认识 → **降级放行**（宁可多发一次请求）。
+语义与护栏见 `domain/notification/Precheck.kt` / `data/notification/PrecheckCompiler.kt`（`flags` 必须与
+`pattern` 成对、`expr` 只接受封闭小语法、`bare_amount` 长度按 UTF-16 计）。
 
 **规则真源已归属服务端**（跨端契约见 `recognition-flow.md`）：`server/config/rules.json` 是内容真源
 （进 git），服务端启动时校验 + 内容 hash 派生 ETag 后自动激活；DB 只是发布载体，admin UI 只做查看/
@@ -212,6 +220,11 @@ POST /api/ai/parse               # { input } 必填；可选上下文 channel/so
                                  # 成功形态带 parse_log_id；预筛挡下/超时等形态没有（无可反馈对象）
 POST /api/ai/parse-feedback      # { parse_log_id, final_items, modified, channel }
                                  # 用户最终态；删除 = 空数组（AI 越用越准的闭环）
+POST /api/ai/filter-report       # { window_start, window_end, client_version, channel,
+                                 #   counts:[{rule_id,count}], totals:{notifications,blocked} }
+                                 # 预筛拦截计数**按窗口聚合**（每渠道一条）；`precheck.*` 与
+                                 # ai_parse_filters 同口径可比，`client_only.*` 服务端无对应、不可比
+                                 # best-effort：失败只记日志、下窗口原窗口重发（服务端按窗口 upsert 幂等）
 GET|POST /api/categories  PUT|DELETE /api/categories/:id
 GET|POST /api/accounts    PUT|DELETE /api/accounts/:id
 GET  /api/stats/summary|by-category|trend

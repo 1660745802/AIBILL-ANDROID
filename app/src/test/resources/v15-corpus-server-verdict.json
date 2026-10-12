@@ -1,0 +1,323 @@
+{
+  "corpus_hash": "025e7de0a94002cead2472031b250a570865231bc18bcf8a25a11cd1e152afe6",
+  "generated_from": "server/src/ai/verify.ts :: classifyNotification",
+  "baseline": "Android >= 1.5.0 (versionCode >= 7)",
+  "note": "判定以实现为准（启动自检保证 actual_tier 与语料 expect_tier 一致）。客户端用 precheck_rule_id 逐条 diff。",
+  "cases": [
+    {
+      "id": "sms-bank-consume-debit",
+      "channel": "sms",
+      "text": "动账提醒 您尾号2256的储蓄账户8月1日9时58分支出人民币4.20元。",
+      "expect_tier": 1,
+      "actual_tier": 1,
+      "reasons": [
+        "money+verb"
+      ],
+      "precheck_rule_id": [
+        "precheck.money+verb"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "sms-bank-consume-thousands",
+      "channel": "sms",
+      "text": "工商银行 尾号9766卡10月5日18:28手机银行支出(跨行汇款)1,000元，余额24,210.99元。",
+      "expect_tier": 1,
+      "actual_tier": 1,
+      "reasons": [
+        "money+verb"
+      ],
+      "precheck_rule_id": [
+        "precheck.money+verb"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "nls-wechat-paid",
+      "channel": "nls",
+      "text": "微信支付 已支付¥32.50",
+      "expect_tier": 1,
+      "actual_tier": 1,
+      "reasons": [
+        "money+verb"
+      ],
+      "precheck_rule_id": [
+        "precheck.money+verb"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "sms-bank-income-salary",
+      "channel": "sms",
+      "text": "招商银行 【招商银行】您账户2415于10月08日14:01入账工资，人民币14322.83。",
+      "expect_tier": 1,
+      "actual_tier": 1,
+      "reasons": [
+        "money+verb"
+      ],
+      "precheck_rule_id": [
+        "precheck.money+verb"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "verb-adjacent-number",
+      "channel": "sms",
+      "text": "招行信用卡消费32.50人民币",
+      "expect_tier": 1,
+      "actual_tier": 1,
+      "reasons": [
+        "money+verb"
+      ],
+      "precheck_rule_id": [
+        "precheck.money+verb"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "manual-kfc-bare-amount",
+      "channel": "manual",
+      "text": "肯德基45",
+      "expect_tier": 2,
+      "actual_tier": 2,
+      "reasons": [
+        "bare_amount"
+      ],
+      "precheck_rule_id": [
+        "precheck.bare_amount"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "manual-rent-bare-amount",
+      "channel": "manual",
+      "text": "房租5000",
+      "expect_tier": 2,
+      "actual_tier": 2,
+      "reasons": [
+        "bare_amount"
+      ],
+      "precheck_rule_id": [
+        "precheck.bare_amount"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "manual-reimburse-verb-only",
+      "channel": "manual",
+      "text": "报销",
+      "expect_tier": 3,
+      "actual_tier": 3,
+      "reasons": [
+        "verb_only"
+      ],
+      "precheck_rule_id": [
+        "precheck.verb_only"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "manual-refund-verb-only",
+      "channel": "manual",
+      "text": "退货到账",
+      "expect_tier": 3,
+      "actual_tier": 3,
+      "reasons": [
+        "verb_only"
+      ],
+      "precheck_rule_id": [
+        "precheck.verb_only"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "nls-coupon-facevalue",
+      "channel": "nls",
+      "text": "支付宝卡包 你有淘宝闪购10元红包今晚失效",
+      "expect_tier": 0,
+      "actual_tier": 0,
+      "reasons": [
+        "coupon_facevalue"
+      ],
+      "precheck_rule_id": [
+        "precheck.coupon_facevalue"
+      ],
+      "expect_txn": false,
+      "should_call_ai": false
+    },
+    {
+      "id": "nls-reward-ad",
+      "channel": "nls",
+      "text": "在线寻找手游玩家 参加访谈任务，获得 200 元京东卡！",
+      "expect_tier": 0,
+      "actual_tier": 0,
+      "reasons": [
+        "reward_ad"
+      ],
+      "precheck_rule_id": [
+        "precheck.reward_ad"
+      ],
+      "expect_txn": false,
+      "should_call_ai": false
+    },
+    {
+      "id": "nls-self-report",
+      "channel": "nls",
+      "text": "【记账日报】昨天共有2笔支出 昨日支出220.00元，共2笔",
+      "expect_tier": 0,
+      "actual_tier": 0,
+      "reasons": [
+        "self_report"
+      ],
+      "precheck_rule_id": [
+        "precheck.self_report"
+      ],
+      "expect_txn": false,
+      "should_call_ai": false
+    },
+    {
+      "id": "nls-zero-yuan-marketing",
+      "channel": "nls",
+      "text": "😍1号会员日来啦 🛒12包抽纸0元领千份放量！ 🔥实付159元",
+      "expect_tier": 0,
+      "actual_tier": 0,
+      "reasons": [
+        "zero_yuan"
+      ],
+      "precheck_rule_id": [
+        "precheck.zero_yuan"
+      ],
+      "expect_txn": false,
+      "should_call_ai": false
+    },
+    {
+      "id": "nls-social-redpacket",
+      "channel": "nls",
+      "text": "209[嗨] [QQ红包]太越林全员老公型: [红包]国庆快乐",
+      "expect_tier": 0,
+      "actual_tier": 0,
+      "reasons": [
+        "social_redpacket"
+      ],
+      "precheck_rule_id": [
+        "precheck.social_redpacket"
+      ],
+      "expect_txn": false,
+      "should_call_ai": false
+    },
+    {
+      "id": "long-no-signal",
+      "channel": "nls",
+      "text": "亲爱的用户您好，感谢您一直以来对我们的支持与厚爱，为了回馈广大用户，我们特别推出了一系列精彩活动，详情请见活动页面，祝您生活愉快，万事如意",
+      "expect_tier": 4,
+      "actual_tier": 4,
+      "reasons": [
+        "no_signal"
+      ],
+      "precheck_rule_id": [
+        "precheck.no_signal"
+      ],
+      "expect_txn": false,
+      "should_call_ai": false
+    },
+    {
+      "id": "a11y-wechat-paid",
+      "channel": "a11y",
+      "text": "微信支付 支付成功 ¥32.00",
+      "expect_tier": 1,
+      "actual_tier": 1,
+      "reasons": [
+        "money+verb"
+      ],
+      "precheck_rule_id": [
+        "precheck.money+verb"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "a11y-embedded-order-paid",
+      "channel": "a11y",
+      "text": "订单支付成功 等待商家接单 实付 ¥128.00",
+      "expect_tier": 1,
+      "actual_tier": 1,
+      "reasons": [
+        "money+verb"
+      ],
+      "precheck_rule_id": [
+        "precheck.money+verb"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "a11y-transfer-detail",
+      "channel": "a11y",
+      "text": "微信支付 转账 ¥500.00 已到账",
+      "expect_tier": 1,
+      "actual_tier": 1,
+      "reasons": [
+        "money+verb"
+      ],
+      "precheck_rule_id": [
+        "precheck.money+verb"
+      ],
+      "expect_txn": true,
+      "should_call_ai": true
+    },
+    {
+      "id": "a11y-pending-payment-page",
+      "channel": "a11y",
+      "text": "美团外卖 待付款 ¥45.00 立即支付",
+      "expect_tier": 1,
+      "actual_tier": 1,
+      "reasons": [
+        "money+verb"
+      ],
+      "precheck_rule_id": [
+        "precheck.money+verb"
+      ],
+      "expect_txn": false,
+      "should_call_ai": true
+    },
+    {
+      "id": "a11y-cart-buttons",
+      "channel": "a11y",
+      "text": "加入购物车 立即购买 去支付",
+      "expect_tier": 0,
+      "actual_tier": 0,
+      "reasons": [
+        "order_state"
+      ],
+      "precheck_rule_id": [
+        "precheck.order_state"
+      ],
+      "expect_txn": false,
+      "should_call_ai": false
+    },
+    {
+      "id": "a11y-wallet-balance-page",
+      "channel": "a11y",
+      "text": "零钱 余额 ¥1,234.56 充值 提现",
+      "expect_tier": 1,
+      "actual_tier": 1,
+      "reasons": [
+        "money+verb"
+      ],
+      "precheck_rule_id": [
+        "precheck.money+verb"
+      ],
+      "expect_txn": false,
+      "should_call_ai": true
+    }
+  ]
+}

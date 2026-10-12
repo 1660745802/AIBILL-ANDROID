@@ -1,6 +1,11 @@
 package com.aibill.android.service
 
 import com.aibill.android.data.remote.dto.response.NotificationRulesDto
+import com.aibill.android.data.remote.dto.response.PrecheckDto
+import com.aibill.android.data.remote.dto.response.PrecheckSignalDto
+import com.aibill.android.domain.notification.PrecheckRuleSpec
+import com.aibill.android.domain.notification.PrecheckSignalSpec
+import com.aibill.android.domain.notification.PrecheckSpec
 
 /**
  * 云控 DTO → 规则模型的唯一映射。
@@ -76,6 +81,41 @@ internal object NotificationRulesMapping {
                 maxAmountCents = dto.processor?.maxAmountCents ?: defaults.processor.maxAmountCents,
                 minAmountCents = dto.processor?.minAmountCents ?: defaults.processor.minAmountCents,
             ),
+            // 契约 §3：precheck **不写在 rules.json 里手抄**，也不进 assets 兜底。
+            // 旧服务端无此键 → EMPTY；schema 不认识也由编译期降级（见 PrecheckCompiler）。
+            precheck = dto.precheck?.toSpec() ?: PrecheckSpec.EMPTY,
         )
     }
+
+    /**
+     * `precheck` DTO → 原始领域 spec。
+     *
+     * 固定只认三个 signal 名（`money` / `verb` / `bare_amount`）：它们是服务端 `expr`
+     * 会引用的键，键名漂移会让整条判据静默失效，所以这里不允许「多一个未知 signal」。
+     */
+    private fun PrecheckDto.toSpec(): PrecheckSpec {
+        val signalSpecs = LinkedHashMap<String, PrecheckSignalSpec>(3)
+        signals?.money?.toSpec()?.let { signalSpecs["money"] = it }
+        signals?.verb?.toSpec()?.let { signalSpecs["verb"] = it }
+        signals?.bareAmount?.toSpec()?.let { signalSpecs["bare_amount"] = it }
+        return PrecheckSpec(
+            schema = schema ?: 0,
+            signals = signalSpecs,
+            bareAmountMaxLen = signals?.bareAmountMaxLen ?: PrecheckSpec.DEFAULT_BARE_AMOUNT_MAX_LEN,
+            rules = rules.orEmpty().mapNotNull { r ->
+                val id = r.id ?: return@mapNotNull null
+                PrecheckRuleSpec(
+                    id = id,
+                    tier = r.tier ?: return@mapNotNull null,
+                    type = r.type ?: return@mapNotNull null,
+                    pattern = r.pattern,
+                    flags = r.flags,
+                    expr = r.expr,
+                )
+            },
+        )
+    }
+
+    private fun PrecheckSignalDto.toSpec(): PrecheckSignalSpec =
+        PrecheckSignalSpec(pattern = pattern.orEmpty(), flags = flags)
 }
