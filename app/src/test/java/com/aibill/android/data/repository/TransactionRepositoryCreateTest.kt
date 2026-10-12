@@ -16,8 +16,12 @@ import com.aibill.android.domain.model.TransactionType
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.IOException
@@ -156,5 +160,30 @@ class TransactionRepositoryCreateTest {
 
         assertTrue(result is Result.Error)
         assertEquals(Result.ERROR_NETWORK, (result as Result.Error).code)
+    }
+
+    /**
+     * 取消不是记账失败：`safeApiCall` 用 `catch (Exception)` 兜底，会把取消也吞成
+     * `Result.Error`，而本层契约是「禁止抛出异常，CancellationException 除外」
+     * （`domain/model/Result.kt`）。没有 `ensureActive()` 时，已取消的调用会返回一个
+     * 假的失败结果，调用方照样报「保存失败」并清掉 isSaving。
+     */
+    @Test
+    fun `cancellation propagates instead of being swallowed as a create failure`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        coEvery { transactionApi.createTransactions(any()) } coAnswers {
+            started.complete(Unit)
+            delay(10_000)
+            unconfirmedApiResponse()
+        }
+
+        var result: Result<List<Transaction>>? = null
+        val job = launch { result = repository.createTransactions(listOf(tx())) }
+
+        started.await()
+        job.cancel()
+        job.join()
+
+        assertNull(result, "取消后不得产出 Result.Error")
     }
 }

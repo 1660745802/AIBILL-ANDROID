@@ -12,7 +12,12 @@ import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.domain.repository.TransactionPage
 import com.aibill.android.domain.repository.TransactionQuery
 import com.aibill.android.domain.repository.TransactionRepository
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import retrofit2.HttpException
 import timber.log.Timber
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -31,7 +36,12 @@ class TransactionRepositoryImpl @Inject constructor(
         val request = CreateTransactionRequest(
             items = items.map { it.toItemRequest() }
         )
-        return when (val response = safeApiCall { transactionApi.createTransactions(request) }) {
+        val response = safeApiCall { transactionApi.createTransactions(request) }
+        // safeApiCall 用 `catch (Exception)` 兜底，会把协程取消也吞成 Result.Error；
+        // 本层契约是「禁止抛出异常，CancellationException 除外」（见 domain/model/Result.kt），
+        // 因此在这里补回结构化取消：取消必须继续向上传播，而非伪装成「记账失败」。
+        currentCoroutineContext().ensureActive()
+        return when (response) {
             is Result.Error -> response
             is Result.Loading -> response
             is Result.Success -> {
@@ -80,8 +90,16 @@ class TransactionRepositoryImpl @Inject constructor(
             val response = transactionApi.deleteTransaction(id)
             if (response.code == 0) Result.Success(Unit)
             else Result.Error(response.code, response.message)
+        } catch (e: CancellationException) {
+            // 挂起调用被取消必须原样传播：把取消当成「删除失败」会让调用方（撤销 module）
+            // 在已取消的协程里继续返回结果、播报失败文案，破坏结构化取消。
+            throw e
+        } catch (e: IOException) {
+            Result.Error(Result.ERROR_NETWORK, "网络连接失败，请检查网络")
+        } catch (e: HttpException) {
+            Result.Error(e.code(), "服务器错误: ${e.code()}")
         } catch (e: Exception) {
-            Result.Error(-1, e.message ?: "删除失败")
+            Result.Error(Result.ERROR_UNKNOWN, e.message ?: "删除失败")
         }
     }
 
