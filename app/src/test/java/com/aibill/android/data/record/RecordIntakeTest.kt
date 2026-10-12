@@ -119,6 +119,8 @@ class RecordIntakeTest {
     private fun buildIntake(writer: RecordWriter): RecordIntake {
         val clock = object : RecordClock {
             override fun now(): RecordMoment = RecordMoment.of(fixedInstant, fixedZone)
+            override fun at(epochMillis: Long) =
+                RecordMoment.of(java.time.Instant.ofEpochMilli(epochMillis), fixedZone)
         }
 
         return RecordIntakeImpl(
@@ -181,11 +183,17 @@ class RecordIntakeTest {
         description = description,
     )
 
-    private fun capturedNotification() = CapturedNotification(
+    /**
+     * 通知捕获。
+     *
+     * ⚠️ `receivedAt` 默认取 [fixedInstant]：入账日期自 R-24 起取**通知到达时刻**（不是 `clock.now()`），
+     * 两者不一致时会得到不同日期——测试要有意识地指定它。
+     */
+    private fun capturedNotification(receivedAt: Long = fixedInstant.toEpochMilli()) = CapturedNotification(
         packageName = "com.tencent.mm",
         title = "微信支付",
         content = "支付成功 ¥32.00",
-        receivedAt = 1_753_000_000_000L,
+        receivedAt = receivedAt,
     )
 
     /** 服务端回执：`code==0` + `created[]` 按 `client_id` 回认。 */
@@ -560,7 +568,7 @@ class RecordIntakeTest {
         assertEquals("咖啡", row.description)
         assertEquals(outcome.clientId, row.clientId)
         assertTrue(row.clientId.isNotBlank())
-        assertEquals("external_intent", row.source)
+        assertEquals("app_notification", row.source)
         // 来源标记的具体值：tasker_quick_record 是 AutoRecord 与本入口的区分依据
         assertEquals("tasker_quick_record", row.sourceDetail)
         assertEquals("synced", row.syncStatus)
@@ -568,6 +576,36 @@ class RecordIntakeTest {
         assertEquals("12:30", row.time)
         // 历史口径：本入口的 client_created_at 是**无时区**的本地日期时间串
         assertEquals("2026-07-10T12:30", row.clientCreatedAt)
+    }
+
+    /**
+     * 服务端 `POST /api/transactions` 的 `items[].source` 允许值。
+     *
+     * 来源：`server/src/routes/transaction.ts` 的 zod enum（`manual|ai|import_csv|app_notification|ocr|subscription`）；
+     * DB 的 `transactions.source` 还有 CHECK 约束，枚举外的值即使绕过 zod 也会写失败。
+     * 服务端改枚举时必须同步这里——本用例就是 `external_intent` 那次漏网的护栏。
+     */
+    private val allowedRequestSources = setOf(
+        "manual", "ai", "import_csv", "app_notification", "ocr", "subscription",
+    )
+
+    @Test
+    @DisplayName("护栏：外部 Intent 路径的 source 必须在服务端允许枚举内（防 external_intent 回归）")
+    fun `external quick record source is in server allowed enum`() = runTest {
+        val body = slot<CreateTransactionRequest>()
+        coEvery { transactionApi.createTransactions(capture(body)) } answers {
+            calls += "submit"
+            confirmed(firstArg())
+        }
+
+        intake.intake(RecordIntent.ExternalQuickRecord(amount = 2590, type = "expense", description = "咖啡"))
+
+        val source = body.captured.items.first().source
+        assertTrue(
+            source in allowedRequestSources,
+            "外部 Intent 的 source=$source 不在服务端允许枚举内 → POST /transactions 恒定 400/500",
+        )
+        assertEquals("app_notification", source)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -610,6 +648,23 @@ class RecordIntakeTest {
     private companion object {
         /** 服务端在 `created[]` 里回认的交易 id（撤销时删的就是它） */
         const val SERVER_ID = 99
+    }
+
+    @Test
+    @DisplayName("R-24 回归：日期取**通知到达日**，不是解析/入账时刻（跨午夜不再记错一天）")
+    fun `跨午夜迟发落在通知当天`() = runTest {
+        // 通知在 07-09 23:40(+08:00) 到达；固定时钟（= 解析/入账那一刻）是 07-10 12:30(+08:00)。
+        // 服务端已按 received_at 锚定「今天」；入账若仍取 clock.now()，这笔会被记到 07-10。
+        val notificationAt = java.time.Instant.parse("2026-07-09T15:40:00Z")
+
+        intake.intake(
+            autoIntent().copy(captured = capturedNotification(receivedAt = notificationAt.toEpochMilli()))
+        )
+
+        val row = onlyRow()
+        assertEquals("2026-07-09", row.date, "日期必须取通知到达日，而不是入账/解析那天")
+        assertEquals("23:40", row.time)
+        assertEquals(notificationAt.toString(), row.clientCreatedAt)
     }
 }
 

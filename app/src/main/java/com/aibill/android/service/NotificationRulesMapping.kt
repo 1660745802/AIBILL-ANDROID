@@ -68,6 +68,12 @@ internal object NotificationRulesMapping {
                 wechatAlipayExcludeKeywords = dto.a11y?.wechatAlipayExcludeKeywords ?: defaults.a11y.wechatAlipayExcludeKeywords,
                 amountRegex = dto.a11y?.amountRegex ?: defaults.a11y.amountRegex,
                 cooldownMinutes = dto.a11y?.cooldownMinutes ?: defaults.a11y.cooldownMinutes,
+                // 云控优先、**硬编码内置**兜底：缺键时直接用 PaymentAccessibilityRecognition 的默认，
+                // 不读资产（资产也可能缺键/读失败），也不在映射层另抄字面量。
+                listPageKeywords = dto.a11y?.listPageKeywords
+                    ?: PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS,
+                listPageMinAmounts = dto.a11y?.listPageMinAmounts
+                    ?: PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS,
             ),
             sms = SmsRules(
                 spamKeywords = dto.smsRules?.spamKeywords ?: defaults.sms.spamKeywords,

@@ -92,6 +92,11 @@ suspend lambda。**测试里跑的是 `DirectRecordWriter`，不提供原子性�
   这些**面向用户的承诺**写在 [PRODUCT.md §五](PRODUCT.md)，改之前先读那一节。
 - 落库 `date` 一律 `java.time` 生成 ISO `YYYY-MM-DD`。**禁止 `SimpleDateFormat(Locale.getDefault())`**
   ——泰语 locale 写出佛历年、阿拉伯语 locale 写出非 ASCII 数字，服务端会拒收。
+- `date`/`time` 取**通知到达时刻**（不是解析/入账时刻）：通知 23:40 到、服务端 00:05 才解析完时，
+  这笔属于 23:40 那天（`RecordClock.at(receivedAt)`）。401 重放同理 → 补记的落回原始交易日期。
+- 外部 Intent（Tasker）静默入账的 `source` 取值是 `app_notification`（服务端 `transactions.source`
+  有 DB CHECK 只允许枚举内值，送 `external_intent` 会 400/500）；区分职责由
+  `source_detail="tasker_quick_record"` 承担，用户可见来源名仍是 Tasker。
 - `clientId` = UUID v4，是幂等与撤销的唯一凭据。
 
 **入账路径之间的差异是历史事实，不要顺手统一**（收口只搬运）：
@@ -113,6 +118,10 @@ AI 自动入账的 `source_detail` 走云控来源名映射、其余走硬编码
   A11Y: 节点树三重条件 + 8s 防抖 + 金额|商家|页面 冷却 → Capture
         ↓
 L1 预筛 NotificationPrefilter（三渠道同一套文本判据 + 每源状态）
+  【A11Y 专属，链最前】账单/明细列表页（金额节点 ≥3 **且**列表词出现在页面文本前 24 字符
+  标题区）→ 拦（`LIST_PAGE`；词表与阈值走云控 `a11y.list_page_keywords` / `list_page_min_amounts`，
+  缺失或坏值回退内置默认；标题区窗口是客户端内置常量——真结果页底部的「查看账单」入口不得触发拦截，
+  取舍是宁可漏挡、不可误杀真账）
   0 自身通知 → 1 内存去重(5s)【NLS】 → 2 空文本 → 3 系统分组摘要
   → 4 日报汇总 → 5 促销句式 → 6 营销词 → 7 账务判据
   → 8 长窗内容记忆(5min)【NLS】 → 9 AI 熔断【NLS，仅查 AiCircuitBreaker】 → 10 DB 1s 去重【NLS】
@@ -155,8 +164,8 @@ L4 路由 NotificationProcessor（协调者）
 两笔真交易」——对 SMS/A11Y 闸住同源同文本的第二条就是丢真交易。取舍：误杀 > 多调一次 AI。
 
 **判据数据源可替换**：生产 `CloudNotificationRuleSource`（云控 + ETag + 代际缓存）、
-单测 `InMemoryNotificationRuleSource`（固定规则，零 IO）。回归护栏直接打生产判据
-（`scripts/rules.json` → 生产映射 → 生产链），不是复刻。
+单测 `InMemoryNotificationRuleSource`（固定规则，零 IO）。回归护栏复用生产映射与生产链，
+输入用 `scripts/rules.json`（它只是**测试语料**，不是运行时真源；见下段），不是复刻判据。
 
 **云控 `precheck` 与客户端自有判据的关系**：两者是**两套分类学**（客户端：自身通知/系统摘要/
 日报/促销/营销/账务判据/状态闸；服务端：tier 档位链），契约明确**不做映射表**。因此客户端在
@@ -165,7 +174,7 @@ L4 路由 NotificationProcessor（协调者）
 语义与护栏见 `domain/notification/Precheck.kt` / `data/notification/PrecheckCompiler.kt`（`flags` 必须与
 `pattern` 成对、`expr` 只接受封闭小语法、`bare_amount` 长度按 UTF-16 计）。
 
-**规则真源已归属服务端**（跨端契约见 `recognition-flow.md`）：`server/config/rules.json` 是内容真源
+**规则真源已归属服务端**（跨端契约见服务端 `docs/API.md` 附录 C）：`server/config/rules.json` 是内容真源
 （进 git），服务端启动时校验 + 内容 hash 派生 ETag 后自动激活；DB 只是发布载体，admin UI 只做查看/
 激活历史/回滚。客户端**不再随规则演进发版**；`scripts/rules.json` 降级为**测试语料/本地联调**
 （非运行时真源）。客户端内置的 `assets/default_rules.json` 是**手写的最小冻结兜底**，只负责

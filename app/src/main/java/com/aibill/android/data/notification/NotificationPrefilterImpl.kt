@@ -17,6 +17,7 @@ import com.aibill.android.domain.notification.PrecheckJudge
 import com.aibill.android.domain.notification.PrecheckVerdict
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
+import com.aibill.android.service.PaymentAccessibilityRecognition
 import com.aibill.android.util.AppLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.ConcurrentHashMap
@@ -35,6 +36,7 @@ import javax.inject.Singleton
  * ## 判定顺序（顺序本身是行为，不要随手调）
  *
  * ```
+ * (-1) A11Y 账单/明细列表页【仅 A11Y 且 adapter 填了 pageText】
  * 0 自身通知   → 1 内存内容去重(5s)【仅 NLS】→ 2 空文本 → 3 系统分组摘要
  * → 4 日报汇总 → 5 促销句式 → 6 营销词 → 7 账务判据
  * → 8 长窗 AI 内容记忆(5min)【仅 NLS】→ 9 单包 AI 熔断【仅 NLS】→ 10 DB 1s 去重【仅 NLS】
@@ -107,6 +109,38 @@ class NotificationPrefilterImpl @Inject constructor(
         // 可能是两笔真实交易（下游同源同额原则），闸在预筛就是丢账。理由见类 KDoc。
         val contentGates = capture.channel == SourceChannel.NLS
 
+        // 规则快照：列表页判据要用云控下发的参数，提到链首取一次
+        // （快照按代际缓存，重复取开销可忽略）。
+        val rules = ruleSource.snapshot()
+
+        // ── 0（A11Y 专属，最先）：页面级结构判据——账单/明细列表页。
+        // 理由：这是「整页形状」而非「这句话像不像账」，不依赖词表演进顺序，越早拦越省
+        // （后续判据还要跑正则/查库）。列表页每行常带「交易成功」+ 各自金额，本地
+        // deduKey=金额|商户|pageToken 因每行金额不同而逐行放行 → 整页滚动会逐行送 AI。
+        // 仅在 A11Y 且 adapter 填了 pageText 时生效；pageText 为 null 时既有链逐字不变。
+        val pageText = capture.pageText
+        if (capture.channel == SourceChannel.A11Y && pageText != null) {
+            // 云控优先、内置兜底：空词表 / 非正阈值一律回退内置默认
+            //（服务端会校验类型，但客户端不该信：阈值 0 = 拦一切）。
+            val listKeywords = rules.a11yListPageKeywords
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .ifEmpty { PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS }
+            val minAmounts = rules.a11yListPageMinAmounts
+                .takeIf { it > 0 }
+                ?: PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS
+            if (
+                PaymentAccessibilityRecognition.looksLikeListPage(
+                    pageText,
+                    PaymentAccessibilityRecognition.LIST_PAGE_AMOUNT_REGEX,
+                    listKeywords,
+                    minAmounts,
+                )
+            ) {
+                return block(capture, BlockReason.LIST_PAGE, "账单/明细页，跳过: pkg=$packageName")
+            }
+        }
+
         // 0. 自身通知必须丢弃（2026-10-01 日志回归）。
         // 本 App 自己会发两类通知：自动入库的「已记账 · …」和待审的
         // 「💰 检测到一笔支出 …」。它们会被自己的监听当成新账务再解析一遍，
@@ -117,8 +151,6 @@ class NotificationPrefilterImpl @Inject constructor(
         if (packageName == ownPackageName) {
             return block(capture, BlockReason.SELF_NOTIFICATION, "自身通知，跳过: pkg=$packageName")
         }
-
-        val rules = ruleSource.snapshot()
 
         // 1. 内存级去重（用内容 hash，防系统重复触发 + 协程竞态）。仅 NLS。
         if (contentGates) {

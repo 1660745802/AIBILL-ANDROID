@@ -108,6 +108,83 @@ class PaymentAccessibilityRecognitionTest {
     }
 
     @Test
+    fun `list page heuristic requires both amounts and list keyword`() {
+        val keywords = PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS
+        val regex = PaymentAccessibilityRecognition.LIST_PAGE_AMOUNT_REGEX
+        // 正例：≥3 个金额 + 列表词
+        assertTrue(
+            PaymentAccessibilityRecognition.looksLikeListPage(
+                "账单 ¥12.00 ¥32.50 32.50元 1,000元",
+                regex,
+                keywords,
+            ),
+        )
+        // 反例：结果页（¥ 金额 + 商户，无列表词）
+        assertFalse(
+            PaymentAccessibilityRecognition.looksLikeListPage("支付成功 ¥32.50 星巴克", regex, keywords),
+        )
+        // 边界：实付+原价+运费 = 3 个金额但无列表词 → 不得判为列表页
+        assertFalse(
+            PaymentAccessibilityRecognition.looksLikeListPage(
+                "实付 ¥32.50 原价 ¥45.00 运费 ¥10.00",
+                regex,
+                keywords,
+            ),
+        )
+        // 有列表词但只有 1 个金额 → 不得判为列表页
+        assertFalse(
+            PaymentAccessibilityRecognition.looksLikeListPage("账单 ¥32.50", regex, keywords),
+        )
+        // 反例护栏：真结果页 3 个金额 + 底部「查看账单」入口（列表词在标题区之外）→ 放行。
+        // 若只看「金额≥3 且命中列表词」，这页会被当历史账单拦掉 = P0 误杀漏账。
+        assertFalse(
+            PaymentAccessibilityRecognition.looksLikeListPage(
+                "支付成功 实付 ¥32.50 原价 ¥45.00 优惠 ¥12.50 查看账单",
+                regex,
+                keywords,
+            ),
+        )
+        // 标题区的列表词仍必须命中：把「账单」放在页首，同文本就应判为列表页
+        assertTrue(
+            PaymentAccessibilityRecognition.looksLikeListPage(
+                "账单 实付 ¥32.50 原价 ¥45.00 优惠 ¥12.50 查看明细",
+                regex,
+                keywords,
+            ),
+        )
+    }
+
+    @Test
+    fun `count amount like texts covers currency and thousand separator forms`() {
+        assertEquals(
+            3,
+            PaymentAccessibilityRecognition.countAmountLikeTexts(
+                listOf("¥32.50", "32.50元", "1,000元", "星巴克", "¥", "32.50"),
+                PaymentAccessibilityRecognition.LIST_PAGE_AMOUNT_REGEX,
+            ),
+        )
+    }
+
+    @Test
+    fun `amount regex handles full-width space separators`() {
+        val regex = PaymentAccessibilityRecognition.LIST_PAGE_AMOUNT_REGEX
+        // 服务端实测样例：¥ + U+3000 + 数字 / 数字 + U+3000 + 元。
+        // JVM 默认 \s 不含 U+3000；改用显式空白类后才命中（否则真金额被漏计）。
+        assertTrue(regex.containsMatchIn("¥\u300032.50"), "¥ + 全角空格 + 金额必须命中")
+        assertTrue(regex.containsMatchIn("100\u3000元"), "金额 + 全角空格 + 元必须命中")
+        assertEquals(
+            2,
+            PaymentAccessibilityRecognition.countAmountLikeTexts(
+                listOf("¥\u300032.50", "100\u3000元"),
+                regex,
+            ),
+        )
+        // 端到端：命中后的金额去重键也必须认得全角空格（`trim()` 去掉首尾 U+3000）。
+        assertEquals("3250", PaymentAccessibilityRecognition.amountKey("¥\u300032.50"))
+        assertEquals("10000", PaymentAccessibilityRecognition.amountKey("100\u3000元"))
+    }
+
+    @Test
     fun `history range rejects yesterday and yesterday aliases`() {
         val today = LocalDate.of(2026, 8, 10)
         assertFalse(PaymentAccessibilityRecognition.isRecentTextRange(listOf("昨天", "¥12.00"), today))

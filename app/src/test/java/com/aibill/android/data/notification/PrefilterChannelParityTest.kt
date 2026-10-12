@@ -148,6 +148,38 @@ class PrefilterChannelParityTest {
         }
     }
 
+    // ── A11Y 账单/明细列表页：页面级结构判据，仅 A11Y + pageText 时生效 ──
+
+    @Test
+    @DisplayName("A11Y 列表页（pageText 承载整页文本）按 LIST_PAGE 拦")
+    fun `A11Y 列表页按 LIST_PAGE 拦`() = runTest {
+        val listPage = "账单明细 交易成功 ¥12.00 咖啡 交易成功 ¥32.50 午餐 " +
+            "交易成功 ¥8.00 早餐 交易成功 ¥100.00 转账"
+        val capture = Capture(
+            channel = SourceChannel.A11Y,
+            packageName = "com.tencent.mm",
+            title = "支付成功",
+            fullText = "支付成功 ¥12.00 星巴克臻选店",
+            receivedAt = 1_000_000L,
+            pageText = listPage,
+        )
+        val verdict = verdictOf(capture)
+        assertEquals(BlockReason.LIST_PAGE, (verdict as Verdict.Block).reason, "账单列表页应被拦：$verdict")
+    }
+
+    @Test
+    @DisplayName("pageText 为 null（旧 A11Y 口径）时行为逐字不变：同一 capture 仍放行")
+    fun `pageText 为 null 时零影响`() = runTest {
+        val capture = Capture(
+            channel = SourceChannel.A11Y,
+            packageName = "com.tencent.mm",
+            title = "支付成功",
+            fullText = "支付成功 ¥12.00 星巴克臻选店",
+            receivedAt = 1_000_000L,
+        )
+        assertTrue(verdictOf(capture) is Verdict.Pass, "无 pageText 时旧行为必须不变")
+    }
+
     @Test
     @DisplayName("无支付信号的闲聊短信被拦（与通知渠道同口径）")
     fun `闲聊短信被拦`() = runTest {

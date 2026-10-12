@@ -70,6 +70,8 @@ enum class SourceChannel(val logTag: String) {
  * @param title 通知标题（A11Y 固定为「支付成功」）
  * @param fullText 合并后的正文，**所有文本判据都只看它**（NLS 已把标题拼进去）
  * @param receivedAt 到达时刻，同时是判定链的「现在」
+ * @param pageText A11Y 专用：本页可见文本（去噪+截断后）——供预筛判「列表页」，**不参与 AI 输入**。
+ *   其它渠道为 null。
  */
 data class Capture(
     val channel: SourceChannel,
@@ -77,6 +79,7 @@ data class Capture(
     val title: String,
     val fullText: String,
     val receivedAt: Long,
+    val pageText: String? = null,
 )
 
 /** 判定结果。放行时原样回传 [Capture]，调用方不必自己留着。 */
@@ -119,6 +122,16 @@ enum class BlockReason {
 
     /** 账务判据不通过（per_package / default_rule / 旧硬编码兜底） */
     NOT_FINANCIAL,
+
+    /**
+     * A11Y 账单/明细**列表页**（**仅 A11Y 且 adapter 填了 [Capture.pageText] 时生效**）。
+     *
+     * 为什么不能用词表解决：银行/支付 App 的账单页每行常带「交易成功」+ 各自金额，
+     * 词表判据逐行都通过；而本地 `金额|商户|pageToken` 去重因每行金额不同也逐行放行，
+     * 结果整页滚动会逐行送 AI。这是**页面级结构**（金额节点 ≥3 且命中列表词），
+     * 而不是「这句话像不像账」，所以放在判定链最前面一次拦掉整页。
+     */
+    LIST_PAGE,
 
     /** 长窗内容记忆：同内容 5 分钟内不重复调 AI（**仅 NLS**） */
     AI_MEMORY,

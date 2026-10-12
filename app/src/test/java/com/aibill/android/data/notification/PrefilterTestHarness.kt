@@ -134,7 +134,7 @@ internal object PrefilterTestHarness {
             embeddedSuccessKeywords = emptyList(),
             commonExcludeKeywords = emptyList(),
             wechatAlipayExcludeKeywords = emptyList(),
-            amountRegex = """[¥￥]\s*(\d+\.?\d{0,2})""",
+            amountRegex = """[¥￥][ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(\d+\.?\d{0,2})""",
             cooldownMinutes = 5,
         ),
         sms = SmsRules(spamKeywords = spamKeywords),
@@ -178,7 +178,7 @@ internal object PrefilterTestHarness {
     )
 
     /** 金额信号（锚定货币/数字，避免把纯文字判成金额）。 */
-    const val MONEY_PATTERN = "[¥￥]\\s*\\d|\\d+(\\.\\d+)?\\s*元|rmb\\s*\\d"
+    const val MONEY_PATTERN = "[¥￥][ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*\\d|\\d+(\\.\\d+)?[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*元|rmb[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*\\d"
 
     /** 交易动词。 */
     const val VERB_PATTERN = "支付|付款|消费|扣款|转账|收款|退款|到账|入账|充值|提现|支出|收入"

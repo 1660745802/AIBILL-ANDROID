@@ -47,7 +47,7 @@ class PrecheckRealPayloadTest {
         // ⚠️ 服务端重导载荷会换 content_hash——本断言必须同步更新；
         //    否则「测试跑的仍是旧夹具」会静默通过（本次就是千分位自足那次重导）。
         assertEquals(
-            "4a74ba0a13aef8dc22a37bc01ad99ebaeb1c665054366f31bc95d6f0f8c1f391",
+            "6c8d510ad547b840e5f79c3be8c598c1b4df75b211b43961ba76a0c674711169",
             PrecheckRealPayload.contentHash(),
             "content_hash 变了：服务端重导了 precheck 载荷，请核对差异后更新此断言",
         )
@@ -71,6 +71,16 @@ class PrecheckRealPayloadTest {
         listOf("1,23元", "2.555元").forEach {
             assertFalse(money.containsMatchIn(it), "畸形金额不得命中（契约 §3 反例）：$it")
         }
+    }
+
+    @Test
+    @DisplayName("money signal 认全角空格：¥　32.50 / 100　元 命中（服务端实测样例，替换 \\s 前两端会分叉）")
+    fun moneyPatternHandlesFullWidthSpace() {
+        val money = PrecheckRealPayload.compileRules(logger).signals.getValue("money")
+
+        // U+3000 全角空格：Java/Kotlin 默认的 `\s` 不含它，故服务端已换显式空白类。
+        assertTrue(money.containsMatchIn("¥\u300032.50"), "¥ + 全角空格 + 金额必须命中")
+        assertTrue(money.containsMatchIn("100\u3000元"), "金额 + 全角空格 + 元必须命中")
     }
 
     @Test

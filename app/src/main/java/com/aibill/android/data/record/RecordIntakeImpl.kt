@@ -75,7 +75,10 @@ class RecordIntakeImpl @Inject constructor(
 
     private suspend fun intakeNotificationAuto(intent: RecordIntent.NotificationAuto): RecordOutcome {
         val clientId = newClientId()
-        val moment = recordClock.now()
+        // ⚠️ 日期取**通知到达时刻**，不是解析/入账时刻：通知 23:40 到、服务端 00:05 才解析完时，
+        // 这笔属于 23:40 那天。服务端已按 `received_at` 锚定「今天」，这里必须用同一个锚点，
+        // 否则跨午夜迟发仍会记错一天（服务端复核 R-24）。401 重放同理 → 落回原始交易日期。
+        val moment = recordClock.at(intent.captured.receivedAt)
         // AI 自动入账读**云控**来源名映射（其余路径读硬编码表）——历史差异，保留。
         val sourceDetail = NotificationSourceMapping.friendlyName(intent.captured.packageName, rulesManager)
 
@@ -261,7 +264,7 @@ class RecordIntakeImpl @Inject constructor(
             description = intent.description,
             date = moment.date,
             time = moment.time,
-            source = SOURCE_EXTERNAL_INTENT,
+            source = SOURCE_TASKER,
             sourceDetail = SOURCE_DETAIL_TASKER,
             // 历史口径：本入口的 client_created_at 是**无时区**的本地日期时间串，
             // 与其余路径的 Instant（UTC）不同。保留，不在本次收口里统一。
@@ -404,7 +407,26 @@ class RecordIntakeImpl @Inject constructor(
 
     private companion object {
         const val SOURCE_APP_NOTIFICATION = "app_notification"
-        const val SOURCE_EXTERNAL_INTENT = "external_intent"
+
+        /**
+         * 外部 Intent（Tasker / 快捷指令）路径的 `source`。
+         *
+         * ⚠️ 取值必须是服务端 `POST /api/transactions` 允许的枚举（`server/src/routes/transaction.ts`
+         * 的 zod enum，DB 还有 `transactions.source` 的 CHECK 约束）。历史值 `"external_intent"`
+         * 不在枚举内 → 该入口恒定 400；只放宽 zod 也会被 CHECK 挡成 500（服务端已确认不做重建表迁移），
+         * 所以这里改用枚举内的 `"app_notification"`。
+         *
+         * **语义真相由 [SOURCE_DETAIL_TASKER]（`tasker_quick_record`）承载**——它才是区分
+         * 「Tasker 静默入账」与「通知自动记账」的依据，取值不变。
+         */
+        /**
+         * 外部 Intent（Tasker / 快捷指令）**静默入账**。
+         *
+         * ⚠️ 值与通知自动记账相同（`app_notification`），**不是** `external_intent`：
+         * 服务端 `transactions.source` 有 DB CHECK 约束只允许枚举内的值（送 `external_intent` 会 400）。
+         * 区分职责由 [SOURCE_DETAIL_TASKER]（`tasker_quick_record`）承担，用户可见来源名仍是 Tasker。
+         */
+        const val SOURCE_TASKER = "app_notification"
 
         /** Tasker 与通知自动记账的区分依据，丢了服务端两类记录就分不出来 */
         const val SOURCE_DETAIL_TASKER = "tasker_quick_record"

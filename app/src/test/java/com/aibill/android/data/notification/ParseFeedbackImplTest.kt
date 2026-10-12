@@ -13,6 +13,7 @@ import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -44,26 +45,48 @@ class ParseFeedbackImplTest {
         parseLogId = parseLogId,
     )
 
-    private fun item() = FeedbackItem(type = "expense", amount = 3250, categoryId = 3, description = "午饭")
+    private fun item() = FeedbackItem(
+        type = "expense",
+        amount = 3250,
+        categoryId = 3,
+        description = "午饭",
+        accountId = 7,
+        accountName = "招商银行",
+    )
 
     @Test
-    @DisplayName("有锚点 → 回传最终态，且发送成功后清锚点")
+    @DisplayName("有锚点 → 回传最终态（含 account_name），且发送成功后清锚点")
     fun reportsAndClearsAnchor() = runTest {
         coEvery { dao.findByServerTransactionId(42) } returns row(parseLogId = 777L)
         val body = slot<ParseFeedbackRequest>()
         coEvery { aiApi.parseFeedback(capture(body)) } returns ApiResponse(0, null, "")
 
-        impl.reportCorrected(42, item())
+        impl.reportCorrected(42, item(), modified = false)
 
         assertEquals(777L, body.captured.parseLogId)
         assertEquals(1, body.captured.finalItems.size)
         assertEquals(3250, body.captured.finalItems.first().amount)
-        assertTrue(body.captured.modified)
+        // modified 只能照调用方传入，不得再被硬编码成 true
+        assertFalse(body.captured.modified, "modified 必须透传调用方的判断")
+        // account_name 必须与 account_id 成对带上，否则服务端账户修正学习永不触发
+        assertEquals("招商银行", body.captured.finalItems.first().accountName)
         coVerify(exactly = 1) { dao.clearParseLogId(42) }
     }
 
     @Test
-    @DisplayName("删除 → final_items 为空数组（契约语义）")
+    @DisplayName("modified=true 也原样透传（编辑页确证有变化时）")
+    fun modifiedTrueIsPassedThrough() = runTest {
+        coEvery { dao.findByServerTransactionId(42) } returns row(parseLogId = 777L)
+        val body = slot<ParseFeedbackRequest>()
+        coEvery { aiApi.parseFeedback(capture(body)) } returns ApiResponse(0, null, "")
+
+        impl.reportCorrected(42, item(), modified = true)
+
+        assertTrue(body.captured.modified)
+    }
+
+    @Test
+    @DisplayName("删除 → final_items 为空数组，且 modified 恒为 true（删除本身就是变化）")
     fun deleteSendsEmptyItems() = runTest {
         coEvery { dao.findByServerTransactionId(42) } returns row(parseLogId = 888L)
         val body = slot<ParseFeedbackRequest>()
@@ -72,6 +95,7 @@ class ParseFeedbackImplTest {
         impl.reportDeleted(42)
 
         assertTrue(body.captured.finalItems.isEmpty(), "删除必须传空数组")
+        assertTrue(body.captured.modified, "删除路径 modified 恒 true")
         coVerify(exactly = 1) { dao.clearParseLogId(42) }
     }
 
@@ -80,7 +104,7 @@ class ParseFeedbackImplTest {
     fun noAnchorIsNoOp() = runTest {
         coEvery { dao.findByServerTransactionId(42) } returns row(parseLogId = null)
 
-        impl.reportCorrected(42, item())
+        impl.reportCorrected(42, item(), modified = true)
 
         coVerify(exactly = 0) { aiApi.parseFeedback(any()) }
     }
@@ -101,7 +125,7 @@ class ParseFeedbackImplTest {
         coEvery { dao.findByServerTransactionId(42) } returns row(parseLogId = 999L)
         coEvery { aiApi.parseFeedback(any()) } throws IOException("timeout")
 
-        impl.reportCorrected(42, item())   // 不抛
+        impl.reportCorrected(42, item(), modified = true)   // 不抛
 
         coVerify(exactly = 0) { dao.clearParseLogId(any()) }
     }
@@ -112,7 +136,7 @@ class ParseFeedbackImplTest {
         coEvery { dao.findByServerTransactionId(42) } returns row(parseLogId = 111L)
         coEvery { aiApi.parseFeedback(any()) } returns ApiResponse(3002, null, "日志不存在")
 
-        impl.reportCorrected(42, item())
+        impl.reportCorrected(42, item(), modified = true)
 
         coVerify(exactly = 1) { dao.clearParseLogId(42) }
     }

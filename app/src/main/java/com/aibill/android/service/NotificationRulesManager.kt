@@ -212,8 +212,10 @@ class NotificationRulesManager @Inject constructor(
             embeddedSuccessKeywords = emptyList(),
             commonExcludeKeywords = emptyList(),
             wechatAlipayExcludeKeywords = emptyList(),
-            amountRegex = "[¥￥]\\s*(\\d+\\.?\\d{0,2})",
+            amountRegex = "[¥￥][ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*(\\d+\\.?\\d{0,2})",
             cooldownMinutes = 5,
+            listPageKeywords = PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS,
+            listPageMinAmounts = PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS,
         ),
         sms = SmsRules(spamKeywords = emptyList()),
         sourceMapping = emptyMap(),
@@ -286,6 +288,10 @@ data class A11yRules(
     val wechatAlipayExcludeKeywords: List<String>,
     val amountRegex: String,
     val cooldownMinutes: Int,
+    /** 列表页关键词：云控优先，缺省 = [PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS]。 */
+    val listPageKeywords: List<String> = PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS,
+    /** 列表页金额数下限：云控优先，缺省 = [PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS]。 */
+    val listPageMinAmounts: Int = PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS,
 )
 
 data class SmsRules(

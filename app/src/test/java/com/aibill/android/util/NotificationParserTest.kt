@@ -171,6 +171,57 @@ class NotificationParserTest {
         assertEquals(10000, r!!.amount)
     }
 
+    // ==================== 全角空格（U+3000）金额 ====================
+    //
+    // Java/Kotlin 的 \s 不含 U+3000，中文银行/支付文案常写「¥　32.50」「100.00　元」。
+    // 这里对每条都配「无空格」对照断言，证明加了空白容忍后没有破坏原写法。
+
+    @Test
+    fun `bank 数字与单位之间容忍全角空格`() {
+        // 对照：无空格原写法
+        val packed = parser.parse("com.bank.app", "您尾号1234的信用卡消费100.00元")
+        assertNotNull(packed)
+        assertEquals(10000, packed!!.amount)
+        assertEquals("expense", packed.type)
+
+        // U+3000：数字与「元」之间
+        val spaced = parser.parse("com.bank.app", "您尾号1234的信用卡消费100.00　元")
+        assertNotNull(spaced)
+        assertEquals(10000, spaced!!.amount)
+        assertEquals("expense", spaced.type)
+    }
+
+    @Test
+    fun `bank 裸货币标记与数字之间容忍全角空格`() {
+        // 对照：无空格原写法（银行链此前无此分支，随本次一并支持）
+        assertEquals(8888, parser.parse("com.bank.app", "人民币88.88元")!!.amount)
+        assertEquals(8888, parser.parse("com.bank.app", "人民币\u300088.88元")!!.amount)
+        // 有动词时仍按动词判 income（收入表先跑），不因新增兜底而翻类型
+        assertEquals("income", parser.parse("com.bank.app", "入账人民币\u300088.88元")!!.type)
+    }
+
+    @Test
+    fun `wechat 货币标记与数字之间容忍全角空格`() {
+        // 对照：无空格原写法
+        assertEquals(3250, parser.parse("com.tencent.mm", "微信支付 已支付¥32.50")!!.amount)
+        // U+3000：¥ 与数字之间
+        assertEquals(3250, parser.parse("com.tencent.mm", "微信支付 已支付¥\u300032.50")!!.amount)
+    }
+
+    @Test
+    fun `extractAmountOnly 容忍全角空格（QUICK 链）`() {
+        // 服务端实测样例：`¥　32.50`
+        assertEquals(3250, parser.extractAmountOnly("¥\u300032.50"))
+        // 对照：无空格原写法
+        assertEquals(3250, parser.extractAmountOnly("¥32.50"))
+        // 带「元」的 QUICK 分支要求两位小数（`100元` 这类整数本就不在 QUICK 分支）
+        assertEquals(10000, parser.extractAmountOnly("100.00\u3000元"))
+        assertEquals(10000, parser.extractAmountOnly("100.00元"))
+        // 银行样例：人民币　88.88元 / 消费100.00　元
+        assertEquals(8888, parser.extractAmountOnly("人民币\u300088.88元"))
+        assertEquals(10000, parser.extractAmountOnly("消费100.00\u3000元"))
+    }
+
     // ==================== 金额边界（Int 溢出回归） ====================
 
     @Test

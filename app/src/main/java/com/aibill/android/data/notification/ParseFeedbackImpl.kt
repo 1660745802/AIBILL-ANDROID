@@ -22,6 +22,9 @@ import javax.inject.Singleton
  *    服务端也有 upsert，但少发一次就少一次噪声）。
  * 3. **失败只记日志**：反馈是旁路，任何异常都不能影响用户正在做的事；
  *    取消要原样传播（结构化取消）。
+ * 4. **`modified` / `account_name` 如实回传**：`modified` 由调用方（编辑页）在确证与原值
+ *    不同时才置 true，删除路径恒 true（见 [ParseFeedback.reportCorrected]）；`account_name`
+ *    与 `account_id` 成对带上，否则服务端「账户修正学习」永不触发。
  */
 @Singleton
 class ParseFeedbackImpl @Inject constructor(
@@ -30,22 +33,29 @@ class ParseFeedbackImpl @Inject constructor(
     private val appLogger: AppLogger,
 ) : ParseFeedback {
 
-    override suspend fun reportCorrected(serverTransactionId: Int, finalItem: FeedbackItem) {
+    override suspend fun reportCorrected(serverTransactionId: Int, finalItem: FeedbackItem, modified: Boolean) {
         send(
             serverTransactionId = serverTransactionId,
             finalItems = listOf(finalItem.toDto()),
+            modified = modified,
             what = "用户修正",
         )
     }
 
     override suspend fun reportDeleted(serverTransactionId: Int) {
-        // 删除 = 该笔不出现在 final_items 里（契约 §2）
-        send(serverTransactionId = serverTransactionId, finalItems = emptyList(), what = "用户删除")
+        // 删除 = 该笔不出现在 final_items 里（契约 §2）；删除本身就是变化 → modified 恒 true。
+        send(
+            serverTransactionId = serverTransactionId,
+            finalItems = emptyList(),
+            modified = true,
+            what = "用户删除",
+        )
     }
 
     private suspend fun send(
         serverTransactionId: Int,
         finalItems: List<AiParsedItemDto>,
+        modified: Boolean,
         what: String,
     ) {
         val parseLogId = try {
@@ -67,7 +77,7 @@ class ParseFeedbackImpl @Inject constructor(
                 ParseFeedbackRequest(
                     parseLogId = parseLogId,
                     finalItems = finalItems,
-                    modified = true,
+                    modified = modified,
                     channel = CHANNEL_NOTIFICATION,
                 )
             )
@@ -101,7 +111,7 @@ class ParseFeedbackImpl @Inject constructor(
         description = description,
         date = date.orEmpty(),
         accountId = accountId,
-        accountName = null,
+        accountName = accountName,
         targetAccountId = null,
         targetAccountName = null,
     )

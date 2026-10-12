@@ -14,7 +14,7 @@ import java.io.File
  *
  * ## 为什么这份资产需要单独守
  *
- * 规则真源已归属服务端（见 cross-repo 契约 `recognition-flow.md` §9）：
+ * 规则真源已归属服务端（见服务端 `docs/API.md` 附录 C §8：相关规则的归属）：
  * 运行时靠云控 + ETag，不再靠客户端发版。客户端这份资产只剩一个职责——
  * **首启尚未拉到云控、或服务端无激活规则时的最小兜底**。
  *
@@ -69,6 +69,8 @@ class NotificationRulesFallbackTest {
         assertNotNull(r.a11y?.wechatAlipayExcludeKeywords, "a11y.wechat_alipay_exclude_keywords")
         assertNotNull(r.a11y?.amountRegex, "a11y.amount_regex")
         assertNotNull(r.a11y?.cooldownMinutes, "a11y.cooldown_minutes")
+        assertNotNull(r.a11y?.listPageKeywords, "a11y.list_page_keywords")
+        assertNotNull(r.a11y?.listPageMinAmounts, "a11y.list_page_min_amounts")
         // sms / processor
         assertNotNull(r.smsRules?.spamKeywords, "sms.spam_keywords")
         assertNotNull(r.processor?.scoringWindowSeconds, "processor.scoring_window_seconds")

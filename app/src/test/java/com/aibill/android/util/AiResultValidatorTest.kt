@@ -235,6 +235,15 @@ class AiResultValidatorTest {
     }
 
     @Test
+    fun `校验 5 放行：全角空格分隔的货币金额（服务端实测样例）`() = runTest {
+        coEvery { categoryDao.getById(1) } returns mockk()
+        // 根因：JVM 的 `\s` 不含 U+3000 全角空格，旧实现会漏掉 `¥　32.50` / `100　元`
+        // → 真交易因「无货币佐证」被静默降级成待审。改用显式空白类后必须放行。
+        assertTrue(validator.validate(3_250, "expense", 1, "咖啡", "微信支付 ¥\u300032.50 星巴克").isValid)
+        assertTrue(validator.validate(10_000, "expense", 1, "超市", "您尾号1234的卡消费100\u3000元").isValid)
+    }
+
+    @Test
     fun `Int 回绕不得产生假佐证：43000000元 不是 50327点04元`() = runTest {
         coEvery { categoryDao.getById(1) } returns mockk()
         // 回归（kiro review）：用 Int 算 yuan*100+fen 时，"43000000" 回绕成 5032704，

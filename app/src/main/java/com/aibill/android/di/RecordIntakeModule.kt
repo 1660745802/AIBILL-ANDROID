@@ -28,6 +28,8 @@ object RecordIntakeModule {
     @Singleton
     fun provideRecordClock(): RecordClock = object : RecordClock {
         override fun now() = RecordMoment.system()
+        override fun at(epochMillis: Long) =
+            RecordMoment.of(java.time.Instant.ofEpochMilli(epochMillis), java.time.ZoneId.systemDefault())
     }
 
     @Provides

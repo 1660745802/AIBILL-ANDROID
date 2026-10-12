@@ -136,6 +136,9 @@ class NotificationProcessorTest {
         val writer: RecordWriter = DirectRecordWriter(pendingTransactionDao, notificationRecordDao)
         val clock = object : RecordClock {
             override fun now(): RecordMoment = RecordMoment.system()
+            override fun at(epochMillis: Long) = RecordMoment.system().let { _ ->
+                RecordMoment.of(java.time.Instant.ofEpochMilli(epochMillis), java.time.ZoneId.systemDefault())
+            }
         }
         return RecordIntakeImpl(
             context = context,

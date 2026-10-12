@@ -296,7 +296,7 @@ class NotificationRulesManagerTest {
             embeddedSuccessKeywords = listOf("订单支付成功"),
             commonExcludeKeywords = listOf("购物车"),
             wechatAlipayExcludeKeywords = listOf("朋友圈"),
-            amountRegex = "[¥￥]\\s*(\\d+)",
+            amountRegex = "[¥￥][ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*(\\d+)",
             cooldownMinutes = 5,
         ),
         smsRules = SmsRulesDto(spamKeywords = listOf("订购")),

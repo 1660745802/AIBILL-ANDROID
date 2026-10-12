@@ -13,7 +13,8 @@ package com.aibill.android.domain.notification
  *
  * - 传**用户最终态** `final_items`，不是原始结果、也不是补丁；
  * - **删除 = 该项不出现在 `final_items` 里**（本应用的软删除到回收站即算用户不要这笔）；
- * - `modified` 由客户端给：只有「用户确实改了」才传 true。
+ * - `modified` 由客户端给：只有**能对比出与加载时原值的真实差异**才传 true；
+ *   删除路径恒为 true（删除本身就是变化），拿不到原值的路径不猜（见 `ParseFeedbackImpl`）。
  *
  * ⚠️ 本应用一次通知只入**一笔**（评分窗口择优），因此 `final_items` 长度只会是 0 或 1。
  *
@@ -29,8 +30,9 @@ interface ParseFeedback {
      *
      * @param serverTransactionId 服务端事务 id（用户界面上唯一可见的标识）
      * @param finalItem 该笔的**最终态**（用户确认后的字段值）
+     * @param modified 与 AI 原始结果是否不同（服务端只信这个布尔、不自行 diff，并用它决定是否学习）
      */
-    suspend fun reportCorrected(serverTransactionId: Int, finalItem: FeedbackItem)
+    suspend fun reportCorrected(serverTransactionId: Int, finalItem: FeedbackItem, modified: Boolean)
 
     /** 用户删除了某一笔 AI 自动入账的记录（`final_items` 不含它）。 */
     suspend fun reportDeleted(serverTransactionId: Int)
@@ -49,4 +51,9 @@ data class FeedbackItem(
     val date: String? = null,
     val time: String? = null,
     val accountId: Int? = null,
+    /**
+     * 账户名（与 [accountId] 成对回传）。服务端的「账户修正学习」要求两侧 `account_name`
+     * 都存在且不同才学习——只带 id 不带 name 会让这条学习永不触发。
+     */
+    val accountName: String? = null,
 )

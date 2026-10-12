@@ -37,51 +37,65 @@ class NotificationParser @Inject constructor() {
         private const val PACKAGE_WECHAT = "com.tencent.mm"
         private const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
 
+        /**
+         * Whitespace allowed **around** numbers (includes U+3000 ideographic space, NBSP, BOM).
+         *
+         * Do NOT use \s: Kotlin/Java \s does NOT match U+3000, while Chinese payment/bank
+         * copy commonly writes "currency-symbol + ideographic-space + digits" -> using \s
+         * silently MISSES the amount. The server hit the same pitfall in its classifier and
+         * replaced \s with an explicit whitespace class; this is the same fix.
+         */
+        private const val WS = """[ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*"""
+
         /** 快速金额提取：匹配 ¥/￥后数字、XX.XX元、人民币XX.XX、XX.XX人民币 */
-        private val QUICK_AMOUNT_REGEX = Regex("""[¥￥](\d+\.?\d{0,2})|(\d+\.\d{2})\s*元|人民[币幣](\d+\.?\d{0,2})|(\d+\.?\d{0,2})\s*人民[币幣]""")
+        private val QUICK_AMOUNT_REGEX = Regex("""[¥￥]$WS(\d+\.?\d{0,2})|(\d+\.\d{2})[ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*元|人民[币幣]$WS(\d+\.?\d{0,2})|(\d+\.?\d{0,2})[ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*人民[币幣]""")
 
         // 微信支出模式：匹配多种格式
         private val WECHAT_EXPENSE_PATTERNS = listOf(
-            Regex("""微信支付.*?[￥¥](\d+\.?\d*)"""),
-            Regex("""向.+付款[￥¥](\d+\.?\d*)"""),
-            Regex("""付款.*?[￥¥](\d+\.?\d*)"""),
-            Regex("""支付成功.*?[￥¥](\d+\.?\d*)"""),
-            Regex("""消费[￥¥](\d+\.?\d*)"""),
+            Regex("""微信支付.*?[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""向.+付款[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""付款.*?[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""支付成功.*?[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""消费[￥¥]$WS(\d+\.?\d*)"""),
         )
 
         // 微信收入模式
         private val WECHAT_INCOME_PATTERNS = listOf(
-            Regex("""收款到账[￥¥](\d+\.?\d*)"""),
-            Regex("""收到转账[￥¥](\d+\.?\d*)"""),
-            Regex("""已到账[￥¥](\d+\.?\d*)"""),
-            Regex("""退款.*?[￥¥](\d+\.?\d*)"""),
+            Regex("""收款到账[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""收到转账[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""已到账[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""退款.*?[￥¥]$WS(\d+\.?\d*)"""),
         )
 
         // 支付宝支出模式
         private val ALIPAY_EXPENSE_PATTERNS = listOf(
-            Regex("""支付宝.*?付款[￥¥](\d+\.?\d*)"""),
-            Regex("""付款[￥¥](\d+\.?\d*)"""),
-            Regex("""支付成功.*?[￥¥](\d+\.?\d*)"""),
-            Regex("""消费[￥¥](\d+\.?\d*)"""),
-            Regex("""向.+付款[￥¥](\d+\.?\d*)"""),
+            Regex("""支付宝.*?付款[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""付款[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""支付成功.*?[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""消费[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""向.+付款[￥¥]$WS(\d+\.?\d*)"""),
         )
 
         // 支付宝收入模式
         private val ALIPAY_INCOME_PATTERNS = listOf(
-            Regex("""收到转账[￥¥](\d+\.?\d*)"""),
-            Regex("""收款到账[￥¥](\d+\.?\d*)"""),
-            Regex("""已到账[￥¥](\d+\.?\d*)"""),
-            Regex("""退款.*?[￥¥](\d+\.?\d*)"""),
+            Regex("""收到转账[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""收款到账[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""已到账[￥¥]$WS(\d+\.?\d*)"""),
+            Regex("""退款.*?[￥¥]$WS(\d+\.?\d*)"""),
         )
 
         // 银行短信支出模式
+        // 数字与「元」之间用 WS（含 U+3000 全角空格）——银行短信常写「消费100.00　元」。
+        // 第二条是**无动词**的「货币标记 + 金额 + 元」行（如「人民币　88.88元」）兜底；
+        // 收入表先跑，所以带「入账/转入」的收入短信不会落到这里（仍判 income）。
         private val BANK_EXPENSE_PATTERNS = listOf(
-            Regex("""(?:消费|支出|扣款).*?(\d+\.?\d*)元"""),
+            Regex("""(?:消费|支出|扣款).*?(\d+\.?\d*)${WS}元"""),
+            Regex("""(?:人民币|¥|￥)${WS}(\d+\.?\d*)${WS}元"""),
         )
 
         // 银行短信收入模式
         private val BANK_INCOME_PATTERNS = listOf(
-            Regex("""(?:收入|转入|到账|入账).*?(\d+\.?\d*)元"""),
+            Regex("""(?:收入|转入|到账|入账).*?(\d+\.?\d*)${WS}元"""),
         )
 
         // 商家名抽取（用于分类学习 keyword，要求稳定、与金额/时间无关）

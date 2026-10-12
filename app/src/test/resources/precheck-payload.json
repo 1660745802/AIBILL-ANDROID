@@ -1,6 +1,6 @@
 {
-  "source": "GET /api/config/notification-rules → data.rules.precheck（原样，未裁剪/未重排）",
-  "content_hash": "4a74ba0a13aef8dc22a37bc01ad99ebaeb1c665054366f31bc95d6f0f8c1f391",
+  "source": "GET /api/config/notification-rules → data.rules.precheck（原样）",
+  "content_hash": "6c8d510ad547b840e5f79c3be8c598c1b4df75b211b43961ba76a0c674711169",
   "version": 1,
   "corpus_hash": "025e7de0a94002cead2472031b250a570865231bc18bcf8a25a11cd1e152afe6",
   "precheck": {
@@ -9,7 +9,7 @@
     "channel_agnostic": true,
     "signals": {
       "money": {
-        "pattern": "[¥￥]\\s*((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))(?!\\d)|(?:人民币|RMB|CNY)\\s*((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))(?!\\d)|(?<![\\d.,])((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))\\s*(?:元|圆|块钱|块|人民币|RMB|CNY)(?!\\d)",
+        "pattern": "[¥￥][ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))(?!\\d)|(?:人民币|RMB|CNY)[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))(?!\\d)|(?<![\\d.,])((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*(?:元|圆|块钱|块|人民币|RMB|CNY)(?!\\d)",
         "flags": "gi"
       },
       "verb": {
@@ -27,7 +27,7 @@
         "id": "precheck.social_redpacket",
         "tier": 0,
         "type": "regex",
-        "pattern": "\\[(?:QQ|微信|支付宝)红包\\]|群发红包|口令红包|红包\\s*[:：]",
+        "pattern": "\\[(?:QQ|微信|支付宝)红包\\]|群发红包|口令红包|红包[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*[:：]",
         "flags": "",
         "desc": "强噪声（social_redpacket）：命中即不调模型，即使文本里有金额"
       },
@@ -90,7 +90,7 @@
         "id": "precheck.zero_yuan",
         "tier": 0,
         "type": "regex",
-        "pattern": "(?<![\\d.])0\\s*元(?:兑|领|购|买|花|起|下单|抽奖)(?![\\d.])",
+        "pattern": "(?<![\\d.])0[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*元(?:兑|领|购|买|花|起|下单|抽奖)(?![\\d.])",
         "flags": "",
         "desc": "弱噪声（zero_yuan）：仅在没有 money+verb 正向信号时才拦"
       },

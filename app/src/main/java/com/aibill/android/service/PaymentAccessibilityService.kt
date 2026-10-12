@@ -111,6 +111,65 @@ internal object PaymentAccessibilityRecognition {
             }
         }
     }
+
+    /** 列表页「金额节点」数下限：真实支付结果页最多 2 个（实付 + 原价/优惠）。 */
+    const val LIST_PAGE_MIN_AMOUNTS = 3
+
+    /**
+     * 列表词必须出现在 `pageText` 前 N 个字符内（页面标题区）。
+     *
+     * 真交易结果页常有 ≥3 个金额（实付 + 原价 + 优惠），底部又有「查看账单」这类**入口按钮**
+     * （含列表词「账单」）——只看「金额 ≥3 且命中列表词」会把它们当列表页拦掉 = 误杀真账（P0）。
+     * 页面标题（「账单」「交易记录」）在节点树里靠前，入口按钮在底部；把命中范围收窄到前 N 个
+     * 字符即可放行真结果页。
+     *
+     * **取舍：宁可漏挡（噪声多调一次 AI），不可误杀（丢真账）。** 收窄后若某真列表页的标题不在
+     * 前 N 字符内，只是漏挡一次（该页逐行过预筛后仍会走 AI），不丢账；反之放宽就会拦掉真交易。
+     * 该常量是纯客户端页面结构判据的内置初值，未与服务端对齐前不新增云控键。
+     */
+    const val LIST_PAGE_KEYWORD_HEAD_CHARS = 24
+
+    /**
+     * 列表页启发式的**内置兜底**列表词（7 个）。
+     *
+     * 生产取值是**云控优先、内置兜底**：服务端已放行 `a11y.list_page_keywords` /
+     * `a11y.list_page_min_amounts`（可选键，出现即做形状校验——空数组 / 非正阈值 / 类型错会被拒），
+     * 无云控或缺键时回退到本列表与 [LIST_PAGE_MIN_AMOUNTS]。
+     */
+    val DEFAULT_LIST_KEYWORDS = listOf("账单", "交易记录", "明细", "全部交易", "收支记录", "历史", "月账单")
+
+    /**
+     * 列表页金额计数专用正则：覆盖 `¥12.00` / `12.00元` 与 `1,000元` 千分位。
+     * 与云控 `a11y.amount_regex` 解耦——这是纯客户端页面结构判据，不看单笔金额语义。
+     */
+    val LIST_PAGE_AMOUNT_REGEX = Regex("""[¥￥][ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\d[\d,]*(?:\.\d{1,2})?|\d[\d,]*(?:\.\d{1,2})?[ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*元""")
+
+    /** 统计一组文本里像金额的出现次数（同一条文本里有多个则累计）。 */
+    fun countAmountLikeTexts(texts: List<String>, amountRegex: Regex): Int =
+        texts.sumOf { text -> amountRegex.findAll(text).count() }
+
+    /**
+     * 列表页启发式：**金额数 ≥ [minAmounts] 且列表词出现在页面前 [LIST_PAGE_KEYWORD_HEAD_CHARS]
+     * 个字符内（标题区）** → 判为账单/明细页。
+     *
+     * 三条判据都是刻意的：
+     * - 只靠金额数会误杀结果页（实付+原价+优惠 = 3 个金额）；
+     * - 列表词单独出现（如「查看账单」入口）只有 1 个金额，也不该拦；
+     * - 列表词再限定在标题区：真结果页底部的「查看账单」按钮含「账单」，若不限位置，
+     *   「3 个金额 + 入口按钮」就会把真交易页当列表页拦掉（P0 误杀）。
+     *
+     * @param minAmounts 金额数下限，生产由快照下发（云控优先、内置兜底）。
+     */
+    fun looksLikeListPage(
+        pageText: String,
+        amountRegex: Regex,
+        listKeywords: List<String>,
+        minAmounts: Int = LIST_PAGE_MIN_AMOUNTS,
+    ): Boolean {
+        val head = pageText.take(LIST_PAGE_KEYWORD_HEAD_CHARS)
+        if (listKeywords.none { it.isNotBlank() && head.contains(it) }) return false
+        return countAmountLikeTexts(listOf(pageText), amountRegex) >= minAmounts
+    }
 }
 
 /**
@@ -178,7 +237,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     private var embeddedSuccessKeywords: List<String> = emptyList()
     private var commonExcludeKeywords: List<String> = emptyList()
     private var wechatAlipayExcludeKeywords: List<String> = emptyList()
-    private var amountRegex: Regex = Regex("""[¥￥]\s*(\d+\.?\d{0,2})|(\d+\.?\d{0,2})元""")
+    private var amountRegex: Regex = Regex("""[¥￥][ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(\d+\.?\d{0,2})|(\d+\.?\d{0,2})元""")
     private var cooldownMs: Long = 5 * 60 * 1000L
     private var lastRulesGeneration: Int = -1
 
@@ -196,6 +255,10 @@ class PaymentAccessibilityService : AccessibilityService() {
          */
         private const val SCAN_THROTTLE_MS = 1_500L
         private const val RETRY_DELAY_MS = 500L
+
+        /** [Capture.pageText] 去噪后最多保留的节点数与字数（列表页只看结构，不看全文）。 */
+        private const val PAGE_TEXT_MAX_NODES = 60
+        private const val PAGE_TEXT_MAX_CHARS = 500
         private const val PACKAGE_WECHAT = "com.tencent.mm"
         private const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
 
@@ -247,7 +310,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         amountRegex = try {
             Regex(rules.a11y.amountRegex)
         } catch (e: Exception) {
-            Regex("""[¥￥]\s*(\d+\.?\d{0,2})|(\d+\.?\d{0,2})元""")
+            Regex("""[¥￥][ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(\d+\.?\d{0,2})|(\d+\.?\d{0,2})元""")
         }
         cooldownMs = rules.a11y.cooldownMinutes * 60 * 1000L
         lastRulesGeneration = snapshot.generation
@@ -548,6 +611,7 @@ class PaymentAccessibilityService : AccessibilityService() {
                             title = A11Y_ITEM_TITLE,
                             fullText = summary,
                             receivedAt = now,
+                            pageText = buildPageText(allTexts),
                         )
                     )
                     if (verdict is Verdict.Block) {
@@ -740,6 +804,29 @@ class PaymentAccessibilityService : AccessibilityService() {
             val child = node.getChild(i) ?: continue
             collectAllNodeTexts(child, result)
         }
+    }
+
+    /**
+     * A11Y 专用：把整页文本（复用 [collectAllNodeTexts] 结果）去噪后拼成 [Capture.pageText]。
+     *
+     * 服务于「判列表页」这一页面级结构判据，**不参与 AI 输入**（AI 仍只看 `fullText`=summary）。
+     * 去噪刻意简单：丢掉长度 <2、纯数字/纯符号项，`distinct()` 去重，最多 60 个节点、500 字。
+     */
+    private fun buildPageText(allTexts: List<String>): String =
+        allTexts.asSequence()
+            .map(String::trim)
+            .filter { it.length >= 2 }
+            .filterNot(::isNoiseText)
+            .distinct()
+            .take(PAGE_TEXT_MAX_NODES)
+            .joinToString(" ")
+            .take(PAGE_TEXT_MAX_CHARS)
+
+    /** 纯数字（`32.50` / `1,000`）或纯符号（`¥` / `——`）对判「列表页」无信息量。 */
+    private fun isNoiseText(text: String): Boolean {
+        val pureNumber = text.all { it.isDigit() || it == '.' || it == ',' }
+        val pureSymbol = text.none { it.isLetterOrDigit() }
+        return pureNumber || pureSymbol
     }
 
     /**

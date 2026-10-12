@@ -41,6 +41,8 @@ interface NotificationRuleSource {
  * @param marketingSuffixCutoffs 营销后缀截断词（`processor.marketing_suffix_cutoffs`）——
  *   预筛用它算 precheck 的输入串，与转发给 AI 的 `input` 保持一致
  * @param marketingCommaKeywords 营销词首次出现处截断（`processor.marketing_comma_keywords`）
+ * @param a11yListPageKeywords A11Y 列表页关键词（云控优先、内置兜底）
+ * @param a11yListPageMinAmounts A11Y 列表页金额数下限（云控优先、内置兜底；预筛对非正值再兜底）
  */
 data class NotificationRuleSnapshot(
     val generation: Int,
@@ -54,6 +56,8 @@ data class NotificationRuleSnapshot(
     val precheck: PrecheckRules = PrecheckRules.EMPTY,
     val marketingSuffixCutoffs: List<String> = emptyList(),
     val marketingCommaKeywords: List<String> = emptyList(),
+    val a11yListPageKeywords: List<String> = emptyList(),
+    val a11yListPageMinAmounts: Int = 0,
 ) {
 
     /**

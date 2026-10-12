@@ -19,17 +19,17 @@ import com.aibill.android.util.AppLogger
  * （正向信号规则被丢、而 `no_signal`(fallback, tier 4) 幸存 → 真交易被判「无信号」→ 拦 → P0 误杀）。
  * 宁可整链不可用（多发一次请求），也不用残缺的链去拦人。
  *
- * 一条规则坏掉只丢**那一条**，其余照常执行；被判坏的规则 id 记进
- * [PrecheckRules.unusableRuleIds]，由预筛计入诊断计数 `precheck_unknown_expr`。
- * 为什么不做成整体失败：规则是服务端下发的**运行期数据**，客户端没有「拒绝启动」的选择；
- * 而整体丢弃会让降噪能力凭空消失。单条丢弃最多是多发一次请求，符合契约取舍。
- *
  * ## 什么算「坏」
  *
+ * 下列任一情况都算「坏」，一旦出现即**整链不可用**（不做「只丢坏的那一条」的部分降级）：
+ *
  * - `schema != 1`（不认识）→ 整体忽略（契约 §3，降级）；
- * - signal 缺 `flags` / flags 含 `gim` 以外的字符 / 正则编译失败 → 该 signal 不可用；
+ * - signal 缺 `flags` 键 / flags 含 `gim` 以外的字符 / 正则编译失败 → **整链不可用**；
  * - 规则引用了不可用的 signal / `expr` 不是封闭小语法 / `tier` 越界 / `type` 未知 →
- *   **整链不可用**（该条 id 计入 `unusableRuleIds` 供诊断，但 `rules` 清空）。
+ *   **整链不可用**。
+ *
+ * 被判坏的 signal / 规则 id 记进 [PrecheckRules.unusableRuleIds]，只用于诊断与上报
+ * （`precheck_unknown_expr`），不参与判定。
  */
 internal object PrecheckCompiler {
 

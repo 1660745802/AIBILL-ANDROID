@@ -50,7 +50,7 @@ class NotificationRulesForwardCompatTest {
                  "per_package":[],"default_rule":{"exclude_content_contains":[]}},
           "a11y":{"embedded_payment_apps":["com.tencent.mm"],"success_keywords":["支付成功"],
                   "embedded_success_keywords":[],"common_exclude_keywords":[],"wechat_alipay_exclude_keywords":[],
-                  "amount_regex":"[¥￥]\\s*(\\d+\\.?\\d{0,2})","cooldown_minutes":5},
+                  "amount_regex":"[¥￥][ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*(\\d+\\.?\\d{0,2})","cooldown_minutes":5},
           "sms":{"spam_keywords":["退订"]},
           "source_mapping":{"com.tencent.mm":"微信"},
           "processor":{"scoring_window_seconds":10,"dedup_window_seconds":60,

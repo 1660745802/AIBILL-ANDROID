@@ -1,7 +1,7 @@
 package com.aibill.android.domain.notification
 
 /**
- * 入站预筛判据 `precheck`（跨端契约 `recognition-flow.md` §3）。
+ * 入站预筛判据 `precheck`（服务端 `docs/API.md` 附录 C §3：预筛判据/precheck 形状）。
  *
  * ## 这是什么、为什么由服务端下发
  *

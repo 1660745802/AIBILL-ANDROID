@@ -137,6 +137,7 @@ interface PrefilterStats {
             BlockReason.PROMO_SENTENCE.name to "促销句式",
             BlockReason.MARKETING.name to "营销词",
             BlockReason.NOT_FINANCIAL.name to "非账务判据",
+            BlockReason.LIST_PAGE.name to "账单/明细列表页",
             BlockReason.AI_MEMORY.name to "长窗记忆(5min)",
             BlockReason.AI_MUTED.name to "AI 熔断静音",
             BlockReason.DB_DUPLICATE.name to "DB 去重(1s)",

@@ -136,7 +136,11 @@ data class A11yRulesDto(
     @Json(name = "common_exclude_keywords") val commonExcludeKeywords: List<String>?,
     @Json(name = "wechat_alipay_exclude_keywords") val wechatAlipayExcludeKeywords: List<String>?,
     @Json(name = "amount_regex") val amountRegex: String?,
-    @Json(name = "cooldown_minutes") val cooldownMinutes: Int?
+    @Json(name = "cooldown_minutes") val cooldownMinutes: Int?,
+    /** 列表页关键词（可选；缺省/空数组 → 客户端内置默认）。 */
+    @Json(name = "list_page_keywords") val listPageKeywords: List<String>? = null,
+    /** 列表页金额数下限（可选；缺失/非正 → 客户端内置默认）。 */
+    @Json(name = "list_page_min_amounts") val listPageMinAmounts: Int? = null
 )
 
 @JsonClass(generateAdapter = true)

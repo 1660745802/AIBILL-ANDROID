@@ -237,7 +237,7 @@ sealed interface RecordIntent {
      * 外部 Intent 静默入账（Tasker / 快捷指令，同签名权限校验在调用方）。
      *
      * 对应 `ExternalActionReceiver`（`auto_confirm` 静默入账分支），其独有的历史写法全部保留：
-     * - `source="external_intent"`、`source_detail="tasker_quick_record"`
+     * - `source="app_notification"`（服务端 `transactions.source` 枚举 / CHECK 约束内的值；历史值 `external_intent` 会 400/500）、`source_detail="tasker_quick_record"`
      *   （Tasker 与通知自动记账的区分依据，丢了服务端就分不出来）；
      * - `client_created_at` 用**无时区的本地日期时间串**（`LocalDateTime.now().toString()`），
      *   与其余路径的 `Instant`（UTC）口径不同——保留，不在本次收口里统一；

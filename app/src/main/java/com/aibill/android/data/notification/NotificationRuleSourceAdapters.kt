@@ -59,6 +59,9 @@ internal fun deriveSnapshot(rules: NotificationRules, generation: Int, logger: A
         // 营销后缀截断词随代际进快照：预筛要用它算出与请求 `input` 一致的串。
         marketingSuffixCutoffs = rules.processor.marketingSuffixCutoffs,
         marketingCommaKeywords = rules.processor.marketingCommaKeywords,
+        // A11Y 列表页启发式参数：云控优先、内置兜底（预筛对空/非正值再兜底）。
+        a11yListPageKeywords = rules.a11y.listPageKeywords,
+        a11yListPageMinAmounts = rules.a11y.listPageMinAmounts,
     )
 }
 
