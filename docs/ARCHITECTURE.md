@@ -169,6 +169,10 @@ L4 路由 NotificationProcessor（协调者）
    客户端复现不了 → 同一文本两端判定相反。要么把预处理写进契约、两边都做，
    要么让判据自身受理（服务端后来选了把千分位支路写进 `MONEY_RE`）。
 
+**捕获层漏斗计数**（`client_only.capture_*`）：白名单外 App、无 root、未命中成功词、排除词、金额不合法、
+历史日期、防抖、页面去重 —— 这些记录**从不进预筛、也不上服务端**，是「漏账」唯一可诊断的入口。
+只加计数、不改行为；`totals.notifications = blocked + passed` 的语义不变（捕获层计数只进 `counts`）。
+
 **判定顺序本身是行为**：日报/促销必须早于营销词（它们含「支出」会触发强交易特征豁免，词表拦不住）。
 
 **四道状态闸只对 NLS 生效**（5s 去重 / 5min 记忆 / AI 熔断 / DB 1s）：它们是为 NLS 噪音
@@ -239,6 +243,10 @@ POST /api/ai/parse               # { input } 必填；可选上下文 channel/so
                                  # 响应 items 含 S3 机械抽取字段（merchant/card_tail/balance_*/time）
                                  # 与 needs_review（**服务端唯一待审阈值**）/confidence（仅展示）
                                  # 成功形态带 parse_log_id；预筛挡下/超时等形态没有（无可反馈对象）
+                                 # **items 恒 ≤ 1**（单笔契约不变量：挑笔标准在服务端 lib/main-item.ts，
+                                 #   客户端只取 items[0] 不自挑）；多余条数见 data.extra_items_dropped
+                                 #   通知链路：0 笔 = 手动兜底，1 笔 = 正常入账
+                                 # （POST /transactions 的 items[] 批量保留：导入/离线补传依赖）
 POST /api/ai/parse-feedback      # { parse_log_id, final_items, modified, channel }
                                  # 用户最终态；删除 = 空数组（AI 越用越准的闭环）
 POST /api/ai/filter-report       # { window_start, window_end, client_version, channel,
