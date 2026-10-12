@@ -74,7 +74,11 @@ class SettingsViewModelTest {
         appLogger = appLogger,
         notificationRulesManager = notificationRulesManager,
         updateManager = updateManager,
+        prefilterStats = prefilterStats,
     )
+
+    /** 预筛拦截计数：导出日志时随附（断言导出文本包含分布段落）。 */
+    private val prefilterStats = com.aibill.android.data.notification.PrefilterStatsImpl()
 
     @Test
     fun `defaults to enabled`() {

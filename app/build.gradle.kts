@@ -220,17 +220,6 @@ kover {
     }
 }
 
-// 编译时同步 scripts/rules.json → assets/default_rules.json（保持单一数据源）
-tasks.register<Copy>("syncDefaultRules") {
-    from(rootProject.file("scripts/rules.json"))
-    into(layout.projectDirectory.dir("src/main/assets"))
-    rename { "default_rules.json" }
-}
-tasks.configureEach {
-    if (name.contains("Assets") || name.contains("Lint") || name.contains("lint")) {
-        dependsOn("syncDefaultRules")
-    }
-}
 
 // Detekt 静态分析配置
 detekt {

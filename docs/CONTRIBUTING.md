@@ -112,7 +112,7 @@ bump 单独提 `chore: bump versionCode X → Y`，不要夹在 fix/feat 里。
 |---|---|
 | `upload_apk.sh` | 构建 release APK 并发布到 billserver（`--github` 双发布，`--dry-run` 演练） |
 | `check_update.sh` | 模拟客户端查/下载更新，验证发布结果 |
-| `update_rules.sh` | 把 `scripts/rules.json` 的通知规则推到 billserver 并激活 |
+| `update_rules.sh` | **仅本地开发/联调**：把 `scripts/rules.json` 推到 billserver 并激活。⚠️ 规则内容真源在服务端的 `server/config/rules.json`——生产上线改那份并重启服务（启动时自动校验 + 内容 hash 派生版本后激活）；本脚本推的试验规则会被下次重启的文件内容覆盖（期望语义） |
 
 **发版前**：跑完验证清单 + `./gradlew testDebugUnitTest` · 确认版本号已与维护者核对 ·
 Release 构建需根目录有 `keystore.properties`（不入 git）。

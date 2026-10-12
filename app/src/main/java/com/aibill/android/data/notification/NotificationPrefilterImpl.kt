@@ -9,6 +9,7 @@ import com.aibill.android.domain.notification.MarketingCriteria
 import com.aibill.android.domain.notification.NotificationRuleSnapshot
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.NotificationRuleSource
+import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.domain.notification.NotificationTextClassifier
 import com.aibill.android.domain.notification.PerPackageCriteria
 import com.aibill.android.domain.notification.SourceChannel
@@ -68,6 +69,7 @@ class NotificationPrefilterImpl @Inject constructor(
     private val notificationRecordDao: NotificationRecordDao,
     private val appLogger: AppLogger,
     private val circuitBreaker: AiCircuitBreaker,
+    private val stats: PrefilterStats,
 ) : NotificationPrefilter {
 
     private val ownPackageName: String = context.packageName
@@ -115,14 +117,15 @@ class NotificationPrefilterImpl @Inject constructor(
             val lastSeen = recentContentKeys.put(contentKeyOf(packageName, fullText), now)
             if (lastSeen != null && (now - lastSeen) < CONTENT_DEDUP_WINDOW_MS) {
                 // 去重是常态（微信视频通话、系统服务会刷出大量重复通知），
-                // 每次都写日志会瞬间冲掉账务结果行（曾出现单秒 6 条）→ 采样。
-                if (now - (lastDedupLoggedAt[packageName] ?: 0L) > DEDUP_LOG_SAMPLE_MS) {
-                    lastDedupLoggedAt[packageName] = now
-                    appLogger.debug(tag, "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName")
-                }
-                return Verdict.Block(
+                // 每次都写日志会瞬间冲掉账务结果行（曾出现单秒 6 条）→ 日志采样；
+                // **计数不采样**（计数是判据调参的唯一依据）。
+                val shouldLog = now - (lastDedupLoggedAt[packageName] ?: 0L) > DEDUP_LOG_SAMPLE_MS
+                if (shouldLog) lastDedupLoggedAt[packageName] = now
+                return block(
+                    capture,
                     BlockReason.DUPLICATE_CONTENT,
                     "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName",
+                    log = shouldLog,
                 )
             }
             // 每次清理过期 key（>10s），防泄漏
@@ -226,7 +229,7 @@ class NotificationPrefilterImpl @Inject constructor(
             }
         }
 
-        return Verdict.Pass(capture)
+        return Verdict.Pass(capture).also { stats.recordPassed() }
     }
 
     /**
@@ -312,9 +315,19 @@ class NotificationPrefilterImpl @Inject constructor(
         }
     }
 
-    /** 拦截统一从这里走：日志只在这里打一次，避免三个 adapter 各写一份口径。 */
-    private fun block(capture: Capture, reason: BlockReason, message: String): Verdict.Block {
-        appLogger.debug(capture.channel.logTag, message)
+    /**
+     * 拦截统一从这里走：计数与日志都只在这里做一次，避免三个 adapter 各写一份口径。
+     *
+     * @param log 是否写日志（去重等高频路径采样写，避免冲掉账务结果行）；**计数不受它影响**。
+     */
+    private fun block(
+        capture: Capture,
+        reason: BlockReason,
+        message: String,
+        log: Boolean = true,
+    ): Verdict.Block {
+        stats.recordBlocked(reason)
+        if (log) appLogger.debug(capture.channel.logTag, message)
         return Verdict.Block(reason, message)
     }
 

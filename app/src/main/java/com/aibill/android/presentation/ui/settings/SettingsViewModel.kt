@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.domain.repository.AuthRepository
 import com.aibill.android.service.NotificationRulesManager
 import com.aibill.android.service.QuickEntryService
@@ -43,6 +44,7 @@ class SettingsViewModel @Inject constructor(
     private val appLogger: AppLogger,
     private val notificationRulesManager: NotificationRulesManager,
     private val updateManager: UpdateManager,
+    private val prefilterStats: PrefilterStats,
 ) : ViewModel() {
 
     data class UiState(
@@ -172,7 +174,9 @@ class SettingsViewModel @Inject constructor(
     fun onExportLogs(@Suppress("UNUSED_PARAMETER") context: Context) {
         viewModelScope.launch {
             try {
-                val logText = appLogger.exportAsText()
+                // 预筛拦截分布随导出一起走：这是「拦了什么、是不是误杀」唯一的现场证据
+                val logText = appLogger.exportAsText() +
+                    "\n" + PrefilterStats.render(prefilterStats.snapshot())
                 val logFile = java.io.File(context.cacheDir, "aibill_log_${System.currentTimeMillis()}.txt")
                 logFile.writeText(logText)
                 val uri = androidx.core.content.FileProvider.getUriForFile(

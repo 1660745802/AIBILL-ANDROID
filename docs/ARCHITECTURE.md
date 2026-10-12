@@ -157,6 +157,13 @@ L4 路由 NotificationProcessor（协调者）
 单测 `InMemoryNotificationRuleSource`（固定规则，零 IO）。回归护栏直接打生产判据
 （`scripts/rules.json` → 生产映射 → 生产链），不是复刻。
 
+**规则真源已归属服务端**（跨端契约见 `recognition-flow.md`）：`server/config/rules.json` 是内容真源
+（进 git），服务端启动时校验 + 内容 hash 派生 ETag 后自动激活；DB 只是发布载体，admin UI 只做查看/
+激活历史/回滚。客户端**不再随规则演进发版**；`scripts/rules.json` 降级为**测试语料/本地联调**
+（非运行时真源）。客户端内置的 `assets/default_rules.json` 是**手写的最小冻结兜底**，只负责
+「首启未拉到云控 / 服务端无激活规则」这个窗口，由 `NotificationRulesFallbackTest` 守其结构完整与可用性。
+只有**新增判据类型**（如 `precheck`）才需要客户端发版——靠 schema 版本做能力协商。
+
 **核心原则**：AI 是唯一裁判，本地只排除「100% 不是账」的垃圾；正则不面对用户，
 仅用于去重层提取金额；用户看到的 = AI 确认的；去重在本地，后端零改动。
 

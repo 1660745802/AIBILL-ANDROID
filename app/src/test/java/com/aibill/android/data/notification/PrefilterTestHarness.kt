@@ -5,6 +5,7 @@ import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.domain.notification.AiCircuitBreaker
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.NotificationRuleSource
+import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.service.A11yRules
 import com.aibill.android.service.AlipayRules
 import com.aibill.android.service.NlsRules
@@ -63,6 +64,7 @@ internal object PrefilterTestHarness {
         ownPackage: String = OWN_PACKAGE,
         dao: NotificationRecordDao = emptyDao(),
         circuitBreaker: AiCircuitBreaker = mockk(relaxed = true),
+        stats: PrefilterStats = PrefilterStatsImpl(),
     ): NotificationPrefilter {
         val context = mockk<Context>(relaxed = true)
         every { context.packageName } returns ownPackage
@@ -72,6 +74,7 @@ internal object PrefilterTestHarness {
             notificationRecordDao = dao,
             appLogger = AppLogger(mockk(relaxed = true)),
             circuitBreaker = circuitBreaker,
+            stats = stats,
         )
     }
 

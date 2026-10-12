@@ -4,6 +4,7 @@ import com.aibill.android.data.notification.CloudNotificationRuleSource
 import com.aibill.android.data.notification.NotificationPrefilterImpl
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.NotificationRuleSource
+import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.service.NotificationRulesManager
 import com.aibill.android.util.AppLogger
 import dagger.Module
@@ -37,4 +38,12 @@ object NotificationPrefilterModule {
     @Provides
     @Singleton
     fun provideNotificationPrefilter(impl: NotificationPrefilterImpl): NotificationPrefilter = impl
+
+    /**
+     * 预筛拦截计数（PRODUCT §三「预筛拦下了什么没有计数」的客户端答案）。
+     * 纯内存，进程级；将来接遥测端点时直接复用这份计数。
+     */
+    @Provides
+    @Singleton
+    fun providePrefilterStats(impl: com.aibill.android.data.notification.PrefilterStatsImpl): PrefilterStats = impl
 }
