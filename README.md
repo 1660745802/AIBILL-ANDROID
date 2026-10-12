@@ -19,11 +19,11 @@ AI 驱动的智能记账 Android 原生应用，复用 [AIBILL 后端](https://g
 
 | 层 | 选型 |
 |---|---|
-| 语言 | Kotlin 1.9.x（JVM 17） |
+| 语言 | Kotlin 2.1.0（JVM 17） |
 | UI | Jetpack Compose + Material 3 |
 | 架构 | MVVM + Clean Architecture（UI / Domain / Data） |
 | DI | Hilt（含 `@HiltWorker`） |
-| 本地存储 | Room v8（6 张表） + DataStore Preferences |
+| 本地存储 | Room（DB v8，6 张表） + DataStore Preferences |
 | 网络 | Retrofit + OkHttp + Moshi（codegen） |
 | 后台 | WorkManager（4 个 Worker：RulesSync / UpdateCheck / NlsHealth / A11yHealth） |
 | 通知监听 | NotificationListenerService + 无障碍 + SMS 三渠道 |
@@ -39,12 +39,14 @@ AI 驱动的智能记账 Android 原生应用，复用 [AIBILL 后端](https://g
 ### 2. 配置客户端
 
 ```bash
-git clone <repo> && cd billapp
-
-# 配置服务器地址（可选，App 启动后也可在「服务器配置」页输入）
-echo "server.url=http://10.0.2.2:3000" > local.properties  # 模拟器访问宿主机
-# 真机调试：将 IP 换成你后端机器的内网 IP
+git clone <repo> && cd AIBILL-ANDROID
 ```
+
+服务器地址**不需要构建期配置**（`local.properties` 只给 Android Studio 放 SDK 路径），
+它存在 DataStore 里，App 启动后在「服务器配置」页输入即可：
+
+- 模拟器访问宿主机：`http://10.0.2.2:3000`
+- 真机调试：`http://<后端机器内网 IP>:3000`
 
 ### 3. 编译运行
 
@@ -53,7 +55,7 @@ echo "server.url=http://10.0.2.2:3000" > local.properties  # 模拟器访问宿�
 ./gradlew installDebug           # 安装到已连接设备
 ./gradlew testDebugUnitTest      # 运行单元测试
 ./gradlew koverHtmlReportDebug   # 覆盖率报告（只统计 debug 变体；别用 koverHtmlReport，
-                                 # 那个跨变体聚合，会把 release 变体的 9 个已知失败拖进来）
+                                 # 那个跨变体聚合，会把 release 变体的 2 个已知失败拖进来）
 ```
 
 Release 构建需在根目录准备 `keystore.properties`（已在 `.gitignore`）。

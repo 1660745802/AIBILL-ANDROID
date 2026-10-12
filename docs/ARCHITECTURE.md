@@ -54,12 +54,12 @@ com.aibill/android/
 ├── domain/        model / repository(接口) / usecase / record / notification / ownership / undo
 ├── data/          local(db,dao,entity,datastore) / remote(api,dto,interceptor) / repository(实现)
 │                  record / notification / ownership / undo（domain 接口的实现）
-├── presentation/  navigation / theme / components / widget / ui(10 个页面模块)
+├── presentation/  navigation / theme / components / widget / ui(11 个页面模块 + common)
 ├── service/       后台：通知监听、无障碍、SMS、Worker(4)、小组件、更新
 └── util/          NetworkMonitor / AppLogger / AmountUtils / NotificationHelper / AiResultValidator
 ```
 
-### 2.2 路由（14 条类型安全）
+### 2.2 路由（15 条类型安全）
 
 认证 `ServerConfig` / `Login` / `Register` · 主框架 `Home` / `Transactions` / `Statistics` / `Profile`
 · 独立页 `ManualRecord` / `TransactionDetail` / `NotificationCenter` / `Settings` /
@@ -143,7 +143,8 @@ L4 路由 NotificationProcessor（协调者）
 | **CaptureArchive** | 未解析原文的落库语义、401 重放、终态 | `captureUnparsed` / `captureAuthPending` / `replay` |
 | **AiCircuitBreaker** | 每来源连续失败计数与静音窗口（白名单判据与**查询时机**仍在预筛） | `isMuted(source, now)` / `recordOutcome(source, ok, now)` |
 
-**时间常数与顺序逐字不变**：评分窗口 10s、跨渠道去重 60s、熔断 3 次 / 5min、内容去重 5s、
+**时间窗与顺序**：评分窗口 10s、跨渠道去重 60s（默认值来自云控 `rules.json` 的
+`scoring_window_seconds` / `dedup_window_seconds`）、熔断 3 次 / 5min、内容去重 5s、
 长窗记忆 5min、DB 1s（后四道只在 NLS）。
 
 **判定顺序本身是行为**：日报/促销必须早于营销词（它们含「支出」会触发强交易特征豁免，词表拦不住）。
@@ -194,14 +195,21 @@ POST /api/auth/register|login    GET /api/auth/me    PUT /api/auth/password
 POST /api/transactions           # { items: [...] }，同 client_id 幂等 → { created, duplicates }
 GET  /api/transactions           # page/page_size/start_date/end_date/type/category_id/account_id/keyword/tag
 GET|PUT|DELETE /api/transactions/:id     # DELETE = 软删除
+GET  /api/transactions/tags      # 标签候选
+GET  /api/transactions/trash     # 回收站
+POST /api/transactions/:id/restore       # 回收站恢复
+DELETE /api/transactions/:id/permanent   # 彻底删除
 POST /api/ai/parse               # { input } 自然语言解析
-GET  /api/categories  /api/accounts
+GET|POST /api/categories  PUT|DELETE /api/categories/:id
+GET|POST /api/accounts    PUT|DELETE /api/accounts/:id
 GET  /api/stats/summary|by-category|trend
-GET|POST|PUT|DELETE /api/budgets # 当前无 UI 消费
-GET|PUT /api/settings
+GET  /api/app/update             # 自更新检查（GitHub Release 兜底）
 GET  /api/config/notification-rules      # 云控，ETag/304
 GET  https://api.github.com/repos/<owner>/<repo>/releases/latest
 ```
+
+后端另有 `budgets` / `settings` 资源，**客户端零消费**（无 API 接口、无 UI）；
+预算属于 [PRODUCT.md §六](PRODUCT.md) 缺口 #2。
 
 **错误码**：`0` 成功 · `401` 清 Token 跳登录 · `403` 提示 · `422` 显示 message ·
 `5001` AI 解析失败 · `5002` AI 不可用 · `-1` 网络异常（本地） · `-2` 未知错误（本地）。
@@ -234,12 +242,13 @@ GET  https://api.github.com/repos/<owner>/<repo>/releases/latest
 
 **拦截器链**：`ServerUrlInterceptor`（DataStore 读地址动态改 BaseUrl）→ `AuthInterceptor`
 （附 JWT；401 清 Token + `AuthEventBus.emit(TokenExpired)`）→ `RetryInterceptor`（仅 IOException，
-指数退避 3 次）→ Logging（仅 debug）。
+最多重试 2 次，退避 200ms×n）→ Logging（仅 debug）。
 
 **统一响应**：`safeApiCall { }` 把 `ApiResponse<T>` 转 `Result<T>`，`code==0` 为成功，
 IOException → `-1`，HttpException → 服务器错误，其它 → `-2`。
 
-**超时**：AI 30s，其它 15s；连接 10s / 读 15s。
+**超时**：通用连接 15s / 读 30s / 写 15s；AI 读 90s / 写 30s（上游慢，30s 不够）；
+GitHub 更新检查连接 15s / 读 30s。
 
 ---
 
@@ -325,16 +334,19 @@ Migration 显式列出，禁 destructive fallback。
 
 ### 7.3 DataStore（`UserPreferences`）
 
-`server_url` · `default_account_id` · `theme_mode` · `notification_enabled` · `app_lock_enabled` ·
-`hide_from_recents` · `last_sync_time`。迁移期保留旧 `user_id/username/nickname` 作只读 fallback。
+`server_url` · `default_account_id` · `theme_mode` · `notification_privacy` · `app_lock_enabled` ·
+`hide_from_recents` · `quick_entry_enabled` · `dynamic_color_enabled`（默认关）· `automation_level` ·
+`ai_parse_enabled` · `last_sync_time`。迁移期保留旧 `user_id/username/nickname` 作只读 fallback。
 用 `stateIn(Eagerly)` + `AtomicReference` 暴露热流，避开 Interceptor 同步路径的 `runBlocking`。
 
 ---
 
-## 八、性能 / 九、安全
+## 八、性能
 
 冷启动 < 2s（`Application.onCreate` 不做 I/O）· 列表 `LazyColumn` + `key()` + `contentType` ·
 分类/账户本地缓存。
+
+## 九、安全
 
 Token 加密存储 · 支持 HTTPS（自签证书走 NetworkSecurityConfig）· Release 禁 debug 日志 ·
 R8 开启（保留 DTO/Entity/Retrofit 接口）· `allowBackup=false` · 权限按需申请、拒绝则降级不崩 ·
@@ -378,7 +390,7 @@ R8 开启（保留 DTO/Entity/Retrofit 接口）· `allowBackup=false` · 权限
 | # | 缺口 | 现状 |
 |---|---|---|
 | 1 | 跨服务器 `userId` 命名空间碰撞 | 归属已收进 `LocalOwnership`（server × account），**server 维度仍为空**，换服务器仍是「整表作废」。当前唯一还在丢数据的根因 |
-| 2 | 撤销时服务端删除失败无自动重试 | 删除失败就保留本地缓存行并提示去流水页手动删；`RecordUndoImpl` 只记日志、不自动重试。可能留下用户不知道的服务端记录 |
+| 2 | 撤销时服务端删除失败无自动重试 | 删除失败保留本地缓存行并提示去流水页手动删。撤销失败各分支都返回 `UndoOutcome` 由 receiver 播报（不静默，符合 [PRODUCT.md §五.5](PRODUCT.md)）；残余风险是播报可能被忽略、无自动重试 |
 | 3 | `pending_transactions` / `notification_records` 只增不减 | 两张表都没有清理窗口：原本定义的 `cleanSyncedBefore` / `cleanIgnoredBefore` / `cleanAuthPendingBefore` 零调用，已随死代码一并删除。DB 体积随使用时长单调增长，将来要清必须先补清理时机 |
 
 ### 12.2 认知陷阱

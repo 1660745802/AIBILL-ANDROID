@@ -50,7 +50,7 @@ bump 单独提 `chore: bump versionCode X → Y`，不要夹在 fix/feat 里。
 ./gradlew lintDebug
 ```
 
-⚠️ 用 `koverVerifyDebug`，**别用 `koverVerify`**（跨变体聚合，会把 release 的 9 个已知失败
+⚠️ 用 `koverVerifyDebug`,**别用 `koverVerify`**(跨变体聚合,会把 release 的 2 个已知失败
 拖进来，见 [ARCHITECTURE.md §12.3](ARCHITECTURE.md#123-测试基建)）。同理 `koverHtmlReportDebug`。
 测试必须用 JDK 17：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew …`（JDK 25 会报
 `IllegalArgumentException: 25.0.4.1`）。
@@ -96,7 +96,7 @@ bump 单独提 `chore: bump versionCode X → Y`，不要夹在 fix/feat 里。
 - **动效只用于回应用户动作**（按下、展开、保存成功、转场），不要给每行加装饰性淡入。
 - **空/错/加载态都要有**：`EmptyState`（矢量图 + 邀请行动）/ `LoadingState` / Snackbar + 重试。
 - **文案底线**：不指引用户做不到的动作，不主张不确定的同步状态
-  （"已加入同步队列"而不是"同步完成"）。
+  （失败就说「没记上」，文案里不要出现「同步 / 队列」字眼——不存在同步队列）。
 
 改完自查：明暗两套主题各看一遍 · 真机字号/语言环境 · 金额列对齐 · 空态与错误态 ·
 对比度 · 触摸目标 ≥ 40dp。
