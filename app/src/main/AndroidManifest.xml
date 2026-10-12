@@ -16,7 +16,7 @@
 
     <!-- PR 安全加固：仅同签名 App 可调用 ExternalActionReceiver 静默入账，
          避免第三方伪造 Intent 任意记账（auto_confirm=true 路径）。
-         仅"打开 App 预填"分支（auto_confirm=false）保留对任意调用方开放。 -->
+         仅"打开 App 记账页"分支（auto_confirm=false）保留对任意调用方开放。 -->
     <permission
         android:name="com.aibill.android.permission.QUICK_RECORD"
         android:protectionLevel="signature" />
@@ -152,7 +152,7 @@
         </receiver>
 
         <!-- 外部 Intent 接收器 (Tasker/快捷指令)
-         - 非 auto_confirm：打开 App 预填页（任意调用方可用）
+         - 非 auto_confirm：打开 App 记账页（任意调用方可用）
          - auto_confirm=true（静默入账）：运行时在 ExternalActionReceiver 内
                                   检查调用方是否持有 signature 权限，
                                   仅同签名 App 可调用。 -->
@@ -161,7 +161,6 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.aibill.ACTION_QUICK_RECORD" />
-                <action android:name="com.aibill.ACTION_AI_PARSE" />
             </intent-filter>
         </receiver>
 
@@ -174,19 +173,6 @@
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
-
-        <!-- 分享记账入口 -->
-        <activity
-            android:name=".presentation.ShareReceiverActivity"
-            android:exported="true"
-            android:theme="@style/Theme.AIBILL">
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
-                <data android:mimeType="image/*" />
-            </intent-filter>
-        </activity>
 
         <!-- FileProvider（日志文件分享） -->
         <provider
