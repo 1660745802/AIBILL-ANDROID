@@ -14,9 +14,8 @@ import javax.inject.Singleton
  * [CaptureArchive] 的 DAO 实现。
  *
  * 复用 `notification_records`（`status` 是自由字符串）而非新建表 → **无需 Room migration**。
- * `raw` / `auth_pending` 两种状态都不命中「已确认」查询：
- * - `raw` 命中待审列表（用户在通知中心看得见，这正是「不漏账」的落点）；
- * - `auth_pending` 不命中任何 observe* 查询，不会混进通知中心列表。
+ * `auth_pending` 不命中任何 observe* 查询，不会混进通知中心列表；历史遗留的 `raw` 行则仍由
+ * 通知中心的待审查询读出（本实现不写、不删 `raw`）。
  */
 @Singleton
 class CaptureArchiveImpl @Inject constructor(
@@ -24,18 +23,25 @@ class CaptureArchiveImpl @Inject constructor(
     private val appLogger: AppLogger,
 ) : CaptureArchive {
 
-    override suspend fun captureUnparsed(capture: Capture, reason: String) {
-        if (insert(capture, CaptureArchive.STATUS_RAW)) {
-            appLogger.warn(
-                "NLS",
-                "AI 未解析，落原文待人工确认: reason=$reason pkg=${capture.packageName} " +
-                    "text=${capture.fullText.take(60)}"
-            )
-        }
-    }
-
     override suspend fun captureAuthPending(capture: Capture) {
-        insert(capture, CaptureArchive.STATUS_AUTH_PENDING)
+        // 落库失败也不能让异常向上抛崩协程：捕获链路的兜底不该自己成为新的崩溃点。
+        try {
+            notificationRecordDao.insert(
+                NotificationRecordEntity(
+                    packageName = capture.packageName,
+                    title = capture.title.ifBlank { null },
+                    content = capture.fullText,
+                    status = CaptureArchive.STATUS_AUTH_PENDING,
+                    receivedAt = capture.receivedAt,
+                )
+            )
+        } catch (e: CancellationException) {
+            // 取消不是「落库失败」：吞掉会让调用方在已取消的协程里继续跑（发通知 / 再查库），
+            // 破坏结构化取消。
+            throw e
+        } catch (e: Exception) {
+            appLogger.error("NLS", "待补偿原文写入失败: ${e.message}")
+        }
     }
 
     override suspend fun replay(replay: suspend (CapturedText) -> Unit) {
@@ -62,31 +68,8 @@ class CaptureArchiveImpl @Inject constructor(
                 appLogger.error("NLS", "待补偿重放异常: ${e.message}")
             }
             // 重放后无论成败都清掉这条队列记录：
-            // 成功 → 新的 confirmed/parsed/raw 记录已建立；失败 → 不再无限重试
+            // 成功 → 新的 confirmed/parsed 记录已建立；失败 → 不再无限重试
             notificationRecordDao.updateStatus(record.id, STATUS_AUTH_REPLAYED, null)
-        }
-    }
-
-    /** 落库失败也不能让异常向上抛崩协程：捕获层的兜底不该自己成为新的崩溃点。 */
-    private suspend fun insert(capture: Capture, status: String): Boolean {
-        return try {
-            notificationRecordDao.insert(
-                NotificationRecordEntity(
-                    packageName = capture.packageName,
-                    title = capture.title.ifBlank { null },
-                    content = capture.fullText,
-                    status = status,
-                    receivedAt = capture.receivedAt,
-                )
-            )
-            true
-        } catch (e: CancellationException) {
-            // 与 replayAuthPending 同一判据：取消不是「落库失败」。吞掉会让调用方在
-            // 已取消的协程里继续跑（发通知 / 再查库），破坏结构化取消。
-            throw e
-        } catch (e: Exception) {
-            appLogger.error("NLS", "原文捕获写入失败(status=$status): ${e.message}")
-            false
         }
     }
 

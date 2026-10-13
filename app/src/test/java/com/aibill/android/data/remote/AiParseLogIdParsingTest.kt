@@ -58,6 +58,26 @@ class AiParseLogIdParsingTest {
     }
 
     @Test
+    @DisplayName("顶层 outcome 被读出来（022）：not_a_bill / unavailable；缺失=null（旧服务端，未知键忽略）")
+    fun readsTopLevelOutcome() {
+        val notABill = adapter().fromJson(
+            """{"code":5001,"message":"未识别","data":null,"outcome":"not_a_bill","parse_log_id":1}"""
+        )!!
+        assertEquals("not_a_bill", notABill.outcome)
+
+        val unavailable = adapter().fromJson(
+            """{"code":5002,"message":"格式异常","data":null,"outcome":"unavailable"}"""
+        )!!
+        assertEquals("unavailable", unavailable.outcome)
+
+        // 旧服务端无该字段 → null；未知键（future_field）必须被忽略而不是解析失败（不 failOnUnknown）
+        val legacy = adapter().fromJson(
+            """{"code":5001,"message":"未识别","data":null,"future_field":123}"""
+        )!!
+        assertNull(legacy.outcome)
+    }
+
+    @Test
     @DisplayName("服务端预筛挡下的形态没有 parse_log_id → 客户端拿到 null（不编造 id）")
     fun prefilterShapeHasNoParseLogId() {
         val json = """

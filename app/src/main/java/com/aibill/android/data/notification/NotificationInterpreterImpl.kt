@@ -4,7 +4,9 @@ import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.remote.api.AiApi
 import com.aibill.android.data.remote.dto.request.AiParseRequest
 import com.aibill.android.data.remote.dto.request.ParseSourceDto
+import com.aibill.android.data.remote.dto.response.AiParseResponseDto
 import com.aibill.android.data.remote.dto.response.AiParsedItemDto
+import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.domain.notification.AiCircuitBreaker
 import com.aibill.android.domain.notification.BalanceConsistency
 import com.aibill.android.domain.notification.Capture
@@ -69,7 +71,7 @@ class NotificationInterpreterImpl @Inject constructor(
         val learnedCategoryId = categoryLearningEngine.matchCategory(capture.fullText)
 
         return try {
-            appLogger.info("NLS", "调AI: pkg=${capture.packageName} text=${capture.fullText}")
+            appLogger.info("NLS", "调AI: pkg=${capture.packageName} text=${capture.fullText.take(30)}")
             val cleanedText = cleanMarketingSuffix(capture.fullText)
             // 带上上下文（§2）：channel/source 供服务端归因，received_at 让「今天」按
             // **通知到达时刻**算（跨午夜迟发不会记到明天），title/body 供后续判定用。
@@ -86,14 +88,31 @@ class NotificationInterpreterImpl @Inject constructor(
                 )
             )
             if (response.code != 0 || response.data == null) {
-                circuitBreaker.recordOutcome(capture.packageName, success = false)
-                // 必须带 message：5001 既可能是模型拒答也可能是超时/超长，
-                // 只打 code 时排障完全无从下手（ApiResponse.message 一直有值）。
-                appLogger.warn(
-                    "NLS",
-                    "AI失败: code=${response.code} msg=${response.message} pkg=${capture.packageName}"
-                )
-                return ParseOutcome.Unparsed("code=${response.code}")
+                when (classifyAiFailure(response)) {
+                    AiFailure.NOT_A_BILL -> {
+                        // AI 明确回答「这不是账」= 一次**成功**的 AI 调用，不是故障：
+                        // 不计失败（不污染 client_only.unparsed_ai_failed），也不记熔断失败——
+                        // 否则「AI 正常但判定非账」的界面会把包名拉黑（真交易被静音）。
+                        circuitBreaker.recordOutcome(capture.packageName, success = true)
+                        appLogger.info(
+                            "NLS",
+                            "AI判定非账(not_a_bill): code=${response.code} " +
+                                "msg=${response.message} pkg=${capture.packageName}"
+                        )
+                        return ParseOutcome.NotATransaction
+                    }
+                    AiFailure.UNAVAILABLE, null -> {
+                        circuitBreaker.recordOutcome(capture.packageName, success = false)
+                        // 必须带 message：5001 既可能是模型拒答也可能是超时/超长，
+                        // 只打 code 时排障完全无从下手（ApiResponse.message 一直有值）。
+                        appLogger.warn(
+                            "NLS",
+                            "AI不可用(unavailable): code=${response.code} " +
+                                "msg=${response.message} pkg=${capture.packageName}"
+                        )
+                        return ParseOutcome.Unparsed("code=${response.code}")
+                    }
+                }
             }
             circuitBreaker.recordOutcome(capture.packageName, success = true)
             // 边界：服务端**全局保证 `items` ≤ 1**（挑选标准在服务端 `lib/main-item.ts`）：
@@ -231,6 +250,29 @@ class NotificationInterpreterImpl @Inject constructor(
             .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
 
     /**
+     * 把「服务端 022 顶层 `outcome` + 旧服务端 `code` 兼容」映射成失败桶。
+     *
+     * - `null` = 响应可用（`code == 0` 且 `data != null`，且不是失败 outcome）；
+     * - [AiFailure.NOT_A_BILL] = AI/规则判定非账（正常结果，不计数、不记熔断失败）；
+     * - [AiFailure.UNAVAILABLE] = AI 不可用/输出不可用（不确定，计入 `unparsed.*`）。
+     *
+     * ⚠️ 旧服务端（<022，无 `outcome`）兼容：能解码到这里的只有 2xx 响应，
+     * 而 2xx + `code == 5001` 只可能是「模型空结果 = 判非账」（#6 超时是 504/502 →
+     * Retrofit 招 `HttpException`，根本到不了这里）。`code == 5002` 是格式异常 → 不可用。
+     */
+    private fun classifyAiFailure(response: ApiResponse<AiParseResponseDto>): AiFailure? {
+        when (response.outcome) {
+            OUTCOME_NOT_A_BILL -> return AiFailure.NOT_A_BILL
+            OUTCOME_UNAVAILABLE -> return AiFailure.UNAVAILABLE
+        }
+        if (response.code == 0 && response.data != null) return null
+        return if (response.code == AI_EMPTY_RESULT_CODE) AiFailure.NOT_A_BILL else AiFailure.UNAVAILABLE
+    }
+
+    /** `/api/ai/parse` 失败的两种机械桶（与 [ParseOutcome] 的区分同构）。 */
+    private enum class AiFailure { NOT_A_BILL, UNAVAILABLE }
+
+    /**
      * 清理通知文本中的营销后缀（转发给 AI 的 `input` 就是清洗后的文本）。
      *
      * 实现已抽到 [com.aibill.android.domain.notification.MarketingSuffixCleaner]：
@@ -312,6 +354,15 @@ class NotificationInterpreterImpl @Inject constructor(
 
     private companion object {
         val VALID_TYPES = setOf("expense", "income", "transfer")
+
+        /** 服务端 022 顶层 `outcome`：AI/规则判非账（正常结果）。 */
+        const val OUTCOME_NOT_A_BILL = "not_a_bill"
+
+        /** 服务端 022 顶层 `outcome`：AI 不可用/输出不可用（失败）。 */
+        const val OUTCOME_UNAVAILABLE = "unavailable"
+
+        /** 「模型空结果」业务码（旧服务端无 `outcome` 时用它兼容判别）。 */
+        const val AI_EMPTY_RESULT_CODE = 5001
 
         /** 「没分类」的几种写法：AI 给这些等于没给，不能算信息完整 */
         val GENERIC_CATEGORY_NAMES = setOf("其他", "其它", "未分类", "other")

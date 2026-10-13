@@ -150,6 +150,53 @@ class CaptureFunnelStatsImplTest {
     }
 
     @Test
+    @DisplayName("AI 失败丢弃 stage：上报键 client_only.unparsed_ai_failed，不计入 droppedTotal")
+    fun unparsedStageIsSeparateAndReportable() {
+        val stats = CaptureFunnelStatsImpl()
+        stats.record(CaptureFunnelStats.RECEIVED_NLS)
+        stats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
+        stats.record(CaptureFunnelStats.unparsedFailedStage(SourceChannel.NLS))
+        repeat(2) { stats.record(CaptureFunnelStats.unparsedFailedStage(SourceChannel.SMS)) }
+
+        val snap = stats.snapshot()
+        val key = CaptureFunnelStats.reportKey(CaptureFunnelStats.unparsedFailedStage(SourceChannel.NLS))
+        assertEquals("client_only.unparsed_ai_failed", key)
+        assertTrue(PrefilterReport.isReportableRuleId(key))
+        // 渠道归因仍然成立（第二段是渠道名），但上报键同一（渠道由请求 channel 承载）
+        assertEquals(
+            mapOf(
+                "client_only.capture_received_nls" to 1L,
+                "client_only.capture_dropped_nls_no_extras" to 1L,
+                "client_only.unparsed_ai_failed" to 1L,
+            ),
+            snap.reportCountsFor(SourceChannel.NLS),
+        )
+        assertEquals(
+            mapOf("client_only.unparsed_ai_failed" to 2L),
+            snap.reportCountsFor(SourceChannel.SMS),
+        )
+        // 早退合计不含 AI 失败丢弃；失败丢弃单独统计；与 AI 响应侧互不干扰
+        assertEquals(1L, snap.droppedTotal)
+        assertEquals(3L, snap.unparsedTotal)
+        assertEquals(0L, snap.aiResponseTotal)
+    }
+
+    @Test
+    @DisplayName("渲染：AI 失败丢弃单独列一节，并在合计行报次数")
+    fun renderSeparatesUnparsedStages() {
+        val stats = CaptureFunnelStatsImpl()
+        stats.record(CaptureFunnelStats.RECEIVED_NLS)
+        stats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
+        stats.record(CaptureFunnelStats.unparsedFailedStage(SourceChannel.NLS))
+
+        val text = CaptureFunnelStats.render(stats.snapshot())
+        assertTrue(text.contains("AI 失败丢弃"), text)
+        assertTrue(text.contains("unparsed.nls.ai_failed"), text)
+        assertTrue(text.contains("早退丢弃 1"), text)
+        assertTrue(text.contains("AI 失败丢弃 1"), text)
+    }
+
+    @Test
     @DisplayName("渲染：捕获层与 AI 响应侧分开列出")
     fun renderSeparatesAiResponseStages() {
         val stats = CaptureFunnelStatsImpl()

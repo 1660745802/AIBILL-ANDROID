@@ -138,8 +138,14 @@ L4 路由 NotificationProcessor（协调者）
   信息完整 → RecordIntake 送服务端确认 → 入账 + 回执（带撤销）
   缺信息**或服务端没确认**（没网 / 业务错误 / 鉴权）→ 待审池 + 确认通知
   AI 判定非账（空 items）→ 丢弃
-  **AI 没能解析**（超时 / 5xx / 5001 / 网络异常）→ CaptureArchive.captureUnparsed
-    → 原文落 `raw` 行（通知中心看得见、可手动补金额；不做自动重放）
+  **AI 不可用/输出不可用**（服务端顶层 `outcome=unavailable`：超时 / 上游 502·504 / 格式异常 5002；
+    网络/未知异常也归此）= **不确定** → **丢弃**（不落 raw、不进待审、不发通知）
+    · 服务端顶层 `outcome` 把「判非账」与「AI 挂了」分开：`not_a_bill`（含模型空结果 code=5001）
+      是 AI **正常回答「这不是账」**，走 AI 判定非账（不计数、不记熔断失败）
+    · 让用户面对一条没有金额/分类的原文等于「形式上留痕、实质上丢弃」（用户没法审）
+    · 留痕责任在**服务端** `ai_parse_logs`（完整记录 + 失败率/原因分布）；重试也归服务端
+    · 本地只做两件事：计数（`client_only.unparsed_ai_failed`，进 ⑤ 上报与导出日志）+ warn（含 reason）
+    · ⚠️ **不要在这里用正则判「像不像账」** —— 正则只做筛选，「是不是账」由 AI 判定（本项目核心原则）
   401 → CaptureArchive.captureAuthPending → 同号重登后 CaptureArchive.replay 重放
 ```
 
@@ -150,7 +156,7 @@ L4 路由 NotificationProcessor（协调者）
 |---|---|---|
 | **NotificationInterpreter** | 调 AI、`AiResultValidator`、营销后缀截断、电商描述脱敏、候选评分、分类学习命中、AI 总闸 | `read(capture): ParseOutcome` |
 | **ScoredAdmission** | 同金额候选的时间窗择优、60s 跨渠道判重、认领 | `submit(candidate, onAdmitted)` |
-| **CaptureArchive** | 未解析原文的落库语义、401 重放、终态 | `captureUnparsed` / `captureAuthPending` / `replay` |
+| **CaptureArchive** | 401 会话过期的原文落库、待补偿重放、终态（解析失败不再本地留痕） | `captureAuthPending` / `replay` |
 | **AiCircuitBreaker** | 每来源连续失败计数与静音窗口（白名单判据与**查询时机**仍在预筛） | `isMuted(source, now)` / `recordOutcome(source, ok, now)` |
 
 **时间窗与顺序**：评分窗口 10s、跨渠道去重 60s（默认值来自云控 `rules.json` 的
@@ -172,6 +178,10 @@ L4 路由 NotificationProcessor（协调者）
 **捕获层漏斗计数**（`client_only.capture_*`）：白名单外 App、无 root、未命中成功词、排除词、金额不合法、
 历史日期、防抖、页面去重 —— 这些记录**从不进预筛、也不上服务端**，是「漏账」唯一可诊断的入口。
 只加计数、不改行为；`totals.notifications = blocked + passed` 的语义不变（捕获层计数只进 `counts`）。
+**AI 侧观测**：AI 响应裁剪（`client_only.ai_extra_items`）与 **AI 失败丢弃**
+（`client_only.unparsed_ai_failed`，解析失败 = 不确定 → 不落待审/不打扰用户）各用固定上报键；
+两者都**不进 `totals`**，只作 `client_only.*` 观察量（`CaptureFunnelStats` 里 `dropped.*` / `ai.*` /
+`unparsed.*` 三个家族分开统计与渲染）。
 
 **判定顺序本身是行为**：日报/促销必须早于营销词（它们含「支出」会触发强交易特征豁免，词表拦不住）。
 
@@ -266,7 +276,7 @@ GET  https://api.github.com/repos/<owner>/<repo>/releases/latest
 预算属于 [PRODUCT.md §六](PRODUCT.md) 缺口 #2。
 
 **错误码**：`0` 成功 · `401` 清 Token 跳登录 · `403` 提示 · `422` 显示 message ·
-`5001` AI 解析失败 · `5002` AI 不可用 · `-1` 网络异常（本地） · `-2` 未知错误（本地）。
+`5001` AI 结果（需看顶层 `outcome`：`not_a_bill`=判非账 / `unavailable`=不可用） · `5002` AI 输出不可用 · `-1` 网络异常（本地） · `-2` 未知错误（本地）。
 
 **业务规则**：金额一律整数分 · `client_id` UUID v4 幂等 · `client_type="app_android"` ·
 `transfer` 的 `category_id` 为 null 且不计收支 · 日期是客户端本地日期串 · `items` 单次 ≤ 50。
@@ -462,7 +472,9 @@ R8 开启（保留 DTO/Entity/Retrofit 接口）· `allowBackup=false` · 权限
 - 无网时记账**不会**成功（手工当场报错、通知自动降级待审池），任何地方都不要写成
   「稍后自动补传 / 联网后自动上传」。
 - **「无网时通知必丢」是错的**：支付本身要网络，通知在支付后几秒到达，那时网络可用。
-  会丢的是**解析失败**（超时 / 5xx / 5001 / 网络异常），现已在失败当场把原文落成 `raw` 行。
+  会丢的是**解析失败 = AI 不可用/输出不可用**（服务端 `outcome=unavailable`：超时 / 上游 502·504 / 格式异常 5002）
+  = **不确定**：不打扰用户（不进待审、不发通知），
+  只计数 + warn + 服务端失败率可见，重试由服务端负责（§2.4）。
   不要因此重新引入「离线捕获缓冲 / 联网重放调度器」——那是为一个几乎不发生的场景建机制。
 - `pending_transactions` 是缓存不是队列：`sync_status` / `retry_count` / `last_error`
   三列已废弃，只有 `synced` 参与判定（见 §6.1）。

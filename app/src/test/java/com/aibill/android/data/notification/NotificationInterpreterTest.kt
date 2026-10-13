@@ -168,11 +168,40 @@ class NotificationInterpreterTest {
     }
 
     @Test
-    @DisplayName("业务码 5001 → Unparsed(code=5001)，并计入熔断失败")
-    fun `业务码失败`() = runTest {
+    @DisplayName("outcome=not_a_bill（模型空结果 code=5001）→ NotATransaction，不计熔断失败")
+    fun `not_a_bill 判非账`() = runTest {
+        coEvery { aiApi.parse(any()) } returns ApiResponse(
+            code = 5001, data = null, message = "AI 无法解析", outcome = "not_a_bill",
+        )
+        assertEquals(ParseOutcome.NotATransaction, interpreter.read(captureOf()))
+        // 「判非账」= 一次成功的 AI 调用，不能记熔断失败（否则正常界面会把包名拉黑）
+        verify { circuitBreaker.recordOutcome(pkg, success = true, now = any()) }
+        verify(exactly = 0) { circuitBreaker.recordOutcome(pkg, success = false, now = any()) }
+    }
+
+    @Test
+    @DisplayName("outcome=unavailable（格式异常 code=5002）→ Unparsed(code=5002)，计入熔断失败")
+    fun `unavailable 是不可用`() = runTest {
+        coEvery { aiApi.parse(any()) } returns ApiResponse(
+            code = 5002, data = null, message = "AI 返回格式异常", outcome = "unavailable",
+        )
+        assertEquals(ParseOutcome.Unparsed("code=5002"), interpreter.read(captureOf()))
+        verify { circuitBreaker.recordOutcome(pkg, success = false, now = any()) }
+    }
+
+    @Test
+    @DisplayName("旧服务端（无 outcome）code=5001 → NotATransaction（2xx 下只可能是模型空结果=判非账）")
+    fun `旧服务端 5001 兼容判非账`() = runTest {
         coEvery { aiApi.parse(any()) } returns ApiResponse(code = 5001, data = null, message = "AI 解析失败")
-        val outcome = interpreter.read(captureOf())
-        assertEquals(ParseOutcome.Unparsed("code=5001"), outcome)
+        assertEquals(ParseOutcome.NotATransaction, interpreter.read(captureOf()))
+        verify { circuitBreaker.recordOutcome(pkg, success = true, now = any()) }
+    }
+
+    @Test
+    @DisplayName("旧服务端（无 outcome）code=5002 → Unparsed(code=5002)")
+    fun `旧服务端 5002 兼容不可用`() = runTest {
+        coEvery { aiApi.parse(any()) } returns ApiResponse(code = 5002, data = null, message = "格式异常")
+        assertEquals(ParseOutcome.Unparsed("code=5002"), interpreter.read(captureOf()))
         verify { circuitBreaker.recordOutcome(pkg, success = false, now = any()) }
     }
 

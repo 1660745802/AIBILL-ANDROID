@@ -64,11 +64,22 @@ package com.aibill.android.domain.notification
  *   绝不静默丢弃。上报键固定 [AI_EXTRA_ITEMS_REPORT_KEY]（`client_only.ai_extra_items`，
  *   渠道段不体现在 key 里，由请求的 `channel` 字段承载）。
  *
+ * **AI 失败丢弃（客户端门禁）**
+ * - [unparsedFailedStage]（形如 `unparsed.<channel>.ai_failed`）：`NotificationProcessor` 收到
+ *   [com.aibill.android.domain.notification.ParseOutcome.Unparsed]（服务端 `outcome=unavailable`：
+ *   AI 超时 / 上游 502·504 / 格式异常 5002 / 网络异常 / 未知异常）时记一次。
+ *   ⚠️ 「模型空结果 code=5001」带 `outcome=not_a_bill` 是**判非账**，不算失败、不进本计数。解析失败 = **不确定**，既不是「是账」也不是「不是账」：
+ *   客户端**不落待审、不发通知、不打扰用户**，留痕责任在服务端 `ai_parse_logs`。
+ *   本 stage 把「因 AI 失败而丢掉多少条」变成可上报的失败率——它是 AI 不可用**唯一**的客户端信号。
+ *   上报键固定 [UNPARSED_AI_FAILED_REPORT_KEY]（`client_only.unparsed_ai_failed`，
+ *   渠道段不体现在 key 里，由请求的 `channel` 字段承载）。
+ *
  * ## 进报表
  *
  * [Snapshot.reportCountsFor] 把 stage 机械映射成 `client_only.capture_<stage 点换下划线>`
- * （如 `dropped.a11y.no_root` → `client_only.capture_dropped_a11y_no_root`），
- * 供 `PrefilterReportImpl` 合并进 `/api/ai/filter-report` 的 `counts`。
+ * （如 `dropped.a11y.no_root` → `client_only.capture_dropped_a11y_no_root`）；
+ * AI 响应侧与 AI 失败丢弃则各用固定键（见上）。三项均供 `PrefilterReportImpl` 合并进
+ * `/api/ai/filter-report` 的 `counts`。
  * 前缀必须落在 `client_only.*`（服务端只接受 `precheck.*` / `client_only.*`，第三个前缀 400）。
  *
  * ## 窗口
@@ -93,7 +104,7 @@ interface CaptureFunnelStats {
         /**
          * 各 stage 计数（**不含** `received.*`）。
          *
-         * 含两类：捕获层早退 `dropped.*`，与 AI 响应侧 `ai.*`。
+         * 含三类：捕获层早退 `dropped.*`、AI 响应侧 `ai.*`、AI 失败丢弃 `unparsed.*`。
          */
         val stages: Map<String, Long>,
     ) {
@@ -102,18 +113,24 @@ interface CaptureFunnelStats {
         /**
          * 捕获层早退总数（只算 `dropped.*`）。
          *
-         * **不含** AI 响应侧 `ai.*`：那是「AI 已经应答之后」的观测，不是捕获层丢的，
-         * 混进来会让「早退丢弃」失真。AI 侧单独看 [aiResponseTotal]。
+         * **不含** AI 响应侧 `ai.*` 与 AI 失败丢弃 `unparsed.*`：那是「AI 已经应答之后」的观测，
+         * 不是捕获层丢的，混进来会让「早退丢弃」失真。两者分别看 [aiResponseTotal] / [unparsedTotal]。
          */
-        val droppedTotal: Long get() = stages.filterKeys { !isAiResponseStage(it) }.values.sum()
+        val droppedTotal: Long get() = stages
+            .filterKeys { !isAiResponseStage(it) && !isUnparsedStage(it) }
+            .values.sum()
 
         /** AI 响应侧（`ai.*`）发生次数合计（见 [aiExtraItemsStage]）。 */
         val aiResponseTotal: Long get() = stages.filterKeys { isAiResponseStage(it) }.values.sum()
 
+        /** AI 失败丢弃（`unparsed.*`）次数合计（见 [unparsedFailedStage]）——失败率分子。 */
+        val unparsedTotal: Long get() = stages.filterKeys { isUnparsedStage(it) }.values.sum()
+
         /**
-         * 某渠道的捕获层计数，键已映射为上报用的 `client_only.capture_*`。
+         * 某渠道的计数，键已映射为上报键（一般为 `client_only.capture_*`）。
          *
-         * 归因规则：`received.<channel>` 直接看渠道；`dropped.<channel>.<reason>` 取第二段。
+         * 归因规则：`received.<channel>` 直接看渠道；带渠道段的 stage（`dropped.*` / `ai.*` /
+         * `unparsed.*`）取第二段。
          */
         fun reportCountsFor(channel: SourceChannel): Map<String, Long> = buildMap {
             received[channel]?.takeIf { it > 0L }?.let { put(reportKey(receivedKey(channel)), it) }
@@ -147,11 +164,29 @@ interface CaptureFunnelStats {
         const val AI_EXTRA_ITEMS_REASON = "extra_items"
 
         /**
+         * AI 失败丢弃 stage 前缀（`unparsed.`）。
+         *
+         * 与 `dropped.` / `ai.` 并列的第三个家族：它发生在 AI 已经应答（失败）之后，
+         * 是**客户端对「不确定」的处置**，既不是捕获层早退，也不是 AI 响应裁剪。
+         */
+        const val UNPARSED_PREFIX = "unparsed."
+
+        /** AI 失败丢弃 stage 的原因段。 */
+        const val UNPARSED_AI_FAILED_REASON = "ai_failed"
+
+        /**
          * AI 响应侧唯一上报键：`client_only.ai_extra_items`。
          *
          * 渠道段不体现在 key 里（请求已带 `channel` 字段），避免为每渠道各造一个键。
          */
         const val AI_EXTRA_ITEMS_REPORT_KEY = "client_only.ai_extra_items"
+
+        /**
+         * AI 失败丢弃唯一上报键：`client_only.unparsed_ai_failed`。
+         *
+         * 渠道段不体现在 key 里（请求已带 `channel` 字段），避免为每渠道各造一个键。
+         */
+        const val UNPARSED_AI_FAILED_REPORT_KEY = "client_only.unparsed_ai_failed"
 
         const val DROPPED_NLS_NO_PACKAGE = "dropped.nls.no_package"
         const val DROPPED_NLS_NO_EXTRAS = "dropped.nls.no_extras"
@@ -188,6 +223,18 @@ interface CaptureFunnelStats {
         /** 是否是 AI 响应侧 stage。 */
         fun isAiResponseStage(stage: String): Boolean = stage.startsWith(AI_RESPONSE_PREFIX)
 
+        /**
+         * 构造某渠道的 AI 失败丢弃 stage：`unparsed.<channel>.ai_failed`。
+         *
+         * 第二段必须是渠道名（与其它家族同风格），[channelOf] 才能按渠道归因；
+         * 上报键则统一为 [UNPARSED_AI_FAILED_REPORT_KEY]。
+         */
+        fun unparsedFailedStage(channel: SourceChannel): String =
+            "$UNPARSED_PREFIX${channel.logTag.lowercase()}.$UNPARSED_AI_FAILED_REASON"
+
+        /** 是否是 AI 失败丢弃 stage。 */
+        fun isUnparsedStage(stage: String): Boolean = stage.startsWith(UNPARSED_PREFIX)
+
         /** 从 stage 的第二段解析渠道；缺渠道段返回 null（这类 key 不上报，防 400）。 */
         fun channelOf(stage: String): SourceChannel? {
             val parts = stage.split('.')
@@ -198,17 +245,17 @@ interface CaptureFunnelStats {
 
         /**
          * stage → 上报键。捕获侧机械拼为 `client_only.capture_<stage 点换下划线>`；
-         * AI 响应侧固定为 [AI_EXTRA_ITEMS_REPORT_KEY]（`client_only.ai_extra_items`）。
+         * AI 响应侧固定为 [AI_EXTRA_ITEMS_REPORT_KEY]（`client_only.ai_extra_items`）；
+         * AI 失败丢弃固定为 [UNPARSED_AI_FAILED_REPORT_KEY]。
          *
          * 纯机械拼接（与 [PrefilterStats.clientOnlyKey] 同思路），**没有映射表**：
          * 服务端只需按前缀剥离即可对账，新增 stage 不需要改服务端。
          */
-        fun reportKey(stage: String): String =
-            if (isAiResponseStage(stage)) {
-                AI_EXTRA_ITEMS_REPORT_KEY
-            } else {
-                PrefilterStats.CLIENT_ONLY_PREFIX + REPORT_KEY_PREFIX + stage.replace('.', '_')
-            }
+        fun reportKey(stage: String): String = when {
+            isAiResponseStage(stage) -> AI_EXTRA_ITEMS_REPORT_KEY
+            isUnparsedStage(stage) -> UNPARSED_AI_FAILED_REPORT_KEY
+            else -> PrefilterStats.CLIENT_ONLY_PREFIX + REPORT_KEY_PREFIX + stage.replace('.', '_')
+        }
 
         /**
          * 渲染成可直接贴进日志导出的诊断文本。
@@ -229,12 +276,19 @@ interface CaptureFunnelStats {
                 } + " · 合计 ${snapshot.receivedTotal}"
             )
             snapshot.stages
-                .filterKeys { !isAiResponseStage(it) }
+                .filterKeys { !isAiResponseStage(it) && !isUnparsedStage(it) }
                 .entries
                 .sortedWith(compareByDescending<Map.Entry<String, Long>> { it.value }.thenBy { it.key })
                 .forEach { (stage, count) ->
                     appendLine("  $count  $stage  ${LABELS[stage] ?: ""}")
                 }
+            val unparsedStages = snapshot.stages.filterKeys { isUnparsedStage(it) }
+            if (unparsedStages.isNotEmpty()) {
+                appendLine("AI 失败丢弃（不确定：不落待审、不打扰用户，留痕在服务端）:")
+                unparsedStages.entries.sortedByDescending { it.value }.forEach { (stage, count) ->
+                    appendLine("  $count  $stage  ${LABELS[stage] ?: ""}")
+                }
+            }
             val aiStages = snapshot.stages.filterKeys { isAiResponseStage(it) }
             if (aiStages.isNotEmpty()) {
                 appendLine("AI 响应侧（已应答，仅供对账）:")
@@ -243,6 +297,9 @@ interface CaptureFunnelStats {
                 }
             }
             append("合计: 收到 ${snapshot.receivedTotal} · 早退丢弃 ${snapshot.droppedTotal}")
+            if (snapshot.unparsedTotal > 0L) {
+                append(" · AI 失败丢弃 ${snapshot.unparsedTotal}")
+            }
             if (snapshot.aiResponseTotal > 0L) {
                 append(" · AI 响应裁剪 ${snapshot.aiResponseTotal} 次")
             }
@@ -270,9 +327,15 @@ interface CaptureFunnelStats {
             aiExtraItemsStage(SourceChannel.NLS) to AI_EXTRA_ITEMS_LABEL,
             aiExtraItemsStage(SourceChannel.A11Y) to AI_EXTRA_ITEMS_LABEL,
             aiExtraItemsStage(SourceChannel.SMS) to AI_EXTRA_ITEMS_LABEL,
+            unparsedFailedStage(SourceChannel.NLS) to UNPARSED_AI_FAILED_LABEL,
+            unparsedFailedStage(SourceChannel.A11Y) to UNPARSED_AI_FAILED_LABEL,
+            unparsedFailedStage(SourceChannel.SMS) to UNPARSED_AI_FAILED_LABEL,
         )
 
         /** AI 响应侧唯一 stage 的人读标签。 */
         private const val AI_EXTRA_ITEMS_LABEL = "AI 响应裁剪多余条目（按次数）"
+
+        /** AI 失败丢弃 stage 的人读标签。 */
+        private const val UNPARSED_AI_FAILED_LABEL = "AI 解析失败，丢弃（不确定，不进待审）"
     }
 }

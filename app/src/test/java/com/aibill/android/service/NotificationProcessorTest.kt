@@ -23,6 +23,7 @@ import com.aibill.android.data.remote.dto.response.AiParsedItemDto
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.data.remote.unconfirmedApiResponse
 import com.aibill.android.domain.notification.CaptureArchive
+import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.usecase.CategoryLearningEngine
@@ -74,9 +75,10 @@ class NotificationProcessorTest {
     private val pendingTransactionDao: PendingTransactionDao = mockk(relaxed = true)
     private val userPreferences: UserPreferences = mockk()
     private val categoryLearningEngine: CategoryLearningEngine = mockk(relaxed = true)
-    private val appLogger: AppLogger = AppLogger(mockk(relaxed = true))
+    private val appLogger: AppLogger = mockk(relaxed = true)
     private val rulesManager: NotificationRulesManager = mockk(relaxed = true)
     private val streakTracker: com.aibill.android.domain.usecase.StreakTracker = mockk(relaxed = true)
+    private val captureFunnelStats = CaptureFunnelStatsImpl()
     private lateinit var transactionApi: TransactionApi
 
     private lateinit var processor: NotificationProcessor
@@ -118,7 +120,7 @@ class NotificationProcessorTest {
             appLogger = appLogger,
             rulesManager = rulesManager,
             balanceConsistency = com.aibill.android.data.notification.BalanceConsistencyImpl(),
-            captureFunnelStats = CaptureFunnelStatsImpl(),
+            captureFunnelStats = captureFunnelStats,
         )
         processor = NotificationProcessor(
             context = context,
@@ -130,6 +132,7 @@ class NotificationProcessorTest {
             userPreferences = userPreferences,
             appLogger = appLogger,
             rulesManager = rulesManager,
+            captureFunnelStats = captureFunnelStats,
         )
     }
 
@@ -330,38 +333,72 @@ class NotificationProcessorTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 路由：失败 → 原文留痕（立即，不等窗口）
+    // 路由：解析失败 = 不确定（不落库 / 不打扰用户；只计数 + warn）
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("业务码 5001 → 立即落一行 raw，不发任何回执")
-    fun `解析失败立即落 raw`() = runTest(testDispatcher) {
-        coEvery { aiApi.parse(any()) } returns ApiResponse(code = 5001, data = null, message = "AI 解析失败")
+    @DisplayName("outcome=unavailable → 不落库/不进待审/不发通知；计数 + warn（不确定就不打扰用户）")
+    fun `解析失败不落库只计数`() = runTest(testDispatcher) {
+        coEvery { aiApi.parse(any()) } returns ApiResponse(
+            code = 5002, data = null, message = "AI 返回格式异常", outcome = "unavailable",
+        )
 
         processor.process(captureOf(text = "支付成功 ¥20.00 招行"))
         runCurrent()
 
-        val raw = rowsWithStatus(CaptureArchive.STATUS_RAW)
-        assertEquals(1, raw.size, "5001 必须留痕，不能静默消失")
-        assertEquals("支付成功 ¥20.00 招行", raw.single().content)
+        assertTrue(inserted.isEmpty(), "解析失败 = 不确定，不该落任何行（没有金额的原文用户没法审），实际=$inserted")
+        assertEquals(
+            1L,
+            captureFunnelStats.snapshot().stages[
+                CaptureFunnelStats.unparsedFailedStage(SourceChannel.NLS)
+            ],
+        )
+        io.mockk.verify(exactly = 1) {
+            appLogger.warn(
+                "NLS",
+                match { it.contains("解析失败，丢弃") && it.contains("com.tencent.mm") },
+            )
+        }
         coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
         verifyNoReceipt()
     }
 
     @Test
-    @DisplayName("网络异常 → 立即落一行 raw")
-    fun `网络异常立即落 raw`() = runTest(testDispatcher) {
+    @DisplayName("outcome=not_a_bill（判非账）→ 不落库，也不计 unparsedTotal（判非账不是 AI 失败）")
+    fun `判非账不算失败`() = runTest(testDispatcher) {
+        coEvery { aiApi.parse(any()) } returns ApiResponse(
+            code = 5001, data = null, message = "AI 无法解析", outcome = "not_a_bill",
+        )
+
+        processor.process(captureOf(text = "点击领取优惠券，全场5折"))
+        runCurrent()
+
+        assertTrue(inserted.isEmpty(), "实际=$inserted")
+        assertEquals(0L, captureFunnelStats.snapshot().unparsedTotal)
+        coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
+        verifyNoReceipt()
+    }
+
+    @Test
+    @DisplayName("网络异常 → 同样不落库，计数 +1")
+    fun `网络异常不落库`() = runTest(testDispatcher) {
         coEvery { aiApi.parse(any()) } throws IOException("timeout")
 
         processor.process(captureOf(text = "支付成功 ¥1.80 交通卡"))
         runCurrent()
 
-        assertEquals(1, rowsWithStatus(CaptureArchive.STATUS_RAW).size)
+        assertTrue(inserted.isEmpty(), "实际=$inserted")
+        assertEquals(
+            1L,
+            captureFunnelStats.snapshot().stages[
+                CaptureFunnelStats.unparsedFailedStage(SourceChannel.NLS)
+            ],
+        )
         verifyNoReceipt()
     }
 
     @Test
-    @DisplayName("401 → 落 auth_pending（等重登重放），不落 raw")
+    @DisplayName("401 → 落 auth_pending（等重登重放），不计为解析失败")
     fun `401 落 auth_pending`() = runTest(testDispatcher) {
         coEvery { aiApi.parse(any()) } throws httpErr(401)
 
@@ -369,7 +406,7 @@ class NotificationProcessorTest {
         runCurrent()
 
         assertEquals(1, rowsWithStatus(CaptureArchive.STATUS_AUTH_PENDING).size)
-        assertEquals(0, rowsWithStatus(CaptureArchive.STATUS_RAW).size)
+        assertEquals(0L, captureFunnelStats.snapshot().unparsedTotal)
         verifyNoReceipt()
     }
 

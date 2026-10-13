@@ -29,8 +29,9 @@ data class ParsedTransaction(
 )
 
 /**
- * 一次解析尝试的结果。把「没解析出来」和「AI 判定不是账」分开：
- * 前者必须由调用方留痕（原文落 `raw`），后者才是真正的丢弃。
+ * 一次解析尝试的结果。把「没能解析」与「AI 判定不是账」分开：
+ * 前者是**不确定**（AI 不可用/异常），后者是 AI 明确的否定。两者都**不进用户视野**，
+ * 但原因不同：前者留痕在服务端 `ai_parse_logs`（客户端只计数 + warn），后者连留痕都不需要。
  */
 sealed interface ParseOutcome {
 
@@ -40,7 +41,11 @@ sealed interface ParseOutcome {
     /** AI 明确判定不是账（空 items / amount ≤ 0）→ 丢弃。 */
     data object NotATransaction : ParseOutcome
 
-    /** 没能解析（超时 / 5xx / 5001 / 网络异常 / 未知异常）→ 原文必须留痕。 */
+    /**
+     * AI **不可用或输出不可用**（服务端 `outcome=unavailable`：超时 / 上游 502·504 / 格式异常 5002 /
+     * 网络异常 / 未知异常）→ **不确定**，丢弃、不打扰用户。
+     * ⚠️ 「模型空结果 code=5001」若带 `outcome=not_a_bill` 是**判非账**，不是本态（走 [NotATransaction]）。
+     */
     data class Unparsed(val reason: String) : ParseOutcome
 
     /** 会话过期（401）→ 进待补偿，等同号重登后重放。 */
@@ -66,8 +71,9 @@ interface NotificationInterpreter {
      * 读一条捕获。
      *
      * suspend 的原因只有设置与分类学习的读取（DataStore / 内存表），没有网络以外的副作用。
-     * 网络失败不抛出，一律以 [ParseOutcome.Unparsed] / [ParseOutcome.AuthExpired] 返回，
-     * 由调用方决定留痕方式——这是「解析失败不许静默」这条产品承诺的落点。
+     * 网络失败不抛出，一律以 [ParseOutcome.Unparsed] / [ParseOutcome.AuthExpired] 返回。
+     * [ParseOutcome.Unparsed] 是**不确定**（既非「是账」也非「不是账」）：调用方不做用户可见的留痕，
+     * 只计数 + warn，留痕交给服务端 `ai_parse_logs`（PRODUCT §五.2）。
      */
     suspend fun read(capture: Capture): ParseOutcome
 }

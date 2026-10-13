@@ -6,6 +6,7 @@ import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.CaptureArchive
+import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.NotificationInterpreter
 import com.aibill.android.domain.notification.ParseOutcome
 import com.aibill.android.domain.notification.ParsedTransaction
@@ -32,7 +33,7 @@ import javax.inject.Singleton
  *   → NotificationInterpreter.read         解析 + 校验，产出候选 / 明确失败原因
  *       ├ Parsed        → ScoredAdmission.submit  窗口择优 + 跨渠道判重
  *       │                    └ 产出 → commit      信息完整 → RecordIntake；否则 → 待审池
- *       ├ Unparsed      → CaptureArchive.captureUnparsed   原文落 raw，通知中心可见
+ *       ├ Unparsed      → 丢弃（不落待审 / 不发通知；计数 + warn）
  *       ├ AuthExpired   → CaptureArchive.captureAuthPending 落 auth_pending，重登后重放
  *       └ NotATransaction / Disabled → 丢弃
  * ```
@@ -58,6 +59,7 @@ class NotificationProcessor @Inject constructor(
     private val userPreferences: UserPreferences,
     private val appLogger: AppLogger,
     private val rulesManager: NotificationRulesManager,
+    private val captureFunnelStats: CaptureFunnelStats,
 ) {
 
     /**
@@ -68,7 +70,20 @@ class NotificationProcessor @Inject constructor(
     suspend fun process(capture: Capture) {
         when (val outcome = interpreter.read(capture)) {
             is ParseOutcome.Disabled, is ParseOutcome.NotATransaction -> Unit
-            is ParseOutcome.Unparsed -> captureArchive.captureUnparsed(capture, outcome.reason)
+            // 解析失败 = **不确定**（区别于「AI 判定不是账」）：既不是「是账」也不是「不是账」。
+            // 不落待审、不发通知、不打扰用户 —— 让用户面对一条没有金额/分类的原文
+            // 等于「形式上留痕、实质上丢弃」（用户没法审）。留痕责任在服务端 `ai_parse_logs`。
+            // ⚠️ 不要在这里用正则判「像不像账」：正则只做筛选，「是不是账」由 AI 判定。
+            // 本地只做两件事：计数（失败率可见，进 ⑤ 上报与导出日志）+ warn（排障用）。
+            // 401 是另一回事（会话过期）→ 见下面的 AuthExpired 分支（待补偿重放）。
+            is ParseOutcome.Unparsed -> {
+                captureFunnelStats.record(CaptureFunnelStats.unparsedFailedStage(capture.channel))
+                appLogger.warn(
+                    "NLS",
+                    "解析失败，丢弃（不留待审）: reason=${outcome.reason} " +
+                        "pkg=${capture.packageName} text=${capture.fullText.take(30)}"
+                )
+            }
             is ParseOutcome.AuthExpired -> captureArchive.captureAuthPending(capture)
             is ParseOutcome.Parsed -> scoredAdmission.submit(outcome.transaction) { commit(it) }
         }
@@ -82,7 +97,7 @@ class NotificationProcessor @Inject constructor(
      * 本地数据一张未动）之后调用；换号/首次登录拿到的是 `Cleared`，队列已被一起清掉
      * ——那是另一个用户的数据，本来就不该重放。
      *
-     * 逐条重新走 [process]，解析成功会正常入库并转 confirmed/parsed；失败则留痕为 `raw`。
+     * 逐条重新走 [process]，解析成功会正常入库并转 confirmed/parsed；解析失败不再留痕。
      * 终态标记与「不再无限重试」由 [CaptureArchive.replay] 处理。
      */
     suspend fun replayAuthPending() {

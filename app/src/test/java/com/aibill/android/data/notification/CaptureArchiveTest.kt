@@ -21,9 +21,10 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 
 /**
- * [CaptureArchive] 的接口级测试：**捕获 → 重放 → 终态**。
+ * [CaptureArchive] 的接口级测试：**401 原文留痕 → 重放 → 终态**。
  *
- * 这是产品承诺「不漏账 / 失败绝不静默」的落点：解析失败与 401 都必须留下原文。
+ * 401 是会话过期（不是解析失败），必须留下原文并在同号重登后重放。解析失败已不再本地留痕
+ * （它是「不确定」，留痕在服务端 `ai_parse_logs`）。
  */
 class CaptureArchiveTest {
 
@@ -53,26 +54,7 @@ class CaptureArchiveTest {
     // ── 捕获 ──
 
     @Test
-    @DisplayName("解析失败 → 落一行 raw：原文进 content，金额/分类留空")
-    fun `解析失败落 raw`() = runTest {
-        val inserted = captureInserted()
-        archive.captureUnparsed(captureOf(), reason = "code=5001")
-
-        assertEquals(1, inserted.size)
-        with(inserted.single()) {
-            assertEquals(CaptureArchive.STATUS_RAW, status)
-            assertEquals("cmb.pb", packageName)
-            assertEquals("招商银行", title)
-            assertEquals("您账户2415发生快捷支付扣款，人民币50.00", content)
-            assertNull(parsedAmount, "没解析出金额就必须留空，不能编一个")
-            assertNull(parsedType)
-            assertNull(parsedDescription)
-            assertEquals(receivedAtMs, receivedAt)
-        }
-    }
-
-    @Test
-    @DisplayName("401 → 落一行 auth_pending（与 raw 是不同语义：等重登重放）")
+    @DisplayName("401 → 落一行 auth_pending（等重登重放）")
     fun `401 落 auth_pending`() = runTest {
         val inserted = captureInserted()
         archive.captureAuthPending(captureOf())
@@ -86,7 +68,7 @@ class CaptureArchiveTest {
     @DisplayName("空标题写 null（不回写空串）")
     fun `空标题写 null`() = runTest {
         val inserted = captureInserted()
-        archive.captureUnparsed(captureOf(title = "   "), reason = "http=500")
+        archive.captureAuthPending(captureOf(title = "   "))
         assertNull(inserted.single().title)
     }
 
@@ -94,10 +76,9 @@ class CaptureArchiveTest {
     @DisplayName("落库失败只记日志，不向上抛（捕获兜底不能自己崩掉）")
     fun `落库失败不抛`() = runTest {
         coEvery { dao.insert(any()) } throws RuntimeException("db down")
-        archive.captureUnparsed(captureOf(), reason = "IOException")
+        // 异常被吞掉 → 捕获层自己不会成为崩溃点
         archive.captureAuthPending(captureOf())
-        // 两次写入都尝试过、且异常都被吞掉（不向上抛 → 捕获层自己不会成为崩溃点）
-        coVerify(exactly = 2) { dao.insert(any()) }
+        coVerify(exactly = 1) { dao.insert(any()) }
     }
 
     @Test
@@ -105,22 +86,14 @@ class CaptureArchiveTest {
     fun `落库取消向上抛`() = runTest {
         coEvery { dao.insert(any()) } throws kotlinx.coroutines.CancellationException("scope closed")
 
-        var rawThrown: Throwable? = null
-        try {
-            archive.captureUnparsed(captureOf(), reason = "IOException")
-        } catch (e: Throwable) {
-            rawThrown = e
-        }
-
-        var authThrown: Throwable? = null
+        var thrown: Throwable? = null
         try {
             archive.captureAuthPending(captureOf())
         } catch (e: Throwable) {
-            authThrown = e
+            thrown = e
         }
 
-        assertTrue(rawThrown is kotlinx.coroutines.CancellationException)
-        assertTrue(authThrown is kotlinx.coroutines.CancellationException)
+        assertTrue(thrown is kotlinx.coroutines.CancellationException)
     }
 
     // ── 重放 → 终态 ──

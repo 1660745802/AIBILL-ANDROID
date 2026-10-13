@@ -28,7 +28,10 @@ import kotlinx.coroutines.flow.Flow
 interface ReviewQueue {
 
     /**
-     * 观察待审（`raw` / `parsed`）+ [sinceMillis] 之后已确认的记录。
+     * 观察待审（`parsed` + 历史遗留的 `raw`）+ [sinceMillis] 之后已确认的记录。
+     *
+     * `raw` 是 ≤1.6.1 的解析失败原文（现已不再写入，见 [CaptureArchive]）：保留读取是为了
+     * 老用户升级后不静默丢历史数据，通知中心仍可确认/忽略。
      *
      * @param sinceMillis 已确认记录的展示窗口下界（通知中心传 24h 前的时间戳）
      */
