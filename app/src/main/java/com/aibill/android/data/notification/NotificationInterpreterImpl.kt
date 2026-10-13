@@ -210,21 +210,32 @@ class NotificationInterpreterImpl @Inject constructor(
                 )
             )
         } catch (e: HttpException) {
-            // B2：鉴权失败不能丢交易。
-            // 2026-10-04：token 过期时 AI 抛 401，旧实现与其他异常一并
-            // 「记一行日志就丢」，导致招行 20.00 / 交通卡 1.80 两笔真实交易
-            // 静默消失，用户无感知。改为落库标记，用户重新登录后重放。
-            circuitBreaker.recordOutcome(capture.packageName, success = false)
-            if (e.code() == 401) {
+            if (e.code() == 400) {
+                // 入参被服务端拒（空 / 超长）= **客户端请求问题**，不是「AI 挂了」：
+                // 单独成桶（client_only.unparsed_input_invalid），也不记熔断失败
+                //（否则一个客户端 bug 会把包名拉黑、静音真交易）。服务端 `docs/API.md` 附录 C §10。
                 appLogger.warn(
                     "NLS",
-                    "AI 鉴权失败(401)，交易转入待补偿: pkg=${capture.packageName} text=${capture.fullText.take(60)}"
+                    "AI 入参被拒(400)，丢弃: pkg=${capture.packageName} msg=${e.message()}"
                 )
-                ParseOutcome.AuthExpired
+                ParseOutcome.InvalidInput("http=400")
             } else {
-                appLogger.error("NLS", "AI HTTP 异常 ${e.code()}: ${e.message()}")
-                Timber.w(e, "AI HTTP 失败，落原文: ${capture.packageName}")
-                ParseOutcome.Unparsed("http=${e.code()}")
+                // B2：鉴权失败不能丢交易。
+                // 2026-10-04：token 过期时 AI 抛 401，旧实现与其他异常一并
+                // 「记一行日志就丢」，导致招行 20.00 / 交通卡 1.80 两笔真实交易
+                // 静默消失，用户无感知。改为落库标记，用户重新登录后重放。
+                circuitBreaker.recordOutcome(capture.packageName, success = false)
+                if (e.code() == 401) {
+                    appLogger.warn(
+                        "NLS",
+                        "AI 鉴权失败(401)，交易转入待补偿: pkg=${capture.packageName} text=${capture.fullText.take(60)}"
+                    )
+                    ParseOutcome.AuthExpired
+                } else {
+                    appLogger.error("NLS", "AI HTTP 异常 ${e.code()}: ${e.message()}")
+                    Timber.w(e, "AI HTTP 失败（不可用）: ${capture.packageName}")
+                    ParseOutcome.Unparsed("http=${e.code()}")
+                }
             }
         } catch (e: CancellationException) {
             // 协程取消不是解析失败：吞掉会让服务重建/进程回收时落出一条假的 raw 留痕，

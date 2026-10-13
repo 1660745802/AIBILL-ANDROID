@@ -1,8 +1,11 @@
 package com.aibill.android.service
 
+import com.aibill.android.data.remote.dto.response.A11yAppProfileDto
 import com.aibill.android.data.remote.dto.response.NotificationRulesDto
 import com.aibill.android.data.remote.dto.response.PrecheckDto
 import com.aibill.android.data.remote.dto.response.PrecheckSignalDto
+import com.aibill.android.domain.notification.A11yProfileOverride
+import com.aibill.android.domain.notification.A11yProfileResolver
 import com.aibill.android.domain.notification.PrecheckRuleSpec
 import com.aibill.android.domain.notification.PrecheckSignalSpec
 import com.aibill.android.domain.notification.PrecheckSpec
@@ -60,21 +63,7 @@ internal object NotificationRulesMapping {
                 defaultExcludeContent = dto.nls?.defaultRule?.excludeContentContains
                     ?: defaults.nls.defaultExcludeContent,
             ),
-            a11y = A11yRules(
-                embeddedPaymentApps = dto.a11y?.embeddedPaymentApps ?: defaults.a11y.embeddedPaymentApps,
-                successKeywords = dto.a11y?.successKeywords ?: defaults.a11y.successKeywords,
-                embeddedSuccessKeywords = dto.a11y?.embeddedSuccessKeywords ?: defaults.a11y.embeddedSuccessKeywords,
-                commonExcludeKeywords = dto.a11y?.commonExcludeKeywords ?: defaults.a11y.commonExcludeKeywords,
-                wechatAlipayExcludeKeywords = dto.a11y?.wechatAlipayExcludeKeywords ?: defaults.a11y.wechatAlipayExcludeKeywords,
-                amountRegex = dto.a11y?.amountRegex ?: defaults.a11y.amountRegex,
-                cooldownMinutes = dto.a11y?.cooldownMinutes ?: defaults.a11y.cooldownMinutes,
-                // 云控优先、**硬编码内置**兜底：缺键时直接用 PaymentAccessibilityRecognition 的默认，
-                // 不读资产（资产也可能缺键/读失败），也不在映射层另抄字面量。
-                listPageKeywords = dto.a11y?.listPageKeywords
-                    ?: PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS,
-                listPageMinAmounts = dto.a11y?.listPageMinAmounts
-                    ?: PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS,
-            ),
+            a11y = mapA11y(dto) { defaults },
             sms = SmsRules(
                 spamKeywords = dto.smsRules?.spamKeywords ?: defaults.sms.spamKeywords,
             ),
@@ -121,6 +110,43 @@ internal object NotificationRulesMapping {
             },
         )
     }
+
+    /**
+     * `a11y` 子树的映射。抽出来只为把 `fromDto` 的圈复杂度压回阈值内（纯搬家，无语义变化）；
+     * 另两个新键（`profiles_schema`/`app_profiles`）只在 schema 认识时才被快照层消费。
+     *
+     * `defaults` 传的是 **lambda 而非值**：直接传值会在调用点强制求值兜底（`by lazy` 的
+     * delegate 一旦被当普通参数传递就会被 getValue），把「字段齐全就不读 assets」的惰性丢掉。
+     */
+    private fun mapA11y(dto: NotificationRulesDto, defaults: () -> NotificationRules): A11yRules = A11yRules(
+        embeddedPaymentApps = dto.a11y?.embeddedPaymentApps ?: defaults().a11y.embeddedPaymentApps,
+        successKeywords = dto.a11y?.successKeywords ?: defaults().a11y.successKeywords,
+        embeddedSuccessKeywords = dto.a11y?.embeddedSuccessKeywords ?: defaults().a11y.embeddedSuccessKeywords,
+        commonExcludeKeywords = dto.a11y?.commonExcludeKeywords ?: defaults().a11y.commonExcludeKeywords,
+        wechatAlipayExcludeKeywords = dto.a11y?.wechatAlipayExcludeKeywords ?: defaults().a11y.wechatAlipayExcludeKeywords,
+        amountRegex = dto.a11y?.amountRegex ?: defaults().a11y.amountRegex,
+        cooldownMinutes = dto.a11y?.cooldownMinutes ?: defaults().a11y.cooldownMinutes,
+        // 云控优先、**硬编码内置**兜底：缺键时直接用 PaymentAccessibilityRecognition 的默认，
+        // 不读资产（资产也可能缺键/读失败），也不在映射层另抄字面量。
+        listPageKeywords = dto.a11y?.listPageKeywords
+            ?: PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS,
+        listPageMinAmounts = dto.a11y?.listPageMinAmounts
+            ?: PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS,
+        merchantLabels = dto.a11y?.merchantLabels ?: A11yProfileResolver.DEFAULT_MERCHANT_LABELS,
+        profilesSchema = dto.a11y?.profilesSchema,
+        appProfiles = dto.a11y?.appProfiles?.mapValues { (_, profile) -> profile.toOverride() }
+            ?: emptyMap(),
+    )
+
+    /** `a11y.app_profiles.<pkg>` DTO → 领域覆盖值（只是字段搬家，无逻辑）。 */
+    private fun A11yAppProfileDto.toOverride(): A11yProfileOverride = A11yProfileOverride(
+        successKeywords = successKeywords,
+        embeddedSuccessKeywords = embeddedSuccessKeywords,
+        excludeKeywords = excludeKeywords,
+        amountRegex = amountRegex,
+        merchantLabels = merchantLabels,
+        listPageHeadChars = listPageHeadChars,
+    )
 
     private fun PrecheckSignalDto.toSpec(): PrecheckSignalSpec =
         PrecheckSignalSpec(pattern = pattern.orEmpty(), flags = flags)

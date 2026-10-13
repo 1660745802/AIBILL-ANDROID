@@ -73,6 +73,11 @@ package com.aibill.android.domain.notification
  *   本 stage 把「因 AI 失败而丢掉多少条」变成可上报的失败率——它是 AI 不可用**唯一**的客户端信号。
  *   上报键固定 [UNPARSED_AI_FAILED_REPORT_KEY]（`client_only.unparsed_ai_failed`，
  *   渠道段不体现在 key 里，由请求的 `channel` 字段承载）。
+ * - [unparsedInputInvalidStage]（形如 `unparsed.<channel>.input_invalid`）：入参被服务端拒
+ *   （HTTP 400：空 / 超长）时记一次。它是**客户端请求问题**，不是「AI 挂了」，必须单独成桶
+ *   （服务端 `docs/API.md` 附录 C §10）；上报键 [UNPARSED_INPUT_INVALID_REPORT_KEY]
+ *   （`client_only.unparsed_input_invalid`）。两个桶分开后，「双失败交叉核对」才不会把
+ *   客户端多算误读成服务端丢内存。
  *
  * ## 进报表
  *
@@ -123,8 +128,18 @@ interface CaptureFunnelStats {
         /** AI 响应侧（`ai.*`）发生次数合计（见 [aiExtraItemsStage]）。 */
         val aiResponseTotal: Long get() = stages.filterKeys { isAiResponseStage(it) }.values.sum()
 
-        /** AI 失败丢弃（`unparsed.*`）次数合计（见 [unparsedFailedStage]）——失败率分子。 */
-        val unparsedTotal: Long get() = stages.filterKeys { isUnparsedStage(it) }.values.sum()
+        /** AI 失败丢弃（`unparsed.*.ai_failed`）次数合计——失败率分子（仅 `outcome=unavailable`）。 */
+        val unparsedAiFailedTotal: Long get() = stages
+            .filterKeys { isUnparsedStage(it) && !isUnparsedInputInvalidStage(it) }
+            .values.sum()
+
+        /** 入参被服务端拒（HTTP 400 空/超长）而丢弃的次数（服务端 `docs/API.md` 附录 C §10）——不计入失败率。 */
+        val unparsedInputInvalidTotal: Long get() = stages
+            .filterKeys { isUnparsedInputInvalidStage(it) }
+            .values.sum()
+
+        /** 解析侧（AI 失败 + 入参非法）丢弃合计。 */
+        val unparsedTotal: Long get() = unparsedAiFailedTotal + unparsedInputInvalidTotal
 
         /**
          * 某渠道的计数，键已映射为上报键（一般为 `client_only.capture_*`）。
@@ -175,6 +190,14 @@ interface CaptureFunnelStats {
         const val UNPARSED_AI_FAILED_REASON = "ai_failed"
 
         /**
+         * 入参非法（HTTP 400：空 / 超长）stage 的原因段（服务端 `docs/API.md` 附录 C §10）。
+         *
+         * 与 [UNPARSED_AI_FAILED_REASON] 分开：那是「AI 不可用」（`outcome=unavailable`），
+         * 这是**客户端请求问题**。混在一桶会让「双失败交叉核对」把客户端多算误读成服务端丢内存。
+         */
+        const val UNPARSED_INPUT_INVALID_REASON = "input_invalid"
+
+        /**
          * AI 响应侧唯一上报键：`client_only.ai_extra_items`。
          *
          * 渠道段不体现在 key 里（请求已带 `channel` 字段），避免为每渠道各造一个键。
@@ -187,6 +210,9 @@ interface CaptureFunnelStats {
          * 渠道段不体现在 key 里（请求已带 `channel` 字段），避免为每渠道各造一个键。
          */
         const val UNPARSED_AI_FAILED_REPORT_KEY = "client_only.unparsed_ai_failed"
+
+        /** 入参非法唯一上报键：`client_only.unparsed_input_invalid`（渠道由请求 `channel` 承载）。 */
+        const val UNPARSED_INPUT_INVALID_REPORT_KEY = "client_only.unparsed_input_invalid"
 
         const val DROPPED_NLS_NO_PACKAGE = "dropped.nls.no_package"
         const val DROPPED_NLS_NO_EXTRAS = "dropped.nls.no_extras"
@@ -235,6 +261,13 @@ interface CaptureFunnelStats {
         /** 是否是 AI 失败丢弃 stage。 */
         fun isUnparsedStage(stage: String): Boolean = stage.startsWith(UNPARSED_PREFIX)
 
+        /** 构造某渠道的入参非法 stage：`unparsed.<channel>.input_invalid`。 */
+        fun unparsedInputInvalidStage(channel: SourceChannel): String =
+            "$UNPARSED_PREFIX${channel.logTag.lowercase()}.$UNPARSED_INPUT_INVALID_REASON"
+
+        /** 是否是入参非法 stage。 */
+        fun isUnparsedInputInvalidStage(stage: String): Boolean = stage.endsWith(".$UNPARSED_INPUT_INVALID_REASON")
+
         /** 从 stage 的第二段解析渠道；缺渠道段返回 null（这类 key 不上报，防 400）。 */
         fun channelOf(stage: String): SourceChannel? {
             val parts = stage.split('.')
@@ -253,6 +286,7 @@ interface CaptureFunnelStats {
          */
         fun reportKey(stage: String): String = when {
             isAiResponseStage(stage) -> AI_EXTRA_ITEMS_REPORT_KEY
+            isUnparsedInputInvalidStage(stage) -> UNPARSED_INPUT_INVALID_REPORT_KEY
             isUnparsedStage(stage) -> UNPARSED_AI_FAILED_REPORT_KEY
             else -> PrefilterStats.CLIENT_ONLY_PREFIX + REPORT_KEY_PREFIX + stage.replace('.', '_')
         }
@@ -284,7 +318,7 @@ interface CaptureFunnelStats {
                 }
             val unparsedStages = snapshot.stages.filterKeys { isUnparsedStage(it) }
             if (unparsedStages.isNotEmpty()) {
-                appendLine("AI 失败丢弃（不确定：不落待审、不打扰用户，留痕在服务端）:")
+                appendLine("解析侧丢弃（AI 失败 = 不确定；入参非法 = 请求问题；均不进用户视野）:")
                 unparsedStages.entries.sortedByDescending { it.value }.forEach { (stage, count) ->
                     appendLine("  $count  $stage  ${LABELS[stage] ?: ""}")
                 }
@@ -297,8 +331,11 @@ interface CaptureFunnelStats {
                 }
             }
             append("合计: 收到 ${snapshot.receivedTotal} · 早退丢弃 ${snapshot.droppedTotal}")
-            if (snapshot.unparsedTotal > 0L) {
-                append(" · AI 失败丢弃 ${snapshot.unparsedTotal}")
+            if (snapshot.unparsedAiFailedTotal > 0L) {
+                append(" · AI 失败丢弃 ${snapshot.unparsedAiFailedTotal}")
+            }
+            if (snapshot.unparsedInputInvalidTotal > 0L) {
+                append(" · 入参非法丢弃 ${snapshot.unparsedInputInvalidTotal}")
             }
             if (snapshot.aiResponseTotal > 0L) {
                 append(" · AI 响应裁剪 ${snapshot.aiResponseTotal} 次")
@@ -330,12 +367,18 @@ interface CaptureFunnelStats {
             unparsedFailedStage(SourceChannel.NLS) to UNPARSED_AI_FAILED_LABEL,
             unparsedFailedStage(SourceChannel.A11Y) to UNPARSED_AI_FAILED_LABEL,
             unparsedFailedStage(SourceChannel.SMS) to UNPARSED_AI_FAILED_LABEL,
+            unparsedInputInvalidStage(SourceChannel.NLS) to UNPARSED_INPUT_INVALID_LABEL,
+            unparsedInputInvalidStage(SourceChannel.A11Y) to UNPARSED_INPUT_INVALID_LABEL,
+            unparsedInputInvalidStage(SourceChannel.SMS) to UNPARSED_INPUT_INVALID_LABEL,
         )
 
         /** AI 响应侧唯一 stage 的人读标签。 */
         private const val AI_EXTRA_ITEMS_LABEL = "AI 响应裁剪多余条目（按次数）"
 
         /** AI 失败丢弃 stage 的人读标签。 */
-        private const val UNPARSED_AI_FAILED_LABEL = "AI 解析失败，丢弃（不确定，不进待审）"
+        private const val UNPARSED_AI_FAILED_LABEL = "AI 不可用（outcome=unavailable），丢弃（不进待审）"
+
+        /** 入参非法 stage 的人读标签。 */
+        private const val UNPARSED_INPUT_INVALID_LABEL = "入参被拒（HTTP 400 空/超长），丢弃"
     }
 }

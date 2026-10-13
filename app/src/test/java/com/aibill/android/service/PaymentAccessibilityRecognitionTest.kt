@@ -155,6 +155,21 @@ class PaymentAccessibilityRecognitionTest {
     }
 
     @Test
+    fun `list page head window is configurable per profile`() {
+        val keywords = PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS
+        val regex = PaymentAccessibilityRecognition.LIST_PAGE_AMOUNT_REGEX
+        // 「账单」在第 11 个字符处；内置窗口 24 → 命中；profile 收窄到 4 → 窗口外 → 放行。
+        val page = "0123456789账单 ¥1.00 ¥2.00 ¥3.00"
+        assertTrue(PaymentAccessibilityRecognition.looksLikeListPage(page, regex, keywords))
+        assertFalse(
+            PaymentAccessibilityRecognition.looksLikeListPage(page, regex, keywords, headChars = 4),
+        )
+        assertTrue(
+            PaymentAccessibilityRecognition.looksLikeListPage(page, regex, keywords, headChars = 40),
+        )
+    }
+
+    @Test
     fun `count amount like texts covers currency and thousand separator forms`() {
         assertEquals(
             3,

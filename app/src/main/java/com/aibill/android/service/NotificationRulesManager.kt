@@ -4,6 +4,8 @@ import android.app.Application
 import com.aibill.android.data.remote.api.NotificationRulesApi
 import com.aibill.android.data.remote.dto.response.NotificationRulesDto
 import com.aibill.android.data.remote.dto.response.NotificationRulesData
+import com.aibill.android.domain.notification.A11yProfileOverride
+import com.aibill.android.domain.notification.A11yProfileResolver
 import com.aibill.android.domain.notification.PrecheckSpec
 import com.squareup.moshi.Moshi
 import timber.log.Timber
@@ -292,6 +294,12 @@ data class A11yRules(
     val listPageKeywords: List<String> = PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS,
     /** 列表页金额数下限：云控优先，缺省 = [PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS]。 */
     val listPageMinAmounts: Int = PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS,
+    /** 全局商家标签（服务端 `docs/API.md` 附录 C §10）；缺省 = `findMerchant` 原硬编码 9 标签（行为不变）。 */
+    val merchantLabels: List<String> = A11yProfileResolver.DEFAULT_MERCHANT_LABELS,
+    /** A11Y 摘取 profile 版本；缺失/≠ [A11yProfileResolver.PROFILES_SCHEMA] → 忽略整个 app_profiles。 */
+    val profilesSchema: Int? = null,
+    /** per-App 摘取覆盖（契约 §2/§3）；仅在 schema 认识时被消费。 */
+    val appProfiles: Map<String, A11yProfileOverride> = emptyMap(),
 )
 
 data class SmsRules(

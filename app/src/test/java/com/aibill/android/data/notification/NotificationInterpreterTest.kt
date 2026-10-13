@@ -206,6 +206,15 @@ class NotificationInterpreterTest {
     }
 
     @Test
+    @DisplayName("HTTP 400（入参空/超长）→ InvalidInput（单独成桶），不记熔断失败")
+    fun `http 400 入参非法`() = runTest {
+        coEvery { aiApi.parse(any()) } throws httpErr(400)
+        assertEquals(ParseOutcome.InvalidInput("http=400"), interpreter.read(captureOf()))
+        // 客户端请求问题不是「AI 挂了」：不得把包名拉黑
+        verify(exactly = 0) { circuitBreaker.recordOutcome(pkg, success = false, now = any()) }
+    }
+
+    @Test
     @DisplayName("HTTP 5xx → Unparsed(http=500)")
     fun `HTTP 5xx`() = runTest {
         coEvery { aiApi.parse(any()) } throws httpErr(500)

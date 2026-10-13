@@ -145,6 +145,8 @@ L4 路由 NotificationProcessor（协调者）
     · 让用户面对一条没有金额/分类的原文等于「形式上留痕、实质上丢弃」（用户没法审）
     · 留痕责任在**服务端** `ai_parse_logs`（完整记录 + 失败率/原因分布）；重试也归服务端
     · 本地只做两件事：计数（`client_only.unparsed_ai_failed`，进 ⑤ 上报与导出日志）+ warn（含 reason）
+    · HTTP 400（入参空/超长）= **客户端请求问题**，单独计 `client_only.unparsed_input_invalid`，
+      不混入 AI 失败率（服务端 `docs/API.md` 附录 C §10）
     · ⚠️ **不要在这里用正则判「像不像账」** —— 正则只做筛选，「是不是账」由 AI 判定（本项目核心原则）
   401 → CaptureArchive.captureAuthPending → 同号重登后 CaptureArchive.replay 重放
 ```
@@ -178,10 +180,20 @@ L4 路由 NotificationProcessor（协调者）
 **捕获层漏斗计数**（`client_only.capture_*`）：白名单外 App、无 root、未命中成功词、排除词、金额不合法、
 历史日期、防抖、页面去重 —— 这些记录**从不进预筛、也不上服务端**，是「漏账」唯一可诊断的入口。
 只加计数、不改行为；`totals.notifications = blocked + passed` 的语义不变（捕获层计数只进 `counts`）。
-**AI 侧观测**：AI 响应裁剪（`client_only.ai_extra_items`）与 **AI 失败丢弃**
-（`client_only.unparsed_ai_failed`，解析失败 = 不确定 → 不落待审/不打扰用户）各用固定上报键；
-两者都**不进 `totals`**，只作 `client_only.*` 观察量（`CaptureFunnelStats` 里 `dropped.*` / `ai.*` /
-`unparsed.*` 三个家族分开统计与渲染）。
+**AI 侧观测**：AI 响应裁剪（`client_only.ai_extra_items`）、**AI 失败丢弃**
+（`client_only.unparsed_ai_failed`，解析失败 = 不确定 → 不落待审/不打扰用户）与**入参非法**
+（`client_only.unparsed_input_invalid`，HTTP 400 空/超长）各用固定上报键；
+三者都**不进 `totals`**，只作 `client_only.*` 观察量（`CaptureFunnelStats` 里 `dropped.*` / `ai.*` /
+`unparsed.*` 三个家族分开统计与渲染；`unparsed.*` 内再分 `ai_failed` / `input_invalid` 两桶）。
+
+**A11Y 摘取 profile（per-App 覆盖，服务端 `docs/API.md` 附录 C §10）**：`a11y.merchant_labels`（全局商家标签）
+与 `a11y.app_profiles.<pkg>`（成功词 / 排除词 / 金额正则 / 商家标签 / 列表页标题区长度）把
+「选 / 取文本」从客户端硬编码变成云控可下发（改 `rules.json` → `content_hash` 变 → 自动重拉）。
+**逐键回退**：`profile[key]` → 全局 `a11y[key]` → 内置默认；profile 未写的键必须继续用全局，
+不得因出现 profile 就丢全局值。`exclude_keywords` 出现即**完全替换**该包排除词。
+`profiles_schema` 缺失/≠1 → 忽略整个 `app_profiles`；单键非法（regex 编译失败 / 阈值非正）→
+回退全局并 warn（带 package+key）。解析在判据快照里**只做一次**（`A11yProfileResolver`），
+服务与预筛共用；它**只选/取文本，不参与「是不是账」判定**（原则 1）。
 
 **判定顺序本身是行为**：日报/促销必须早于营销词（它们含「支出」会触发强交易特征豁免，词表拦不住）。
 

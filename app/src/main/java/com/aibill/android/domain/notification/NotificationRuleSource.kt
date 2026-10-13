@@ -43,6 +43,9 @@ interface NotificationRuleSource {
  * @param marketingCommaKeywords 营销词首次出现处截断（`processor.marketing_comma_keywords`）
  * @param a11yListPageKeywords A11Y 列表页关键词（云控优先、内置兜底）
  * @param a11yListPageMinAmounts A11Y 列表页金额数下限（云控优先、内置兜底；预筛对非正值再兜底）
+ * @param a11yGlobalProfile 全局 A11Y 摘取配置（amount_regex 已在建快照时编译并兜底）
+ * @param a11yPackageProfiles 已逐键回退的 per-App 摘取策略（服务端 `docs/API.md` 附录 C §10；空 = 无 profile，
+ *   行为与今天完全一致）。**只在 schema 认识时非空**，且只用于「选/取文本」。
  */
 data class NotificationRuleSnapshot(
     val generation: Int,
@@ -58,6 +61,8 @@ data class NotificationRuleSnapshot(
     val marketingCommaKeywords: List<String> = emptyList(),
     val a11yListPageKeywords: List<String> = emptyList(),
     val a11yListPageMinAmounts: Int = 0,
+    val a11yGlobalProfile: A11yGlobalProfile = A11yGlobalProfile(),
+    val a11yPackageProfiles: Map<String, A11yPackageProfile> = emptyMap(),
 ) {
 
     /**

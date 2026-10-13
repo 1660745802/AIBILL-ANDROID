@@ -140,7 +140,29 @@ data class A11yRulesDto(
     /** 列表页关键词（可选；缺省/空数组 → 客户端内置默认）。 */
     @Json(name = "list_page_keywords") val listPageKeywords: List<String>? = null,
     /** 列表页金额数下限（可选；缺失/非正 → 客户端内置默认）。 */
-    @Json(name = "list_page_min_amounts") val listPageMinAmounts: Int? = null
+    @Json(name = "list_page_min_amounts") val listPageMinAmounts: Int? = null,
+    /** 全局商家标签（服务端 `docs/API.md` 附录 C §10；缺省 → 客户端内置 9 标签）。 */
+    @Json(name = "merchant_labels") val merchantLabels: List<String>? = null,
+    /** A11Y 摘取 profile 版本（契约 §5）；缺失/≠1 → 客户端忽略整个 app_profiles。 */
+    @Json(name = "profiles_schema") val profilesSchema: Int? = null,
+    /** per-App 摘取覆盖（契约 §2/§3）；仅 profiles_schema 认识时消费。未知键忽略。 */
+    @Json(name = "app_profiles") val appProfiles: Map<String, A11yAppProfileDto>? = null,
+)
+
+/**
+ * `a11y.app_profiles.<package_name>` 的原始形态（服务端 `docs/API.md` 附录 C §10）。
+ *
+ * 字段全部可选：`null` = 该键未覆盖，逐键回退到全局（§3.1）。P2 的 `amount_view_id` /
+ * `merchant_view_id` 本期**不声明**——未知键 Moshi 静默忽略（§3.9，不 failOnUnknown）。
+ */
+@JsonClass(generateAdapter = true)
+data class A11yAppProfileDto(
+    @Json(name = "success_keywords") val successKeywords: List<String>? = null,
+    @Json(name = "embedded_success_keywords") val embeddedSuccessKeywords: List<String>? = null,
+    @Json(name = "exclude_keywords") val excludeKeywords: List<String>? = null,
+    @Json(name = "amount_regex") val amountRegex: String? = null,
+    @Json(name = "merchant_labels") val merchantLabels: List<String>? = null,
+    @Json(name = "list_page_head_chars") val listPageHeadChars: Int? = null,
 )
 
 @JsonClass(generateAdapter = true)

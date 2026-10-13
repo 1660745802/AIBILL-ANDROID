@@ -23,6 +23,34 @@ import java.util.concurrent.TimeUnit
 class CaptureFunnelStatsImplTest {
 
     @Test
+    @DisplayName("入参非法 stage：上报键 client_only.unparsed_input_invalid，不计入 AI 失败率")
+    fun unparsedInputInvalidIsSeparateBucket() {
+        val stats = CaptureFunnelStatsImpl()
+        stats.record(CaptureFunnelStats.unparsedFailedStage(SourceChannel.NLS))
+        stats.record(CaptureFunnelStats.unparsedInputInvalidStage(SourceChannel.NLS))
+        repeat(2) { stats.record(CaptureFunnelStats.unparsedInputInvalidStage(SourceChannel.SMS)) }
+
+        val snap = stats.snapshot()
+        assertEquals(
+            "client_only.unparsed_input_invalid",
+            CaptureFunnelStats.reportKey(CaptureFunnelStats.unparsedInputInvalidStage(SourceChannel.NLS)),
+        )
+        assertTrue(PrefilterReport.isReportableRuleId(CaptureFunnelStats.UNPARSED_INPUT_INVALID_REPORT_KEY))
+        // 两个桶分开：失败率只算 ai_failed；入参非法单独统计
+        assertEquals(1L, snap.unparsedAiFailedTotal)
+        assertEquals(3L, snap.unparsedInputInvalidTotal)
+        assertEquals(4L, snap.unparsedTotal)
+        assertEquals(
+            mapOf(
+                "client_only.unparsed_ai_failed" to 1L,
+                "client_only.unparsed_input_invalid" to 1L,
+            ),
+            snap.reportCountsFor(SourceChannel.NLS),
+        )
+        assertTrue(CaptureFunnelStats.isUnparsedInputInvalidStage(CaptureFunnelStats.unparsedInputInvalidStage(SourceChannel.A11Y)))
+    }
+
+    @Test
     @DisplayName("入口与早退分开计数：received 按渠道，stages 只含 dropped.*")
     fun countsReceivedAndDroppedSeparately() {
         val stats = CaptureFunnelStatsImpl()

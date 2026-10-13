@@ -398,6 +398,21 @@ class NotificationProcessorTest {
     }
 
     @Test
+    @DisplayName("HTTP 400 入参非法 → 不落库；单独计 unparsed_input_invalid，不计 AI 失败")
+    fun `入参非法单独成桶`() = runTest(testDispatcher) {
+        coEvery { aiApi.parse(any()) } throws httpErr(400)
+
+        processor.process(captureOf(text = "支付成功 ¥20.00 招行"))
+        runCurrent()
+
+        assertTrue(inserted.isEmpty(), "实际=$inserted")
+        assertEquals(1L, captureFunnelStats.snapshot().unparsedInputInvalidTotal)
+        assertEquals(0L, captureFunnelStats.snapshot().unparsedAiFailedTotal)
+        coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
+        verifyNoReceipt()
+    }
+
+    @Test
     @DisplayName("401 → 落 auth_pending（等重登重放），不计为解析失败")
     fun `401 落 auth_pending`() = runTest(testDispatcher) {
         coEvery { aiApi.parse(any()) } throws httpErr(401)

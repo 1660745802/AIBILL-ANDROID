@@ -1,5 +1,7 @@
 package com.aibill.android.data.notification
 
+import com.aibill.android.domain.notification.A11yGlobalProfile
+import com.aibill.android.domain.notification.A11yProfileResolver
 import com.aibill.android.domain.notification.LegacyCriteria
 import com.aibill.android.domain.notification.NotificationRuleSnapshot
 import com.aibill.android.domain.notification.NotificationRuleSource
@@ -39,6 +41,31 @@ internal fun deriveSnapshot(rules: NotificationRules, generation: Int, logger: A
             "spamKeywords=${rules.sms.spamKeywords.size} " +
             "knownPackages=$knownPackages.size"
     )
+    // 全局 A11Y 摘取配置：amount_regex 在这里**只编译一次**（失败→内置兜底）；
+    // profile 的逐键回退与告警也在这里一次做完，服务与预筛共用同一份结果。
+    val a11yGlobalProfile = A11yGlobalProfile(
+        successKeywords = rules.a11y.successKeywords,
+        embeddedSuccessKeywords = rules.a11y.embeddedSuccessKeywords,
+        commonExcludeKeywords = rules.a11y.commonExcludeKeywords,
+        wechatAlipayExcludeKeywords = rules.a11y.wechatAlipayExcludeKeywords,
+        amountRegex = runCatching { Regex(rules.a11y.amountRegex) }.getOrElse {
+            Timber.w("预筛: invalid a11y.amountRegex from rules, using hardcoded fallback")
+            logger?.warn("A11Y", "全局 amount_regex 非法，回退内置兜底")
+            A11yProfileResolver.FALLBACK_AMOUNT_REGEX
+        },
+        merchantLabels = rules.a11y.merchantLabels,
+    )
+    val a11yPackageProfiles = A11yProfileResolver.resolveAll(
+        profilesSchema = rules.a11y.profilesSchema,
+        overrides = rules.a11y.appProfiles,
+        embeddedPaymentApps = rules.a11y.embeddedPaymentApps
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .toSet(),
+        global = a11yGlobalProfile,
+    ) { pkg, key, reason ->
+        logger?.warn("A11Y", "A11Y profile 回退: pkg=$pkg key=$key reason=$reason")
+    }
     return NotificationRuleSnapshot(
         generation = generation,
         paymentSignal = paymentSignal,
@@ -62,6 +89,8 @@ internal fun deriveSnapshot(rules: NotificationRules, generation: Int, logger: A
         // A11Y 列表页启发式参数：云控优先、内置兜底（预筛对空/非正值再兜底）。
         a11yListPageKeywords = rules.a11y.listPageKeywords,
         a11yListPageMinAmounts = rules.a11y.listPageMinAmounts,
+        a11yGlobalProfile = a11yGlobalProfile,
+        a11yPackageProfiles = a11yPackageProfiles,
     )
 }
 

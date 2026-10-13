@@ -48,6 +48,15 @@ sealed interface ParseOutcome {
      */
     data class Unparsed(val reason: String) : ParseOutcome
 
+    /**
+     * 入参被服务端拒（HTTP 400：空 / 超长）→ 丢弃、不打扰用户。
+     *
+     * 与 [Unparsed] 分开：那是「AI 不可用」（`outcome=unavailable`），这是**客户端请求问题**。
+     * 混在一桶会让「客户端失败率 vs 服务端失败率」的交叉核对把客户端多算误读成服务端丢内存
+     * （服务端 `docs/API.md` 附录 C §10）。
+     */
+    data class InvalidInput(val reason: String) : ParseOutcome
+
     /** 会话过期（401）→ 进待补偿，等同号重登后重放。 */
     data object AuthExpired : ParseOutcome
 

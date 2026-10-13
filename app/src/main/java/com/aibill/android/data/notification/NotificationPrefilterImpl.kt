@@ -129,12 +129,16 @@ class NotificationPrefilterImpl @Inject constructor(
             val minAmounts = rules.a11yListPageMinAmounts
                 .takeIf { it > 0 }
                 ?: PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS
+            // 标题区窗口：per-App profile 可覆盖（缺省 = 内置 24）；profile 只改长度，不参与「是不是账」。
+            val headChars = rules.a11yPackageProfiles[packageName]?.listPageHeadChars
+                ?: PaymentAccessibilityRecognition.LIST_PAGE_KEYWORD_HEAD_CHARS
             if (
                 PaymentAccessibilityRecognition.looksLikeListPage(
                     pageText,
                     PaymentAccessibilityRecognition.LIST_PAGE_AMOUNT_REGEX,
                     listKeywords,
                     minAmounts,
+                    headChars,
                 )
             ) {
                 return block(capture, BlockReason.LIST_PAGE, "账单/明细页，跳过: pkg=$packageName")

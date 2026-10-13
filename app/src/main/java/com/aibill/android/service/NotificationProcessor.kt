@@ -34,6 +34,7 @@ import javax.inject.Singleton
  *       ├ Parsed        → ScoredAdmission.submit  窗口择优 + 跨渠道判重
  *       │                    └ 产出 → commit      信息完整 → RecordIntake；否则 → 待审池
  *       ├ Unparsed      → 丢弃（不落待审 / 不发通知；计数 + warn）
+ *       ├ InvalidInput  → 丢弃（入参非法 HTTP 400，单独计数，不混入 AI 失败率）
  *       ├ AuthExpired   → CaptureArchive.captureAuthPending 落 auth_pending，重登后重放
  *       └ NotATransaction / Disabled → 丢弃
  * ```
@@ -85,6 +86,15 @@ class NotificationProcessor @Inject constructor(
                 )
             }
             is ParseOutcome.AuthExpired -> captureArchive.captureAuthPending(capture)
+            // 入参被服务端拒（空 / 超长）= **客户端请求问题**，不是「AI 挂了」：
+            // 单独成桶（client_only.unparsed_input_invalid），不混入 AI 失败率（服务端 `docs/API.md` 附录 C §10）。
+            is ParseOutcome.InvalidInput -> {
+                captureFunnelStats.record(CaptureFunnelStats.unparsedInputInvalidStage(capture.channel))
+                appLogger.warn(
+                    "NLS",
+                    "AI 入参被拒，丢弃（不留待审）: reason=${outcome.reason} pkg=${capture.packageName}"
+                )
+            }
             is ParseOutcome.Parsed -> scoredAdmission.submit(outcome.transaction) { commit(it) }
         }
     }

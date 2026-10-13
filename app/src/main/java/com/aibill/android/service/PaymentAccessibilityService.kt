@@ -5,9 +5,13 @@ import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.aibill.android.domain.notification.A11yGlobalProfile
+import com.aibill.android.domain.notification.A11yPackageProfile
+import com.aibill.android.domain.notification.A11yProfileResolver
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.NotificationPrefilter
+import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
 import dagger.hilt.EntryPoint
@@ -126,9 +130,10 @@ internal object PaymentAccessibilityRecognition {
      *
      * **取舍：宁可漏挡（噪声多调一次 AI），不可误杀（丢真账）。** 收窄后若某真列表页的标题不在
      * 前 N 字符内，只是漏挡一次（该页逐行过预筛后仍会走 AI），不丢账；反之放宽就会拦掉真交易。
-     * 该常量是纯客户端页面结构判据的内置初值，未与服务端对齐前不新增云控键。
+     * 该常量是纯客户端页面结构判据的内置初值；现在可被云控
+     * `a11y.app_profiles.<pkg>.list_page_head_chars` 覆盖（缺省 = 本值；见 `A11yProfileResolver`）。
      */
-    const val LIST_PAGE_KEYWORD_HEAD_CHARS = 24
+    const val LIST_PAGE_KEYWORD_HEAD_CHARS = A11yProfileResolver.DEFAULT_LIST_PAGE_HEAD_CHARS
 
     /**
      * 列表页启发式的**内置兜底**列表词（7 个）。
@@ -166,8 +171,9 @@ internal object PaymentAccessibilityRecognition {
         amountRegex: Regex,
         listKeywords: List<String>,
         minAmounts: Int = LIST_PAGE_MIN_AMOUNTS,
+        headChars: Int = LIST_PAGE_KEYWORD_HEAD_CHARS,
     ): Boolean {
-        val head = pageText.take(LIST_PAGE_KEYWORD_HEAD_CHARS)
+        val head = pageText.take(headChars)
         if (listKeywords.none { it.isNotBlank() && head.contains(it) }) return false
         return countAmountLikeTexts(listOf(pageText), amountRegex) >= minAmounts
     }
@@ -200,6 +206,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         fun prefilter(): NotificationPrefilter
         fun appLogger(): com.aibill.android.util.AppLogger
         fun rulesManager(): NotificationRulesManager
+        fun ruleSource(): NotificationRuleSource
         fun captureFunnelStats(): CaptureFunnelStats
         @com.aibill.android.di.ApplicationScope
         fun applicationScope(): kotlinx.coroutines.CoroutineScope
@@ -209,6 +216,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     private lateinit var prefilter: NotificationPrefilter
     private lateinit var appLogger: com.aibill.android.util.AppLogger
     private lateinit var rulesManager: NotificationRulesManager
+    private lateinit var ruleSource: NotificationRuleSource
     private lateinit var captureFunnelStats: CaptureFunnelStats
 
     // PR 修复：改用进程级 ApplicationScope，避免 Service 每次实例化都泄漏一个 SupervisorJob。
@@ -236,11 +244,15 @@ class PaymentAccessibilityService : AccessibilityService() {
     // ═══════════════════════════════════════════════════════════════
     private var embeddedPaymentApps: Set<String> = emptySet()
     private var paymentApps: Set<String> = emptySet()
-    private var successKeywords: List<String> = emptyList()
-    private var embeddedSuccessKeywords: List<String> = emptyList()
-    private var commonExcludeKeywords: List<String> = emptyList()
-    private var wechatAlipayExcludeKeywords: List<String> = emptyList()
-    private var amountRegex: Regex = Regex("""[¥￥][ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(\d+\.?\d{0,2})|(\d+\.?\d{0,2})元""")
+
+    /**
+     * A11Y 摘取策略（服务端 `docs/API.md` 附录 C §10）：全局基底 + 逐键回退后的 per-App 覆盖。
+     *
+     * 解析（schema 守卫 + 逐键回退 + regex 编译 + 回退告警）在 [NotificationRuleSource]
+     * 快照里**只做一次**，与预筛共用同一份结果；这里只按代际取用。
+     */
+    private var a11yGlobal: A11yGlobalProfile = A11yGlobalProfile()
+    private var a11yProfiles: Map<String, A11yPackageProfile> = emptyMap()
     private var cooldownMs: Long = 5 * 60 * 1000L
     private var lastRulesGeneration: Int = -1
 
@@ -269,6 +281,12 @@ class PaymentAccessibilityService : AccessibilityService() {
         private const val A11Y_ITEM_TITLE = "支付成功"
 
         /**
+         * 无 profile 的包走全局默认：[A11yProfileResolver.resolve] 在 `override == null` 时
+         * 不会触发任何回退，不应产生告警（否则每个 A11Y 事件都会写一条）。
+         */
+        private val NO_PROFILE_WARN = A11yProfileResolver.Warn { _, _, _ -> }
+
+        /**
          * 服务是否已成功连接到无障碍框架。
          *
          * 与「设置里的开关是否打开」是两件事：
@@ -294,6 +312,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         prefilter = entryPoint.prefilter()
         appLogger = entryPoint.appLogger()
         rulesManager = entryPoint.rulesManager()
+        ruleSource = entryPoint.ruleSource()
         captureFunnelStats = entryPoint.captureFunnelStats()
         serviceScope = entryPoint.applicationScope()
 
@@ -307,15 +326,11 @@ class PaymentAccessibilityService : AccessibilityService() {
         val rules = snapshot.rules
         embeddedPaymentApps = rules.a11y.embeddedPaymentApps.map(String::trim).filter(String::isNotBlank).toSet()
         paymentApps = PaymentAccessibilityRecognition.paymentPackages(rules.a11y.embeddedPaymentApps)
-        successKeywords = rules.a11y.successKeywords
-        embeddedSuccessKeywords = rules.a11y.embeddedSuccessKeywords
-        commonExcludeKeywords = rules.a11y.commonExcludeKeywords
-        wechatAlipayExcludeKeywords = rules.a11y.wechatAlipayExcludeKeywords
-        amountRegex = try {
-            Regex(rules.a11y.amountRegex)
-        } catch (e: Exception) {
-            Regex("""[¥￥][ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(\d+\.?\d{0,2})|(\d+\.?\d{0,2})元""")
-        }
+        // A11Y 摘取策略：schema 守卫 + 逐键回退 + regex 编译 + 回退告警都在快照层做完了
+        //（与预筛共用），这里直接取用，不再各自维护一份全局字段。
+        val a11ySnapshot = ruleSource.snapshot()
+        a11yGlobal = a11ySnapshot.a11yGlobalProfile
+        a11yProfiles = a11ySnapshot.a11yPackageProfiles
         cooldownMs = rules.a11y.cooldownMinutes * 60 * 1000L
         lastRulesGeneration = snapshot.generation
         serviceInfo = serviceInfo?.apply { packageNames = paymentApps.toTypedArray() }
@@ -446,8 +461,8 @@ class PaymentAccessibilityService : AccessibilityService() {
      * 所以 hasAmount=true 并不代表这页与交易有关——这正是原实��把它当「疑似支付页」
      * 落库原文的起因。
      */
-    private fun hasAmountLikeText(allTexts: List<String>): Boolean =
-        allTexts.any { amountRegex.containsMatchIn(it) }
+    private fun hasAmountLikeText(allTexts: List<String>, regex: Regex): Boolean =
+        allTexts.any { regex.containsMatchIn(it) }
 
     /**
      * 判断当前 Activity 是否"可能是支付结果页"——只在这些页面上才响应 CONTENT_CHANGED。
@@ -509,7 +524,11 @@ class PaymentAccessibilityService : AccessibilityService() {
 
             // 判断是否为内嵌支付 App
             val isEmbeddedApp = packageName in embeddedPaymentApps
-            val activeKeywords = if (isEmbeddedApp) successKeywords + embeddedSuccessKeywords else successKeywords
+            // A11Y 摘取策略：per-App profile 逐键回退后的最终值；无 profile = 全局作用域默认。
+            // ⚠️ 只影响「选/取文本」，不参与「是不是账」判定（原则 1）。
+            val policy = a11yProfiles[packageName]
+                ?: A11yProfileResolver.resolve(packageName, isEmbeddedApp, null, a11yGlobal, NO_PROFILE_WARN)
+            val activeKeywords = policy.successKeywords
 
             // 条件1：有支付成功关键词
             val matchedKeyword = findMatchedKeyword(rootNode, activeKeywords)
@@ -532,7 +551,7 @@ class PaymentAccessibilityService : AccessibilityService() {
                 //
                 // 未命中成功词时页面内容**对排障没有价值**（真正要看的 A11Y_PAGE 在命中后
                 // 才记），所以统一收敛成一行：既堵住隐私泄露也让日志能看了。
-                val hasAmount = hasAmountLikeText(allTexts)
+                val hasAmount = hasAmountLikeText(allTexts, policy.amountRegex)
                 appLogger.debug(
                     "A11Y_SKIP",
                     "未命中支付成功词: pkg=$packageName class=$shortClassName " +
@@ -547,7 +566,7 @@ class PaymentAccessibilityService : AccessibilityService() {
                 "[$packageName/$shortClassName] texts=${allTexts.size} retry=$isRetry ${allTexts.take(20).joinToString("|")}",
             )
             // 条件2：排除非支付结果页
-            val activeExcludeKeywords = if (isEmbeddedApp) commonExcludeKeywords else wechatAlipayExcludeKeywords + commonExcludeKeywords
+            val activeExcludeKeywords = policy.excludeKeywords
             if (hasAnyKeyword(allTexts, activeExcludeKeywords)) {
                 captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_EXCLUDED)
                 appLogger.debug("A11Y_SKIP", "排除词命中: [$shortClassName] pkg=$packageName")
@@ -555,7 +574,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             }
 
             // 条件3：有金额文字
-            val amountText = findAmount(rootNode)
+            val amountText = findAmount(rootNode, policy.amountRegex)
             if (amountText == null) {
                 captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_BAD_AMOUNT)
                 // 有成功词但没找到金额 → 可能页面还没渲染完
@@ -590,7 +609,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             }
 
             // ===== 三重条件全部满足 → 构建摘要 =====
-            val merchant = findMerchant(rootNode)
+            val merchant = findMerchant(rootNode, policy.merchantLabels)
             val summary = if (merchant != null) {
                 "$A11Y_ITEM_TITLE $amountText $merchant"
             } else {
@@ -761,18 +780,14 @@ class PaymentAccessibilityService : AccessibilityService() {
     private fun extractNumericAmountCents(amountText: String): Int? =
         PaymentAccessibilityRecognition.amountKey(amountText)?.toIntOrNull()
 
-    /** 在节点树中找第一个匹配金额格式的文本 */
-    private fun findAmount(root: AccessibilityNodeInfo): String? {
-        return findTextByPattern(root, amountRegex)
+    /** 在节点树中找第一个匹配金额格式的文本（正则来自 profile/全局配置） */
+    private fun findAmount(root: AccessibilityNodeInfo, regex: Regex): String? {
+        return findTextByPattern(root, regex)
     }
 
-    /** 查找商家名：找"收款方/商户/付款给"附近的文字 */
-    private fun findMerchant(root: AccessibilityNodeInfo): String? {
-        val nativeLabels = listOf("收款方", "商户", "商家", "付款给")
-        val orderLabels = listOf("店铺", "商家名", "卖家", "店名", "商品")
-
-        val allLabels = nativeLabels + orderLabels
-        for (label in allLabels) {
+    /** 查找商家名：找配置标签（`a11y.merchant_labels` / profile 覆盖）附近的文字。 */
+    private fun findMerchant(root: AccessibilityNodeInfo, labels: List<String>): String? {
+        for (label in labels) {
             val nodes = root.findAccessibilityNodeInfosByText(label)
             if (nodes.isNullOrEmpty()) continue
             for (node in nodes) {
