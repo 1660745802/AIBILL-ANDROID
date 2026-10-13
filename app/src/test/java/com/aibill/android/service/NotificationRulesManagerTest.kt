@@ -1,6 +1,9 @@
 package com.aibill.android.service
 
 import com.aibill.android.data.notification.rules.NotificationRulesManager
+import com.aibill.android.data.notification.rules.RulesDefaults
+import com.aibill.android.data.notification.rules.RulesFetcher
+import com.aibill.android.data.notification.rules.RulesStore
 import android.app.Application
 import android.content.SharedPreferences
 import com.aibill.android.data.remote.api.NotificationRulesApi
@@ -55,7 +58,10 @@ class NotificationRulesManagerTest {
         every { editor.putString(any(), any()) } returns editor
         every { editor.apply() } returns Unit
 
-        manager = NotificationRulesManager(api, application, moshi)
+        val defaults = RulesDefaults(application, moshi)
+        val store = RulesStore(application, moshi, defaults)
+        val fetcher = RulesFetcher(api, store, moshi)
+        manager = NotificationRulesManager(store, fetcher)
     }
 
     @Test
