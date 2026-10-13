@@ -1,7 +1,9 @@
 package com.aibill.android.presentation.ui.home
 
 import app.cash.turbine.test
+import com.aibill.android.data.notification.AutomationHealthSource
 import com.aibill.android.domain.model.Result
+import com.aibill.android.domain.notification.AutomationHealth
 import com.aibill.android.domain.notification.ReviewQueue
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
@@ -64,6 +66,7 @@ class HomeViewModelTest {
     private lateinit var statsRepository: StatsRepository
     private lateinit var reviewQueue: ReviewQueue
     private lateinit var widgetSyncScheduler: WidgetSyncScheduler
+    private lateinit var automationHealthSource: AutomationHealthSource
     private lateinit var viewModel: HomeViewModel
 
     @BeforeEach
@@ -77,6 +80,12 @@ class HomeViewModelTest {
         reviewQueue = mockk()
         // 最终类 + 无挂起函数：relaxed 免去 stub scheduleMonthlyUpdate
         widgetSyncScheduler = mockk(relaxed = true)
+        automationHealthSource = mockk()
+        every { automationHealthSource.snapshot() } returns AutomationHealth(
+            notificationListenerEnabled = false,
+            accessibilityEnabled = false,
+            batteryOptimizationIgnored = false,
+        )
 
         // init → refresh() 触达的四个网络/本地读
         coEvery { categoryRepository.syncCategories() } returns Result.Success(Unit)
@@ -98,6 +107,7 @@ class HomeViewModelTest {
             statsRepository = statsRepository,
             reviewQueue = reviewQueue,
             widgetSyncScheduler = widgetSyncScheduler,
+            automationHealthSource = automationHealthSource,
         )
     }
 
@@ -109,6 +119,34 @@ class HomeViewModelTest {
     @Test
     fun `init collects the pending notification count into uiState`() = runTest {
         assertEquals(3, viewModel.uiState.value.pendingNotificationCount)
+    }
+
+    @Test
+    fun `init reads automation health so the home card can warn`() = runTest {
+        val health = viewModel.uiState.value.automationHealth
+        assertEquals(true, health?.coreBroken)
+        assertEquals(true, health?.needsAttention)
+        assertEquals(
+            listOf(
+                AutomationHealth.Item.NOTIFICATION_LISTENER,
+                AutomationHealth.Item.ACCESSIBILITY,
+                AutomationHealth.Item.BATTERY_OPTIMIZATION,
+            ),
+            health?.missing,
+        )
+    }
+
+    @Test
+    fun `refresh re-reads automation health`() = runTest {
+        every { automationHealthSource.snapshot() } returns AutomationHealth(
+            notificationListenerEnabled = true,
+            accessibilityEnabled = true,
+            batteryOptimizationIgnored = true,
+        )
+
+        viewModel.refresh()
+
+        assertEquals(false, viewModel.uiState.value.automationHealth?.needsAttention)
     }
 
     /** 今日流水按 clientId 去重：同一笔的多条视图只显示一次。 */

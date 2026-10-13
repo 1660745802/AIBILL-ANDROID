@@ -27,8 +27,10 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -77,12 +79,24 @@ fun NotificationCenterScreen(
     var ignoreConfirmId by remember { mutableStateOf<Long?>(null) }
     var editItem by remember { mutableStateOf<NotificationRecord?>(null) }
     var expandedConfirmed by remember { mutableStateOf(false) }
+    var expandedIgnored by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.uiEvent.collect { event ->
             when (event) {
                 is NotificationCenterViewModel.UiEvent.ShowToast ->
                     snackbarHostState.showSnackbar(event.message)
+                is NotificationCenterViewModel.UiEvent.ShowUndoIgnored -> {
+                    // 忽略后给一次撤销出口：点错不应导致静默漏账（P0-1）
+                    val result = snackbarHostState.showSnackbar(
+                        message = event.message,
+                        actionLabel = "撤销",
+                        duration = SnackbarDuration.Short,
+                    )
+                    if (result == SnackbarResult.ActionPerformed) {
+                        viewModel.restoreItem(event.recordId)
+                    }
+                }
             }
         }
     }
@@ -164,8 +178,11 @@ fun NotificationCenterScreen(
                     Spacer(Modifier.height(Tokens.Spacing.xs))
                 }
 
-                val pendingList = allItems.filter { it.status in listOf("raw", "parsed") }
-                val confirmedList = allItems.filter { it.status !in listOf("raw", "parsed") }
+                val pendingList = allItems.filter {
+                    it.status == NotificationRecord.STATUS_RAW || it.status == NotificationRecord.STATUS_PARSED
+                }
+                val ignoredList = allItems.filter { it.status == NotificationRecord.STATUS_IGNORED }
+                val confirmedList = allItems.filter { it.status == NotificationRecord.STATUS_CONFIRMED }
 
                 items(pendingList, key = { it.id }, contentType = { "pending" }) { item ->
                     NotificationItem(
@@ -191,6 +208,29 @@ fun NotificationCenterScreen(
                             contentType = { "confirmed" },
                         ) { item ->
                             ConfirmedNotificationItem(item = item)
+                        }
+                    }
+                }
+
+                // 已忽略区：让「忽略」可找回（P0-1）——恢复是纯状态回滚，不入账。
+                if (ignoredList.isNotEmpty()) {
+                    item(key = "ignored_summary", contentType = "summary") {
+                        IgnoredSummaryCard(
+                            count = ignoredList.size,
+                            expanded = expandedIgnored,
+                            onToggle = { expandedIgnored = !expandedIgnored },
+                        )
+                    }
+                    if (expandedIgnored) {
+                        items(
+                            ignoredList,
+                            key = { "ignored_${it.id}" },
+                            contentType = { "ignored" },
+                        ) { item ->
+                            IgnoredNotificationItem(
+                                item = item,
+                                onRestore = { viewModel.restoreItem(item.id) },
+                            )
                         }
                     }
                 }
@@ -432,6 +472,84 @@ private fun ConfirmedNotificationItem(item: NotificationRecord) {
                 showSign = false,
             )
         }
+    }
+}
+
+/**
+ * 已忽略区折叠头。
+ */
+@Composable
+private fun IgnoredSummaryCard(
+    count: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Tokens.Radius.md))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = Tokens.Spacing.md, vertical = Tokens.Spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "已忽略 $count 条",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = "可恢复",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        Spacer(Modifier.width(Tokens.Spacing.xs))
+        Icon(
+            imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+            contentDescription = if (expanded) "收起已忽略" else "展开已忽略",
+            modifier = Modifier.size(Tokens.IconSize.sm),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * 已忽略的单条通知（折叠区里）：弱化为一行 + 「恢复」。
+ */
+@Composable
+private fun IgnoredNotificationItem(
+    item: NotificationRecord,
+    onRestore: () -> Unit,
+) {
+    val timeText = remember(item.receivedAt) { formatTimeOfDay(item.receivedAt) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Tokens.Spacing.md, vertical = Tokens.Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.parsedDescription ?: item.title ?: "已忽略的通知",
+                style = AppTextStyles.ListSubtitle,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "$timeText · ${NotificationSourceMapping.friendlyName(item.packageName)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        Spacer(Modifier.width(Tokens.Spacing.sm))
+        AppOutlinedButton(
+            text = "恢复",
+            onClick = onRestore,
+        )
     }
 }
 

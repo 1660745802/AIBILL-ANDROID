@@ -1,14 +1,13 @@
 package com.aibill.android.service
 
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
-import android.view.accessibility.AccessibilityManager
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.aibill.android.util.BatteryOptimizationHelper
 import com.aibill.android.util.NotificationHelper
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -58,16 +57,9 @@ class A11yHealthCheckWorker @AssistedInject constructor(
         return Result.success()
     }
 
-    private fun isA11yServiceEnabled(): Boolean {
-        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
-            ?: return false
-        val enabledServices = am.getEnabledAccessibilityServiceList(
-            AccessibilityServiceInfo.FEEDBACK_GENERIC
-        )
-        return enabledServices.any {
-            it.resolveInfo.serviceInfo.packageName == context.packageName
-        }
-    }
+    /** 与引导卡片 / 权限页同一判据（[BatteryOptimizationHelper.isA11yServiceEnabled]）。 */
+    private fun isA11yServiceEnabled(): Boolean =
+        BatteryOptimizationHelper.isA11yServiceEnabled(context)
 
     companion object {
         const val WORK_NAME = "a11y_health_check"

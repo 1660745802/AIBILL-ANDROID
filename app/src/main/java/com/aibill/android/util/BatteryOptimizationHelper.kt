@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
 import androidx.core.content.getSystemService
 
 /**
@@ -63,6 +64,22 @@ object BatteryOptimizationHelper {
         ) ?: return false
         val componentName = ComponentName(context, "com.aibill.android.service.NotificationMonitorService")
         return flat.contains(componentName.flattenToString())
+    }
+
+    /**
+     * 检查**无障碍服务**是否已开启。
+     *
+     * 与 [com.aibill.android.service.A11yHealthCheckWorker] 同一判据（worker 现在也调这里，
+     * 避免两处各写一份）：只反映「开关是否开着」，不反映「服务进程是否连上」
+     * （后者靠 [com.aibill.android.service.PaymentAccessibilityService.isServiceConnected]）。
+     */
+    fun isA11yServiceEnabled(context: Context): Boolean {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+            ?: return false
+        val enabled = am.getEnabledAccessibilityServiceList(
+            android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
+        )
+        return enabled.any { it.resolveInfo.serviceInfo.packageName == context.packageName }
     }
 
     /**

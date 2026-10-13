@@ -28,12 +28,13 @@ import kotlinx.coroutines.flow.Flow
 interface ReviewQueue {
 
     /**
-     * 观察待审（`parsed` + 历史遗留的 `raw`）+ [sinceMillis] 之后已确认的记录。
+     * 观察待审（`parsed` + 历史遗留的 `raw`）+ [sinceMillis] 之后已确认 + 已忽略的记录。
      *
      * `raw` 是 ≤1.6.1 的解析失败原文（现已不再写入，见 [CaptureArchive]）：保留读取是为了
      * 老用户升级后不静默丢历史数据，通知中心仍可确认/忽略。
+     * `ignored` 也在窗口内返回，供「已忽略」区展示与恢复（P0-1：忽略可找回）。
      *
-     * @param sinceMillis 已确认记录的展示窗口下界（通知中心传 24h 前的时间戳）
+     * @param sinceMillis 已确认 / 已忽略记录的展示窗口下界（通知中心传 24h 前的时间戳）
      */
     fun observe(sinceMillis: Long): Flow<List<NotificationRecord>>
 
@@ -45,4 +46,13 @@ interface ReviewQueue {
 
     /** 忽略一条：只把状态置为 `ignored`，不入账、不发回执。 */
     suspend fun ignore(id: Long)
+
+    /**
+     * 恢复一条被忽略的记录（`ignored → parsed`）：**纯状态回滚，无入账副作用**。
+     *
+     * 这是「忽略可找回」的落点：用户点错一次不应导致静默漏账；是否真入账仍由用户
+     * 后续在待审池里确认。恢复目标固定为 `parsed`（即便原行是历史 `raw`，恢复后它仍
+     * 是「不可审」的待补条目，只是重新可见）。
+     */
+    suspend fun restore(id: Long)
 }

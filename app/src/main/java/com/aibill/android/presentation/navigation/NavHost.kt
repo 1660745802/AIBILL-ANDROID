@@ -151,6 +151,7 @@ fun AiBillNavHost(
                     onNavigateToNotification = { navController.navigateToNotificationCenter() },
                     onNavigateToStatistics = { navController.navigateTo(Route.Statistics) },
                     onNavigateToDetail = { id -> navController.navigateToDetail(id) },
+                    onNavigateToPermissionGuide = { navController.navigateToPermissionGuide() },
                 )
             }
             composable<Route.Transactions> { backStackEntry ->

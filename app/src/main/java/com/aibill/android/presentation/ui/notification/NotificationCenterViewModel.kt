@@ -42,6 +42,12 @@ class NotificationCenterViewModel @Inject constructor(
 
     sealed class UiEvent {
         data class ShowToast(val message: String) : UiEvent()
+
+        /**
+         * 忽略后给一次「撤销」出口（`ignored → parsed` 纯状态回滚，无入账副作用）。
+         * 界面用带 action 的 Snackbar 渲染；用户点「撤销」再调 [restoreItem]。
+         */
+        data class ShowUndoIgnored(val message: String, val recordId: Long) : UiEvent()
     }
 
     private val _uiEvent = Channel<UiEvent>(Channel.BUFFERED)
@@ -105,7 +111,7 @@ class NotificationCenterViewModel @Inject constructor(
     fun confirmItem(id: Long) {
         viewModelScope.launch {
             val record = reviewQueue.findById(id) ?: return@launch
-            if (record.status == "confirmed") {
+            if (record.status == NotificationRecord.STATUS_CONFIRMED) {
                 _uiEvent.send(UiEvent.ShowToast("该笔已确认，请勿重复操作"))
                 return@launch
             }
@@ -139,7 +145,7 @@ class NotificationCenterViewModel @Inject constructor(
                 return@launch
             }
             val record = reviewQueue.findById(id) ?: return@launch
-            if (record.status == "confirmed") {
+            if (record.status == NotificationRecord.STATUS_CONFIRMED) {
                 _uiEvent.send(UiEvent.ShowToast("该笔已确认，请勿重复操作"))
                 return@launch
             }
@@ -204,7 +210,16 @@ class NotificationCenterViewModel @Inject constructor(
     fun ignoreItem(id: Long) {
         viewModelScope.launch {
             reviewQueue.ignore(id)
-            _uiEvent.send(UiEvent.ShowToast("已忽略"))
+            // 带撤销出口：点错一次不应导致静默漏账（P0-1）
+            _uiEvent.send(UiEvent.ShowUndoIgnored("已忽略", id))
+        }
+    }
+
+    /** 恢复一条被忽略的记录（通知中心「已忽略」区的「恢复」按钮 / Snackbar 撤销）。 */
+    fun restoreItem(id: Long) {
+        viewModelScope.launch {
+            reviewQueue.restore(id)
+            _uiEvent.send(UiEvent.ShowToast("已恢复"))
         }
     }
 }

@@ -1,6 +1,10 @@
 package com.aibill.android.di
 
+import com.aibill.android.data.notification.AndroidAutomationHealthSource
+import com.aibill.android.data.notification.AutomationHealthSource
 import com.aibill.android.data.notification.CloudNotificationRuleSource
+import com.aibill.android.data.notification.DataStoreFunnelStatsStore
+import com.aibill.android.data.notification.FunnelStatsStore
 import com.aibill.android.data.notification.NotificationPrefilterImpl
 import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.NotificationPrefilter
@@ -58,6 +62,22 @@ object NotificationPrefilterModule {
     fun provideCaptureFunnelStats(
         impl: com.aibill.android.data.notification.CaptureFunnelStatsImpl,
     ): CaptureFunnelStats = impl
+
+    /**
+     * 漏斗计数的持久化存储（P0-2）：未上报的计数落单行 JSON，进程重启后恢复。
+     * 只解决「重启丢计数」，不改变键名 / 窗口 / 上报语义。
+     */
+    @Provides
+    @Singleton
+    fun provideFunnelStatsStore(impl: DataStoreFunnelStatsStore): FunnelStatsStore = impl
+
+    /**
+     * 首页「自动记账是否在工作」的状态读取口（P0-3）。
+     * 只读三项系统设置，不碰判定链。
+     */
+    @Provides
+    @Singleton
+    fun provideAutomationHealthSource(impl: AndroidAutomationHealthSource): AutomationHealthSource = impl
 
     /**
      * ⑤ 拦截计数上报（跨端契约 §4）。

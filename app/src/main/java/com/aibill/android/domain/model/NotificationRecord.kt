@@ -20,4 +20,18 @@ data class NotificationRecord(
     val parsedDescription: String? = null,
     val status: String = "raw",
     val receivedAt: Long = 0,
-)
+) {
+    companion object {
+        /** 待审、可审（有 AI 结果，缺信息/未确认）。角标只数它。 */
+        const val STATUS_PARSED = "parsed"
+
+        /** 历史遗留的解析失败原文（≤1.6.1 写入，现已不再写）；仍展示、可忽略，但不可审。 */
+        const val STATUS_RAW = "raw"
+
+        /** 已确认入账（通知中心里「最近已确认」的展示项）。 */
+        const val STATUS_CONFIRMED = "confirmed"
+
+        /** 已忽略（可恢复；纯状态回滚，无入账副作用）。 */
+        const val STATUS_IGNORED = "ignored"
+    }
+}

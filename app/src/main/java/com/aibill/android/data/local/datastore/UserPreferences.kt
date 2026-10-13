@@ -71,6 +71,7 @@ class UserPreferences @Inject constructor(
         val QUICK_ENTRY_ENABLED = booleanPreferencesKey("quick_entry_enabled")
         val DYNAMIC_COLOR_ENABLED = booleanPreferencesKey("dynamic_color_enabled")
         val AI_PARSE_ENABLED = booleanPreferencesKey("ai_parse_enabled")
+        val CAPTURE_FUNNEL_COUNTS = stringPreferencesKey("capture_funnel_counts")
     }
 
     // --- Server URL ---
@@ -155,6 +156,21 @@ class UserPreferences @Inject constructor(
 
     suspend fun setAiParseEnabled(enabled: Boolean) {
         dataStore.edit { it[Keys.AI_PARSE_ENABLED] = enabled }
+    }
+
+    // --- 捕获层漏斗计数（P0-2：跨进程重启不丢） ---
+    /**
+     * 未上报的漏斗计数快照（单行 JSON）。**设备级**，不属于用户身份：
+     * 登出 / 换号时 [clearUserInfo] 不清它（计数用于「AI 失败率是否可见」，与账号无关）。
+     */
+    val captureFunnelCounts: Flow<String?> = dataStore.data.map { it[Keys.CAPTURE_FUNNEL_COUNTS] }
+
+    suspend fun setCaptureFunnelCounts(json: String) {
+        dataStore.edit { it[Keys.CAPTURE_FUNNEL_COUNTS] = json }
+    }
+
+    suspend fun clearCaptureFunnelCounts() {
+        dataStore.edit { it.remove(Keys.CAPTURE_FUNNEL_COUNTS) }
     }
 
     // --- App Lock ---

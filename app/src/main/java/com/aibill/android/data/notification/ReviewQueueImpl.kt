@@ -20,11 +20,16 @@ class ReviewQueueImpl @Inject constructor(
 ) : ReviewQueue {
 
     override fun observe(sinceMillis: Long): Flow<List<NotificationRecord>> =
-        dao.observeAllWithConfirmedSince(sinceMillis).map { rows -> rows.map { it.toDomain() } }
+        dao.observeReviewItems(
+            confirmedSince = sinceMillis,
+            ignoredSince = sinceMillis,
+        ).map { rows -> rows.map { it.toDomain() } }
 
     override fun observePendingCount(): Flow<Int> = dao.observePendingCount()
 
     override suspend fun findById(id: Long): NotificationRecord? = dao.findById(id)?.toDomain()
 
-    override suspend fun ignore(id: Long) = dao.updateStatus(id, "ignored")
+    override suspend fun ignore(id: Long) = dao.updateStatus(id, NotificationRecord.STATUS_IGNORED)
+
+    override suspend fun restore(id: Long) = dao.updateStatus(id, NotificationRecord.STATUS_PARSED)
 }

@@ -216,4 +216,31 @@ class NotificationCenterViewModelTest {
         coVerify(exactly = 0) { reviewQueue.findById(any()) }
         coVerify(exactly = 0) { recordIntake.intake(any()) }
     }
+
+    @Test
+    fun `ignore offers an undo event carrying the record id`() = runTest {
+        val viewModel = buildViewModel()
+        viewModel.uiEvent.test {
+            viewModel.ignoreItem(7L)
+
+            val event = awaitItem() as NotificationCenterViewModel.UiEvent.ShowUndoIgnored
+            assertEquals("已忽略", event.message)
+            assertEquals(7L, event.recordId)
+        }
+        coVerify(exactly = 1) { reviewQueue.ignore(7L) }
+    }
+
+    @Test
+    fun `restore rolls an ignored record back with no intake side effect`() = runTest {
+        val viewModel = buildViewModel()
+        viewModel.uiEvent.test {
+            viewModel.restoreItem(7L)
+
+            val event = awaitItem()
+            assertEquals("已恢复", (event as NotificationCenterViewModel.UiEvent.ShowToast).message)
+        }
+        // 恢复是纯状态回滚：不调入账、不学习、不发回执
+        coVerify(exactly = 1) { reviewQueue.restore(7L) }
+        coVerify(exactly = 0) { recordIntake.intake(any()) }
+    }
 }

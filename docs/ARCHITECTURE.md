@@ -151,6 +151,10 @@ L4 路由 NotificationProcessor（协调者）
   401 → CaptureArchive.captureAuthPending → 同号重登后 CaptureArchive.replay 重放
 ```
 
+**通知中心的「忽略」可找回**：`ignored` 在窗口内仍被读出（「已忽略」折叠区），可「恢复」
+（`ignored → parsed` **纯状态回滚，无入账副作用**）；刚忽略时另给一次 Snackbar 撤销。
+角标只数可审的 `parsed`（历史 `raw` 仍展示与忽略，但不可审、不计入角标）。
+
 **核心循环的 4 个策略 module**（interface 在 `domain/notification/`、实现在 `data/notification/`；
 `NotificationProcessor` 只负责按上面的顺序接线并路由）：
 
@@ -180,6 +184,8 @@ L4 路由 NotificationProcessor（协调者）
 **捕获层漏斗计数**（`client_only.capture_*`）：白名单外 App、无 root、未命中成功词、排除词、金额不合法、
 历史日期、防抖、页面去重 —— 这些记录**从不进预筛、也不上服务端**，是「漏账」唯一可诊断的入口。
 只加计数、不改行为；`totals.notifications = blocked + passed` 的语义不变（捕获层计数只进 `counts`）。
+计数**持久化**（P0-2）：热路径只改内存，未上报的计数 2s 合并落单行 JSON（DataStore），进程重启后
+恢复并与新计数相加；上报 drain 后清——否则「AI 失败率」会因进程被杀系统性偏低。
 **AI 侧观测**：AI 响应裁剪（`client_only.ai_extra_items`）、**AI 失败丢弃**
 （`client_only.unparsed_ai_failed`，解析失败 = 不确定 → 不落待审/不打扰用户）与**入参非法**
 （`client_only.unparsed_input_invalid`，HTTP 400 空/超长）各用固定上报键；

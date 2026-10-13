@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -40,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -49,6 +51,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.model.TransactionSource
 import com.aibill.android.domain.model.TransactionType
+import com.aibill.android.domain.notification.AutomationHealth
 import com.aibill.android.presentation.components.AmountFormatter
 import com.aibill.android.presentation.components.AmountHero
 import com.aibill.android.presentation.components.AppHeroCard
@@ -63,6 +66,7 @@ import com.aibill.android.presentation.components.StatCell
 import com.aibill.android.presentation.components.TransactionRow
 import com.aibill.android.presentation.theme.AmountTypography
 import com.aibill.android.presentation.theme.AiBillTheme
+import com.aibill.android.presentation.theme.AppOutlinedButton
 import com.aibill.android.presentation.theme.Tokens
 import com.aibill.android.presentation.theme.semantic
 import java.time.LocalDate
@@ -106,6 +110,7 @@ fun HomeScreen(
     onNavigateToNotification: () -> Unit = {},
     onNavigateToStatistics: () -> Unit = {},
     onNavigateToDetail: (Int) -> Unit = {},
+    onNavigateToPermissionGuide: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -176,6 +181,7 @@ fun HomeScreen(
                     uiState = uiState,
                     onHeaderClick = onNavigateToStatistics,
                     onItemClick = { id -> onNavigateToDetail(id) },
+                    onFixAutomation = onNavigateToPermissionGuide,
                 )
             }
         }
@@ -187,6 +193,7 @@ private fun HomeContent(
     uiState: HomeViewModel.HomeUiState,
     onHeaderClick: () -> Unit,
     onItemClick: (Int) -> Unit,
+    onFixAutomation: () -> Unit,
 ) {
     val today = remember { LocalDate.now() }
     val autoCount = remember(uiState.todayTransactions) {
@@ -208,6 +215,13 @@ private fun HomeContent(
         ),
         verticalArrangement = Arrangement.spacedBy(Tokens.Spacing.lg),
     ) {
+        // 系统前置条件缺失 → 顶部持续卡片：明说「会不会工作」+ 一键跳设置（P0-3）。
+        uiState.automationHealth?.takeIf { it.needsAttention }?.let { health ->
+            item(key = "automation_health", contentType = "health") {
+                AutomationHealthCard(health = health, onFix = onFixAutomation)
+            }
+        }
+
         item(key = "summary", contentType = "summary") {
             MonthlySummaryCard(
                 monthlyExpense = uiState.monthlyExpense,
@@ -253,6 +267,62 @@ private fun HomeContent(
             }
         }
     }
+}
+
+/**
+ * 自动记账前置条件缺失提示（P0-3）。
+ *
+ * 只有「通知监听没开」才说「当前不会工作」——那是核心能力真的缺失；
+ * 无障碍 / 电池白名单缺失只说「能力不完整」，不主张不确定的状态。
+ */
+@Composable
+private fun AutomationHealthCard(health: AutomationHealth, onFix: () -> Unit) {
+    val semantics = MaterialTheme.semantic
+    val container = if (health.coreBroken) semantics.dangerContainer else semantics.warningContainer
+    val fg = if (health.coreBroken) semantics.danger else semantics.warning
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Tokens.Radius.lg))
+            .background(container)
+            .padding(Tokens.Spacing.md),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.WarningAmber,
+                contentDescription = null,
+                tint = fg,
+                modifier = Modifier.size(Tokens.IconSize.md),
+            )
+            Spacer(Modifier.width(Tokens.Spacing.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (health.coreBroken) "自动记账当前不会工作" else "自动记账能力不完整",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = fg,
+                )
+                Text(
+                    text = health.missing.joinToString("、") { it.label() },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = fg.copy(alpha = 0.85f),
+                )
+            }
+        }
+        Spacer(Modifier.height(Tokens.Spacing.sm))
+        AppOutlinedButton(
+            text = "去设置",
+            onClick = onFix,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+private fun AutomationHealth.Item.label(): String = when (this) {
+    AutomationHealth.Item.NOTIFICATION_LISTENER -> "通知监听未开启"
+    AutomationHealth.Item.ACCESSIBILITY -> "无障碍服务未开启"
+    AutomationHealth.Item.BATTERY_OPTIMIZATION -> "未加入电池优化白名单"
 }
 
 /**
@@ -452,6 +522,7 @@ private fun HomeContentPreview() {
             ),
             onHeaderClick = {},
             onItemClick = {},
+            onFixAutomation = {},
         )
     }
 }

@@ -2,8 +2,10 @@ package com.aibill.android.presentation.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aibill.android.data.notification.AutomationHealthSource
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
+import com.aibill.android.domain.notification.AutomationHealth
 import com.aibill.android.domain.notification.ReviewQueue
 import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.repository.CategoryRepository
@@ -41,6 +43,7 @@ class HomeViewModel @Inject constructor(
     private val statsRepository: StatsRepository,
     private val reviewQueue: ReviewQueue,
     private val widgetSyncScheduler: com.aibill.android.service.WidgetSyncScheduler,
+    private val automationHealthSource: AutomationHealthSource,
 ) : ViewModel() {
 
     data class HomeUiState(
@@ -50,6 +53,8 @@ class HomeViewModel @Inject constructor(
         val monthlyIncome: Int = 0,
         val todayTransactions: List<Transaction> = emptyList(),
         val pendingNotificationCount: Int = 0,
+        /** 系统前置条件（P0-3）：null = 尚未读取（首帧不闪提示）。 */
+        val automationHealth: AutomationHealth? = null,
     )
 
     sealed class UiEvent {
@@ -85,6 +90,7 @@ class HomeViewModel @Inject constructor(
      * 下拉刷新：分类/账户/今日流水/月度合计 4 个并行任务
      */
     fun refresh() {
+        refreshAutomationHealth()
         viewModelScope.launch {
             _uiState.update { it.copy(isRefreshing = true) }
             try {
@@ -102,6 +108,14 @@ class HomeViewModel @Inject constructor(
                 _uiState.update { it.copy(isRefreshing = false) }
             }
         }
+    }
+
+    /**
+     * 重新读一次系统前置条件（[refresh] 每次调用都会跑，返回首页时即刷新）。
+     * 纯静态查询，无 IO；不碰判定链。
+     */
+    fun refreshAutomationHealth() {
+        _uiState.update { it.copy(automationHealth = automationHealthSource.snapshot()) }
     }
 
     private suspend fun loadTodayTransactions(): Boolean {
