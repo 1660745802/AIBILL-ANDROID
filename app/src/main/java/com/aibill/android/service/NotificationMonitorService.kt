@@ -5,17 +5,14 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.CaptureFunnelStats
-import com.aibill.android.domain.notification.NotificationPrefilter
+import com.aibill.android.domain.notification.CaptureIngress
 import com.aibill.android.domain.notification.SourceChannel
-import com.aibill.android.domain.notification.Verdict
 import com.aibill.android.util.AppLogger
 import com.aibill.android.util.NotificationHelper
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 
 /**
  * 通知监听（NLS）——**平台翻译 adapter**。
@@ -40,22 +37,14 @@ class NotificationMonitorService : NotificationListenerService() {
     @EntryPoint
     @InstallIn(SingletonComponent::class)
     interface NlsEntryPoint {
-        fun notificationProcessor(): NotificationProcessor
-        fun prefilter(): NotificationPrefilter
+        fun captureIngress(): CaptureIngress
         fun captureFunnelStats(): CaptureFunnelStats
         fun appLogger(): AppLogger
-        @com.aibill.android.di.ApplicationScope
-        fun applicationScope(): kotlinx.coroutines.CoroutineScope
     }
 
-    private lateinit var notificationProcessor: NotificationProcessor
-    private lateinit var prefilter: NotificationPrefilter
+    private lateinit var ingress: CaptureIngress
     private lateinit var captureFunnelStats: CaptureFunnelStats
     private lateinit var appLogger: AppLogger
-
-    // PR 修复：改用进程级 @ApplicationScope，
-    // 避免 NLS 每次 onCreate 时泄漏一个 SupervisorJob+IO。
-    private lateinit var serviceScope: kotlinx.coroutines.CoroutineScope
 
     companion object {
         /** 全局可读的 NLS 连接状态，供权限引导页检测"权限有但未连接" */
@@ -69,11 +58,9 @@ class NotificationMonitorService : NotificationListenerService() {
         NotificationHelper.createNotificationChannel(this)
 
         val entryPoint = EntryPointAccessors.fromApplication(applicationContext, NlsEntryPoint::class.java)
-        notificationProcessor = entryPoint.notificationProcessor()
-        prefilter = entryPoint.prefilter()
+        ingress = entryPoint.captureIngress()
         captureFunnelStats = entryPoint.captureFunnelStats()
         appLogger = entryPoint.appLogger()
-        serviceScope = entryPoint.applicationScope()
     }
 
     override fun onListenerConnected() {
@@ -97,28 +84,12 @@ class NotificationMonitorService : NotificationListenerService() {
     override fun onDestroy() {
         super.onDestroy()
         isConnected = false
-        // ★ 切勿在这里 cancel serviceScope！
-        // serviceScope 是进程级 @ApplicationScope（Hilt @Singleton，全 App 共享：
-        // SMS/A11Y/外部 Intent/小组件等所有协程都跑在它上面）。
-        // NLS 被系统 requestRebind 销毁重建后，cancel 会让整个 App 的协程
-        // 静默失效（launch 不执行也不抛异常）：通知零日志、AI 零调用，
-        // 直到进程被杀才恢复。（2026-09 回归根因，与 PaymentAccessibilityService
-        // 的处理保持一致：进程级 Scope 由 CoroutineScopeModule 持有，不在 Service 里 cancel。）
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val notification = sbn ?: return
-        serviceScope.launch {
-            try {
-                handleNotification(notification)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // 进程级 Scope 没有 CoroutineExceptionHandler，预筛/落库的 Room 异常
-                // 会直接崩进程；按 §10「本地 Room 异常 → 降级 + 日志」。
-                appLogger.error("NLS", "通知处理异常: pkg=${notification.packageName} err=${e.message}")
-            }
-        }
+        // C02：launch 与取消/异常处理收进 CaptureIngress；receipt 仍在同步路径计。
+        handleNotification(notification)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
@@ -126,7 +97,7 @@ class NotificationMonitorService : NotificationListenerService() {
     }
 
     /** 平台翻译：`StatusBarNotification` → [Capture]，判定与放行都交给预筛 module。 */
-    private suspend fun handleNotification(sbn: StatusBarNotification) {
+    private fun handleNotification(sbn: StatusBarNotification) {
         captureFunnelStats.record(CaptureFunnelStats.RECEIVED_NLS)
         val packageName = sbn.packageName
         if (packageName == null) {
@@ -154,7 +125,8 @@ class NotificationMonitorService : NotificationListenerService() {
         val body = sanitizeNotificationText(bigText.ifBlank { text })
         val fullText = buildFullText(title, body, subText, infoText)
 
-        val verdict = prefilter.evaluate(
+        // 交给入管道：预筛 → 放行则入账（C02 收口；不再各自 launch/evaluate/process）
+        ingress.admit(
             Capture(
                 channel = SourceChannel.NLS,
                 packageName = packageName,
@@ -163,11 +135,6 @@ class NotificationMonitorService : NotificationListenerService() {
                 receivedAt = System.currentTimeMillis(),
             )
         )
-
-        if (verdict !is Verdict.Pass) return
-
-        // 交给协调者（解析 → 评分窗口 + 跨渠道金额去重 → 入库/待审）
-        notificationProcessor.process(verdict.capture)
     }
 
     /**

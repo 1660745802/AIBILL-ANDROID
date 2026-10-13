@@ -22,15 +22,12 @@ import com.aibill.android.domain.notification.A11yGlobalProfile
 import com.aibill.android.domain.notification.A11yPackageProfile
 import com.aibill.android.domain.notification.A11yProfileResolver
 import com.aibill.android.domain.notification.CaptureFunnelStats
-import com.aibill.android.domain.notification.NotificationPrefilter
+import com.aibill.android.domain.notification.CaptureIngress
 import com.aibill.android.domain.notification.NotificationRuleSource
-import com.aibill.android.domain.notification.Verdict
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -136,20 +133,16 @@ class PaymentAccessibilityService : AccessibilityService() {
     @EntryPoint
     @InstallIn(SingletonComponent::class)
     interface A11yEntryPoint {
-        fun notificationProcessor(): NotificationProcessor
-        fun prefilter(): NotificationPrefilter
+        fun captureIngress(): CaptureIngress
         fun appLogger(): com.aibill.android.util.AppLogger
         fun rulesManager(): NotificationRulesManager
         fun ruleSource(): NotificationRuleSource
         fun captureFunnelStats(): CaptureFunnelStats
         fun a11yAdmissionGate(): A11yAdmissionGate
         fun a11yClock(): A11yClock
-        @com.aibill.android.di.ApplicationScope
-        fun applicationScope(): kotlinx.coroutines.CoroutineScope
     }
 
-    private lateinit var notificationProcessor: NotificationProcessor
-    private lateinit var prefilter: NotificationPrefilter
+    private lateinit var ingress: CaptureIngress
     private lateinit var appLogger: com.aibill.android.util.AppLogger
     private lateinit var rulesManager: NotificationRulesManager
     private lateinit var ruleSource: NotificationRuleSource
@@ -157,7 +150,6 @@ class PaymentAccessibilityService : AccessibilityService() {
     private lateinit var gate: A11yAdmissionGate
     private lateinit var clock: A11yClock
 
-    private lateinit var serviceScope: kotlinx.coroutines.CoroutineScope
     private val handler = Handler(Looper.getMainLooper())
 
     // ── 平台事实：当前页面状态（gate 只看 pageToken） ──
@@ -199,15 +191,13 @@ class PaymentAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         isServiceConnected = true
         val entryPoint = EntryPointAccessors.fromApplication(applicationContext, A11yEntryPoint::class.java)
-        notificationProcessor = entryPoint.notificationProcessor()
-        prefilter = entryPoint.prefilter()
+        ingress = entryPoint.captureIngress()
         appLogger = entryPoint.appLogger()
         rulesManager = entryPoint.rulesManager()
         ruleSource = entryPoint.ruleSource()
         captureFunnelStats = entryPoint.captureFunnelStats()
         gate = entryPoint.a11yAdmissionGate()
         clock = entryPoint.a11yClock()
-        serviceScope = entryPoint.applicationScope()
 
         refreshRulesIfNeeded(force = true)
         appLogger.info("A11Y", "无障碍服务已连接 (v5: gate 收口)")
@@ -382,21 +372,10 @@ class PaymentAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** gate 放行 → 预筛 → 入账协调者（与 NLS/SMS 同一套判据）。 */
+    /** gate 放行 → 入管道（预筛 → 入账协调者，与 NLS/SMS 同一套）。 */
     private fun routeToPrefilter(admission: Admission.Captured, packageName: String) {
         appLogger.info("A11Y", "✓识别支付页: ${admission.capture.fullText} pkg=$packageName")
-        serviceScope.launch {
-            try {
-                when (val verdict = prefilter.evaluate(admission.capture)) {
-                    is Verdict.Block -> appLogger.debug("A11Y_SKIP", "预筛拦截(${verdict.reason}): pkg=$packageName")
-                    is Verdict.Pass -> notificationProcessor.process(verdict.capture)
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                appLogger.error("A11Y", "支付页处理异常: pkg=$packageName err=${e.message}")
-            }
-        }
+        ingress.admit(admission.capture)
     }
 
     /**

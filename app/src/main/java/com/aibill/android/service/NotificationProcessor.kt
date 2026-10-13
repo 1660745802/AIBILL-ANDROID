@@ -1,6 +1,7 @@
 package com.aibill.android.service
 
 import com.aibill.android.domain.notification.NotificationRuleSource
+import com.aibill.android.domain.notification.NotificationSink
 import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.datastore.UserPreferences
@@ -62,14 +63,14 @@ class NotificationProcessor @Inject constructor(
     private val appLogger: AppLogger,
     private val ruleSource: NotificationRuleSource,
     private val captureFunnelStats: CaptureFunnelStats,
-) {
+) : NotificationSink {
 
     /**
      * 处理一条预筛放行的通知。
      *
      * suspend 不等窗口：评分窗口内部异步产出，本方法只登记后返回。
      */
-    suspend fun process(capture: Capture) {
+    override suspend fun process(capture: Capture) {
         when (val outcome = interpreter.read(capture)) {
             is ParseOutcome.Disabled, is ParseOutcome.NotATransaction -> Unit
             // 解析失败 = **不确定**（区别于「AI 判定不是账」）：既不是「是账」也不是「不是账」。
