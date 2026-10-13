@@ -337,7 +337,7 @@ class NotificationInterpreterImpl @Inject constructor(
             )
         }
         if (localExtra > 0 || extraItemsDropped > 0) {
-            captureFunnelStats.record(CaptureFunnelStats.aiExtraItemsStage(capture.channel))
+            captureFunnelStats.recordAiExtraItems(capture.channel)
         }
     }
 

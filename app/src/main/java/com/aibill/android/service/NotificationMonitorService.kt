@@ -1,5 +1,6 @@
 package com.aibill.android.service
 
+import com.aibill.android.domain.notification.CaptureDrop
 import android.app.Notification
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -98,17 +99,17 @@ class NotificationMonitorService : NotificationListenerService() {
 
     /** 平台翻译：`StatusBarNotification` → [Capture]，判定与放行都交给预筛 module。 */
     private fun handleNotification(sbn: StatusBarNotification) {
-        captureFunnelStats.record(CaptureFunnelStats.RECEIVED_NLS)
+        captureFunnelStats.recordReceived(SourceChannel.NLS)
         val packageName = sbn.packageName
         if (packageName == null) {
             // 捕获层早退：包名为空的通知无法归因，预筛也看不到（不重复计）
-            captureFunnelStats.record(CaptureFunnelStats.DROPPED_NLS_NO_PACKAGE)
+            captureFunnelStats.recordDropped(CaptureDrop.NLS_NO_PACKAGE)
             return
         }
 
         val extras = sbn.notification?.extras
         if (extras == null) {
-            captureFunnelStats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
+            captureFunnelStats.recordDropped(CaptureDrop.NLS_NO_EXTRAS)
             return
         }
         val title = sanitizeNotificationText(

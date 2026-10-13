@@ -1,5 +1,6 @@
 package com.aibill.android.service
 
+import com.aibill.android.domain.notification.CaptureDrop
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -18,7 +19,7 @@ import javax.inject.Inject
  * 交给 [CaptureIngress]，并用返回的 `Job` 挂上 `goAsync` 的 `finish()`。
  * 预筛、取消/异常处理、入账接线全部收在 ingress 后面。
  *
- * receipt（[CaptureFunnelStats.RECEIVED_SMS]）仍在 adapter：它发生在「空短信」
+ * receipt（`CaptureFunnelStats.RECEIVED_SMS`）仍在 adapter：它发生在「空短信」
  * 早退之前，收进 ingress 会漏计那些事件（破坏捕获层漏斗顶端）。
  */
 @AndroidEntryPoint
@@ -30,23 +31,23 @@ class SmsReceiverService : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
-            captureFunnelStats.record(CaptureFunnelStats.DROPPED_SMS_NOT_ACTION)
+            captureFunnelStats.recordDropped(CaptureDrop.SMS_NOT_ACTION)
             return
         }
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         if (messages.isNullOrEmpty()) {
-            captureFunnelStats.record(CaptureFunnelStats.DROPPED_SMS_NO_MESSAGES)
+            captureFunnelStats.recordDropped(CaptureDrop.SMS_NO_MESSAGES)
             return
         }
 
         val fullText = messages.joinToString("") { it.messageBody ?: "" }
         val sender = messages.firstOrNull()?.originatingAddress.orEmpty()
 
-        captureFunnelStats.record(CaptureFunnelStats.RECEIVED_SMS)
+        captureFunnelStats.recordReceived(SourceChannel.SMS)
         if (fullText.isBlank()) {
             // 预筛在空正文之前就会被 return 掉，所以这一层必须在捕获层计（跟 NLS 不同）
-            captureFunnelStats.record(CaptureFunnelStats.DROPPED_SMS_BLANK_TEXT)
+            captureFunnelStats.recordDropped(CaptureDrop.SMS_BLANK_TEXT)
             return
         }
 

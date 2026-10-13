@@ -1,5 +1,7 @@
 package com.aibill.android.service
 
+import com.aibill.android.domain.notification.CaptureDrop
+import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.data.notification.rules.NotificationRulesManager
 import android.accessibilityservice.AccessibilityService
 import android.os.Handler
@@ -220,11 +222,11 @@ class PaymentAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val ev = event ?: return
         val packageName = ev.packageName?.toString() ?: return
-        captureFunnelStats.record(CaptureFunnelStats.RECEIVED_A11Y)
+        captureFunnelStats.recordReceived(SourceChannel.A11Y)
 
         refreshRulesIfNeeded()
         if (packageName !in paymentApps) {
-            captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NOT_WHITELISTED)
+            captureFunnelStats.recordDropped(CaptureDrop.A11Y_NOT_WHITELISTED)
             return
         }
 
@@ -255,16 +257,16 @@ class PaymentAccessibilityService : AccessibilityService() {
                     currentActivity[packageName] = it
                 }
                 ?: run {
-                    captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NO_ACTIVITY)
+                    captureFunnelStats.recordDropped(CaptureDrop.A11Y_NO_ACTIVITY)
                     return
                 }
             if (!isPotentialPaymentActivity(activity, packageName)) {
-                captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NOT_PAYMENT_ACTIVITY)
+                captureFunnelStats.recordDropped(CaptureDrop.A11Y_NOT_PAYMENT_ACTIVITY)
                 return
             }
             val tokenStr = currentPageToken[packageName]
             if (tokenStr == null) {
-                captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NO_PAGE_TOKEN)
+                captureFunnelStats.recordDropped(CaptureDrop.A11Y_NO_PAGE_TOKEN)
                 return
             }
             token = PageToken(tokenStr)
@@ -273,18 +275,18 @@ class PaymentAccessibilityService : AccessibilityService() {
         // ── root 校验（平台事实；在节流与遍历之前） ──
         val root = rootInActiveWindow
         if (root == null) {
-            captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_NO_ROOT)
+            captureFunnelStats.recordDropped(CaptureDrop.A11Y_NO_ROOT)
             return
         }
         if (!PaymentAccessibilityRecognition.isRootForEvent(root.packageName?.toString(), packageName)) {
-            captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_ROOT_MISMATCH)
+            captureFunnelStats.recordDropped(CaptureDrop.A11Y_ROOT_MISMATCH)
             return
         }
 
         // ── phase 1：节流（返回 Throttled 则不遍历树） ──
         val now = clock.now()
         if (gate.beforeScan(token, kind, now) == ScanDecision.Throttled) {
-            captureFunnelStats.record(CaptureFunnelStats.DROPPED_A11Y_DEBOUNCE)
+            captureFunnelStats.recordDropped(CaptureDrop.A11Y_DEBOUNCE)
             return
         }
 
@@ -365,7 +367,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         when (val admission = gate.admit(snapshot, now)) {
             is Admission.Captured -> routeToPrefilter(admission, packageName)
             is Admission.Dropped -> {
-                captureFunnelStats.record(funnelStage(admission.reason))
+                captureFunnelStats.recordDropped(funnelStage(admission.reason))
                 appLogger.debug("A11Y_SKIP", admission.detail)
                 admission.retry?.let { scheduleRetry(packageName, it) }
             }
@@ -402,16 +404,16 @@ class PaymentAccessibilityService : AccessibilityService() {
     }
 
     /** [DropReason] → 捕获层漏斗档位（穷尽 `when`，编译器保证新增原因不漏计数）。 */
-    private fun funnelStage(reason: DropReason): String = when (reason) {
-        DropReason.NOT_SUCCESS_PAGE -> CaptureFunnelStats.DROPPED_A11Y_NO_SUCCESS_KEYWORD
-        DropReason.EXCLUDED -> CaptureFunnelStats.DROPPED_A11Y_EXCLUDED
+    private fun funnelStage(reason: DropReason): CaptureDrop = when (reason) {
+        DropReason.NOT_SUCCESS_PAGE -> CaptureDrop.A11Y_NO_SUCCESS_KEYWORD
+        DropReason.EXCLUDED -> CaptureDrop.A11Y_EXCLUDED
         DropReason.NO_AMOUNT,
         DropReason.AMOUNT_UNPARSABLE,
         DropReason.AMOUNT_OUT_OF_RANGE,
-        -> CaptureFunnelStats.DROPPED_A11Y_BAD_AMOUNT
-        DropReason.HISTORY_DATE -> CaptureFunnelStats.DROPPED_A11Y_HISTORY_DATE
-        DropReason.DEBOUNCE_8S -> CaptureFunnelStats.DROPPED_A11Y_DEBOUNCE
-        DropReason.PAGE_DEDUP_30S -> CaptureFunnelStats.DROPPED_A11Y_PAGE_DEDUP
+        -> CaptureDrop.A11Y_BAD_AMOUNT
+        DropReason.HISTORY_DATE -> CaptureDrop.A11Y_HISTORY_DATE
+        DropReason.DEBOUNCE_8S -> CaptureDrop.A11Y_DEBOUNCE
+        DropReason.PAGE_DEDUP_30S -> CaptureDrop.A11Y_PAGE_DEDUP
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {

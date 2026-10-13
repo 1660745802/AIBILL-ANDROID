@@ -4,7 +4,7 @@ import com.aibill.android.data.remote.api.AiApi
 import com.aibill.android.data.remote.dto.request.FilterReportRequest
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.data.remote.dto.response.FilterReportResponseDto
-import com.aibill.android.domain.notification.CaptureFunnelStats
+import com.aibill.android.domain.notification.CaptureDrop
 import com.aibill.android.domain.notification.PrefilterReport
 import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.domain.notification.SourceChannel
@@ -215,12 +215,12 @@ class PrefilterReportTest {
         val stats = PrefilterStatsImpl()
         val capture = CaptureFunnelStatsImpl()
         // A11Y：一页连发多个事件 → 大量白名单外早退 + 命中/未命中成功词
-        repeat(7) { capture.record(CaptureFunnelStats.RECEIVED_A11Y) }
-        repeat(5) { capture.record(CaptureFunnelStats.DROPPED_A11Y_NOT_WHITELISTED) }
-        capture.record(CaptureFunnelStats.DROPPED_A11Y_NO_SUCCESS_KEYWORD)
+        repeat(7) { capture.recordReceived(SourceChannel.A11Y) }
+        repeat(5) { capture.recordDropped(CaptureDrop.A11Y_NOT_WHITELISTED) }
+        capture.recordDropped(CaptureDrop.A11Y_NO_SUCCESS_KEYWORD)
         // NLS 侧也有捕获层早退
-        capture.record(CaptureFunnelStats.RECEIVED_NLS)
-        capture.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
+        capture.recordReceived(SourceChannel.NLS)
+        capture.recordDropped(CaptureDrop.NLS_NO_EXTRAS)
         val (reporter, requests) = reporter(stats, captureFunnelStats = capture)
 
         reporter.report(now = 1_000_000L)
@@ -262,8 +262,8 @@ class PrefilterReportTest {
         val capture = CaptureFunnelStatsImpl()
         stats.recordBlocked(SourceChannel.SMS, "client_only.MARKETING")
         stats.recordPassed(SourceChannel.SMS)
-        repeat(3) { capture.record(CaptureFunnelStats.RECEIVED_SMS) }
-        capture.record(CaptureFunnelStats.DROPPED_SMS_BLANK_TEXT)
+        repeat(3) { capture.recordReceived(SourceChannel.SMS) }
+        capture.recordDropped(CaptureDrop.SMS_BLANK_TEXT)
         val (reporter, requests) = reporter(stats, captureFunnelStats = capture)
 
         reporter.report(now = 1_000_000L)
@@ -287,7 +287,7 @@ class PrefilterReportTest {
     fun aiResponseCountIsReported() = runTest {
         val stats = PrefilterStatsImpl()
         val capture = CaptureFunnelStatsImpl()
-        capture.record(CaptureFunnelStats.aiExtraItemsStage(SourceChannel.NLS))
+        capture.recordAiExtraItems(SourceChannel.NLS)
         val (reporter, requests) = reporter(stats, captureFunnelStats = capture)
 
         reporter.report(now = 1_000_000L)

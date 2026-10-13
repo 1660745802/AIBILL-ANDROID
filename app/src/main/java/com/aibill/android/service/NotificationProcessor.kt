@@ -80,7 +80,7 @@ class NotificationProcessor @Inject constructor(
             // 本地只做两件事：计数（失败率可见，进 ⑤ 上报与导出日志）+ warn（排障用）。
             // 401 是另一回事（会话过期）→ 见下面的 AuthExpired 分支（待补偿重放）。
             is ParseOutcome.Unparsed -> {
-                captureFunnelStats.record(CaptureFunnelStats.unparsedFailedStage(capture.channel))
+                captureFunnelStats.recordUnparsedFailed(capture.channel)
                 appLogger.warn(
                     "NLS",
                     "解析失败，丢弃（不留待审）: reason=${outcome.reason} " +
@@ -91,7 +91,7 @@ class NotificationProcessor @Inject constructor(
             // 入参被服务端拒（空 / 超长）= **客户端请求问题**，不是「AI 挂了」：
             // 单独成桶（client_only.unparsed_input_invalid），不混入 AI 失败率（服务端 `docs/API.md` 附录 C §10）。
             is ParseOutcome.InvalidInput -> {
-                captureFunnelStats.record(CaptureFunnelStats.unparsedInputInvalidStage(capture.channel))
+                captureFunnelStats.recordUnparsedInputInvalid(capture.channel)
                 appLogger.warn(
                     "NLS",
                     "AI 入参被拒，丢弃（不留待审）: reason=${outcome.reason} pkg=${capture.packageName}"
