@@ -1,7 +1,5 @@
 package com.aibill.android.util
 
-import com.aibill.android.data.notification.rules.NotificationRulesManager
-
 /**
  * 通知来源包名 → 友好名称 统一映射
  *
@@ -112,14 +110,14 @@ object NotificationSourceMapping {
         else SOURCE_NAMES[packageName] ?: packageName
 
     /**
-     * 云控版本：优先从云控规则中查找，fallback 到硬编码 map。
+     * 云控版本：优先从云控规则快照的 source_mapping 查找，fallback 到硬编码 map。
+     * C04 决策 2：参数由 manager 改为快照里的映射（快照是唯一访问路径）。
      */
-    fun friendlyName(packageName: String, rulesManager: NotificationRulesManager): String {
+    fun friendlyName(packageName: String, sourceMapping: Map<String, String>): String {
         // SMS 渠道的 packageName 是 "sms:<发送方>"，统一映射为"短信"
         if (packageName.startsWith("sms:")) return "短信"
-        val cloudMapping = rulesManager.getRules().sourceMapping
-        if (cloudMapping.isNotEmpty()) {
-            cloudMapping[packageName]?.let { return it }
+        if (sourceMapping.isNotEmpty()) {
+            sourceMapping[packageName]?.let { return it }
         }
         return SOURCE_NAMES[packageName] ?: packageName
     }

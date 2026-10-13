@@ -118,9 +118,6 @@ class NotificationRulesManager @Inject constructor(
         }
     }
 
-    /** 获取当前规则（同步，不阻塞）。优先级：内存缓存 → SharedPreferences → 硬编码默认值 */
-    fun getRules(): NotificationRules = getSnapshot().rules
-
     private fun loadInitialRules(): RulesSnapshot {
         val json = prefs.getString(KEY_JSON, null)
         if (json != null) {

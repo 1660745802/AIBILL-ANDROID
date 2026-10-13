@@ -16,7 +16,7 @@ import com.aibill.android.domain.notification.rules.A11yRules
 import com.aibill.android.domain.notification.rules.AlipayRules
 import com.aibill.android.domain.notification.rules.NlsRules
 import com.aibill.android.domain.notification.rules.NotificationRules
-import com.aibill.android.data.notification.rules.NotificationRulesManager
+import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.domain.notification.rules.ProcessorRules
 import com.aibill.android.domain.notification.rules.SmsRules
 import com.aibill.android.domain.notification.rules.WechatRules
@@ -57,7 +57,7 @@ class NotificationInterpreterTest {
     private val circuitBreaker: AiCircuitBreaker = mockk(relaxed = true)
     private val userPreferences: UserPreferences = mockk()
     private val categoryLearningEngine: CategoryLearningEngine = mockk(relaxed = true)
-    private val rulesManager: NotificationRulesManager = mockk(relaxed = true)
+    private lateinit var ruleSource: NotificationRuleSource
     private val appLogger: AppLogger = mockk(relaxed = true)
     private val captureFunnelStats = CaptureFunnelStatsImpl()
 
@@ -69,7 +69,7 @@ class NotificationInterpreterTest {
     fun setUp() {
         every { userPreferences.aiParseEnabled } returns flowOf(true)
         coEvery { categoryLearningEngine.matchCategory(any()) } returns null
-        every { rulesManager.getRules() } returns rules()
+        ruleSource = InMemoryNotificationRuleSource(rules())
         coEvery { aiResultValidator.validate(any(), any(), any(), any(), any()) } returns
             AiResultValidator.ValidationResult(isValid = true)
         interpreter = NotificationInterpreterImpl(
@@ -79,7 +79,7 @@ class NotificationInterpreterTest {
             userPreferences = userPreferences,
             categoryLearningEngine = categoryLearningEngine,
             appLogger = appLogger,
-            rulesManager = rulesManager,
+            ruleSource = ruleSource,
             balanceConsistency = com.aibill.android.data.notification.BalanceConsistencyImpl(),
             captureFunnelStats = captureFunnelStats,
         )

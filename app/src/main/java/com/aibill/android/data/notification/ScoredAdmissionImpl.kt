@@ -4,7 +4,7 @@ import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.domain.notification.ParsedTransaction
 import com.aibill.android.domain.notification.ScoredAdmission
 import com.aibill.android.domain.notification.SourceChannel
-import com.aibill.android.data.notification.rules.NotificationRulesManager
+import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -45,7 +45,7 @@ import javax.inject.Singleton
 @Singleton
 class ScoredAdmissionImpl @Inject constructor(
     private val notificationRecordDao: NotificationRecordDao,
-    private val rulesManager: NotificationRulesManager,
+    private val ruleSource: NotificationRuleSource,
     private val appLogger: AppLogger,
 ) : ScoredAdmission {
 
@@ -54,10 +54,10 @@ class ScoredAdmissionImpl @Inject constructor(
     var testDispatcher: kotlinx.coroutines.CoroutineDispatcher? = null
 
     private val dedupWindowMs: Long
-        get() = rulesManager.getRules().processor.dedupWindowSeconds * 1000L
+        get() = ruleSource.snapshot().dedupWindowSeconds * 1000L
 
     private val scoreWindowMs: Long
-        get() = rulesManager.getRules().processor.scoringWindowSeconds * 1000L
+        get() = ruleSource.snapshot().scoringWindowSeconds * 1000L
 
     /** 判定段串行化：去重查询 + 认领必须原子 */
     private val admitMutex = Mutex()

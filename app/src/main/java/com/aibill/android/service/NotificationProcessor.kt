@@ -1,6 +1,6 @@
 package com.aibill.android.service
 
-import com.aibill.android.data.notification.rules.NotificationRulesManager
+import com.aibill.android.domain.notification.NotificationRuleSource
 import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.datastore.UserPreferences
@@ -60,7 +60,7 @@ class NotificationProcessor @Inject constructor(
     private val recordIntake: RecordIntake,
     private val userPreferences: UserPreferences,
     private val appLogger: AppLogger,
-    private val rulesManager: NotificationRulesManager,
+    private val ruleSource: NotificationRuleSource,
     private val captureFunnelStats: CaptureFunnelStats,
 ) {
 
@@ -205,7 +205,7 @@ class NotificationProcessor @Inject constructor(
             recordId = recordId,
             amount = candidate.amount.takeIf { it > 0 } ?: 0,
             description = candidate.description ?: candidate.categoryName,
-            source = NotificationSourceMapping.friendlyName(candidate.capture.packageName, rulesManager),
+            source = NotificationSourceMapping.friendlyName(candidate.capture.packageName, ruleSource.snapshot().sourceMapping),
             privacyMode = privacyMode,
         )
     }

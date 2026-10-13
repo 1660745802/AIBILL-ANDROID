@@ -73,7 +73,7 @@ class NotificationRulesManagerTest {
         manager.fetchRules()
 
         // 第二次调 getRules() 应该不读 SP
-        val rules = manager.getRules()
+        val rules = manager.getSnapshot().rules
         assertNotNull(rules)
         assertEquals("支付成功", rules.a11y.successKeywords.first())
     }
@@ -85,7 +85,7 @@ class NotificationRulesManagerTest {
         every { prefs.getString("notification_rules_json", null) } returns json
         every { prefs.getString("notification_rules_etag", null) } returns null
 
-        val rules = manager.getRules()
+        val rules = manager.getSnapshot().rules
         assertTrue(rules.a11y.successKeywords.contains("测试关键词"))
     }
 
@@ -94,7 +94,7 @@ class NotificationRulesManagerTest {
     fun getRules_fallbackToDefault() {
         every { prefs.getString(any(), any()) } returns null
 
-        val rules = manager.getRules()
+        val rules = manager.getSnapshot().rules
         // 默认值从 assets 读取或用 EMPTY_FALLBACK
         assertNotNull(rules)
         assertNotNull(rules.nls.paymentSignalRegex)
@@ -119,7 +119,7 @@ class NotificationRulesManagerTest {
         verify { editor.apply() }
 
         // 验证内存缓存生效
-        val rules = manager.getRules()
+        val rules = manager.getSnapshot().rules
         assertEquals("支付成功", rules.a11y.successKeywords.first())
 
         // 设置页靠这个返回值告诉用户「更新到哪一版」
@@ -154,7 +154,7 @@ class NotificationRulesManagerTest {
         val result = manager.fetchRules()
 
         // getRules() 仍能返回默认值
-        val rules = manager.getRules()
+        val rules = manager.getSnapshot().rules
         assertNotNull(rules)
 
         // ★ 回归：以前这里返回 Unit，设置页无条件弹「规则同步成功」——
@@ -212,7 +212,7 @@ class NotificationRulesManagerTest {
             NotificationRulesResponse(code = 0, data = NotificationRulesData(version = 2, updatedAt = null, rules = dto)),
         )
         manager.fetchRules()
-        val cached = manager.getRules()
+        val cached = manager.getSnapshot().rules
         assertEquals("支付成功", cached.a11y.successKeywords.first())
 
         // 第二次拉取断网：云控挂了不能把本地已生效的规则清回默认值
@@ -220,7 +220,7 @@ class NotificationRulesManagerTest {
         val result = manager.fetchRules()
 
         assertTrue(result is NotificationRulesManager.RulesFetchResult.Failed)
-        assertEquals(cached, manager.getRules())
+        assertEquals(cached, manager.getSnapshot().rules)
     }
 
     @Test
@@ -232,7 +232,7 @@ class NotificationRulesManagerTest {
         val result = manager.fetchRules()
 
         assertTrue(result is NotificationRulesManager.RulesFetchResult.Failed)
-        assertNotNull(manager.getRules())
+        assertNotNull(manager.getSnapshot().rules)
     }
 
     @Test
@@ -253,7 +253,7 @@ class NotificationRulesManagerTest {
         manager.fetchRules()
 
         // 云控下发的三路来源数据真的进了规则模型（判定本身在快照那一侧）
-        val rules = manager.getRules()
+        val rules = manager.getSnapshot().rules
         assertEquals(manager.getSnapshot().rules, rules)
         assertEquals(mapOf("com.example.wallet" to "示例钱包"), rules.sourceMapping)
         assertEquals(listOf("com.example.sms"), rules.nls.smsPackages)
@@ -271,7 +271,7 @@ class NotificationRulesManagerTest {
         every { prefs.getString("notification_rules_json", null) } returns "{{invalid json}}"
         every { prefs.getString("notification_rules_etag", null) } returns null
 
-        val rules = manager.getRules()
+        val rules = manager.getSnapshot().rules
         assertNotNull(rules)
         // 应该返回默认值而非崩溃
         assertNotNull(rules.nls.paymentSignalRegex)
