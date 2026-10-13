@@ -1,6 +1,6 @@
 package com.aibill.android.util
 
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 
 /**
  * 通知来源包名 → 友好名称 统一映射

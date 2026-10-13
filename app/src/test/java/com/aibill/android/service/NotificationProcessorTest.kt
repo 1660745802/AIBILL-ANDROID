@@ -1,5 +1,13 @@
 package com.aibill.android.service
 
+import com.aibill.android.data.notification.rules.NotificationRulesManager
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.domain.notification.rules.NlsRules
+import com.aibill.android.domain.notification.rules.WechatRules
+import com.aibill.android.domain.notification.rules.AlipayRules
+import com.aibill.android.domain.notification.rules.A11yRules
+import com.aibill.android.domain.notification.rules.SmsRules
+import com.aibill.android.domain.notification.rules.ProcessorRules
 import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao

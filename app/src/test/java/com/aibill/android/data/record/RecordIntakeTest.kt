@@ -18,8 +18,8 @@ import com.aibill.android.domain.record.ReceiptPolicy
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakInfo
 import com.aibill.android.domain.usecase.StreakTracker
-import com.aibill.android.service.NotificationRules
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 import com.aibill.android.service.WidgetDataUpdater
 import com.aibill.android.util.NotificationHelper
 import io.mockk.coEvery

@@ -3,7 +3,7 @@ package com.aibill.android.data.notification
 import com.aibill.android.data.remote.dto.response.NotificationRulesDto
 import com.aibill.android.data.remote.dto.response.PrecheckDto
 import com.aibill.android.domain.notification.PrecheckRules
-import com.aibill.android.service.NotificationRulesMapping
+import com.aibill.android.data.notification.rules.NotificationRulesMapping
 import com.aibill.android.util.AppLogger
 import com.squareup.moshi.JsonReader
 import com.squareup.moshi.Moshi

@@ -1,5 +1,7 @@
 package com.aibill.android.service
 
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.domain.notification.rules.PerPackageRule
 import com.aibill.android.data.notification.PrefilterTestHarness
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.PerPackageCriteria

@@ -6,9 +6,9 @@ import com.aibill.android.domain.notification.LegacyCriteria
 import com.aibill.android.domain.notification.NotificationRuleSnapshot
 import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.domain.notification.PerPackageCriteria
-import com.aibill.android.service.NotificationRules
-import com.aibill.android.service.PerPackageRule
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.domain.notification.rules.PerPackageRule
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 import com.aibill.android.util.AppLogger
 import com.aibill.android.util.NotificationSourceMapping
 import timber.log.Timber

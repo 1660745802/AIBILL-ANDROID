@@ -15,7 +15,7 @@ import com.aibill.android.domain.notification.NotificationInterpreter
 import com.aibill.android.domain.notification.ParseOutcome
 import com.aibill.android.domain.notification.ParsedTransaction
 import com.aibill.android.domain.usecase.CategoryLearningEngine
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 import com.aibill.android.util.AiResultValidator
 import com.aibill.android.util.AppLogger
 import kotlinx.coroutines.CancellationException

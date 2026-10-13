@@ -1,12 +1,17 @@
-package com.aibill.android.service
+package com.aibill.android.data.notification.rules
 
 import android.app.Application
 import com.aibill.android.data.remote.api.NotificationRulesApi
-import com.aibill.android.data.remote.dto.response.NotificationRulesDto
 import com.aibill.android.data.remote.dto.response.NotificationRulesData
-import com.aibill.android.domain.notification.A11yProfileOverride
-import com.aibill.android.domain.notification.A11yProfileResolver
-import com.aibill.android.domain.notification.PrecheckSpec
+import com.aibill.android.data.remote.dto.response.NotificationRulesDto
+import com.aibill.android.domain.a11y.A11yRecognition
+import com.aibill.android.domain.notification.rules.A11yRules
+import com.aibill.android.domain.notification.rules.AlipayRules
+import com.aibill.android.domain.notification.rules.NlsRules
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.domain.notification.rules.ProcessorRules
+import com.aibill.android.domain.notification.rules.SmsRules
+import com.aibill.android.domain.notification.rules.WechatRules
 import com.squareup.moshi.Moshi
 import timber.log.Timber
 import java.io.IOException
@@ -14,22 +19,19 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 通知规则云控管理器
+ * 通知规则云控管理器（C04 后位于 data 层）。
  *
- * 优先级：内存缓存 → SharedPreferences → 硬编码默认值
+ * 优先级：内存缓存 → SharedPreferences → 硬编码默认值。
  * API 失败或未拉取到时自动 fallback 到默认值，不影响现有行为。
  *
- * 规则版本代际（generation）：每次内存缓存变更时递增，供消费者判断
- * 是否需要刷新本地派生值（Regex、Set 等），避免重复遍历。
+ * 规则版本代际（generation）：每次内存缓存变更时递增，供消费者判断是否需要刷新本地派生值。
  *
  * ⚠️ 本类**只管规则数据的存取**，不含任何判据：放行/拦截判定全在
  * [com.aibill.android.domain.notification.NotificationPrefilter]（预筛 module）。
- * 「营销词 + 强交易特征豁免」的判据在 `domain/notification/MarketingCriteria`，
- * 「已知来源」判据在 `NotificationRuleSnapshot.isKnownSource`。
  *
- * **同一判据不留第二个入口**：`isLikelyMarketing` / `isKnownOrBankPackage` /
- * `getAllKnownPackages` / `getRulesGeneration` 都曾是把同一判断又开一处的入口
- * （收口后生产零调用，只剩测试在打），已全部删除；代际与快照只经 [getSnapshot] 读取。
+ * C04：它是 SP + Retrofit 的**存储装配物**，故从 `service/` 下沉到 `data/`；规则模型
+ * 本身在 `domain/notification/rules/`。C04 决策 3 计划进一步拆成 RulesStore/RulesFetcher/
+ * RulesDefaults（本片先完成「模型进 domain、manager 进 data」，拆分与快照单一访问路径随后）。
  */
 @Singleton
 class NotificationRulesManager @Inject constructor(
@@ -47,20 +49,11 @@ class NotificationRulesManager @Inject constructor(
     )
 
     /**
-     * [fetchRules] 的结果。
-     *
-     * 以前 fetchRules() 吞掉所有异常返回 Unit，设置页只能无条件弹「规则同步成功」——
-     * 断网点同步同样报成功，是**假反馈**，比没有反馈更糟（用户以为规则已是新版）。
-     * 现在把「真更新 / 已是最新 / 拉取失败」三态显式返回给调用方。
+     * [fetchRules] 的结果：区分「真更新 / 已是最新 / 拉取失败」三态，避免断网点同步也报成功（假反馈）。
      */
     sealed interface RulesFetchResult {
-        /** 服务端下发了新规则，已写入本地并生效。 */
         data class Updated(val version: Int) : RulesFetchResult
-
-        /** ETag 命中 304，本地规则本来就是最新的。 */
         data object NotModified : RulesFetchResult
-
-        /** 拉取失败，**保留现有规则继续工作**（不影响已记账功能）。 */
         data class Failed(val message: String) : RulesFetchResult
     }
 
@@ -76,14 +69,7 @@ class NotificationRulesManager @Inject constructor(
     }
 
     /**
-     * 从服务器拉取规则。支持 ETag/304，304 不更新。
-     *
-     * **不抛异常**：失败时返回 [RulesFetchResult.Failed] 并保留现有规则，
-     * 保证「云控挂了不影响已记账功能」这一原有语义不变。
-     *
-     * 返回值对 fire-and-forget 的调用方（[AiBillApp] 启动拉取、
-     * [RulesSyncWorker] 周期拉取）可以忽略，Kotlin 允许丢弃返回值，
-     * 只有需要给用户反馈的设置页才必须区分三态。
+     * 从服务器拉取规则。支持 ETag/304，304 不更新。**不抛异常**：失败返回 [RulesFetchResult.Failed]。
      */
     suspend fun fetchRules(): RulesFetchResult {
         return try {
@@ -107,9 +93,11 @@ class NotificationRulesManager @Inject constructor(
                             .putString(KEY_ETAG, newEtag)
                             .apply()
                         setCachedRules(mapDtoToRules(rulesDto))
-                        Timber.d("NotificationRules: updated to version=${body.data.version} etag=${newEtag?.take(16)} " +
-                            "sourceMapping=${rulesDto.sourceMapping?.size ?: 0} " +
-                            "nlsSmsPackages=${rulesDto.nls?.smsPackages?.size ?: 0}")
+                        Timber.d(
+                            "NotificationRules: updated to version=${body.data.version} etag=${newEtag?.take(16)} " +
+                                "sourceMapping=${rulesDto.sourceMapping?.size ?: 0} " +
+                                "nlsSmsPackages=${rulesDto.nls?.smsPackages?.size ?: 0}"
+                        )
                         RulesFetchResult.Updated(body.data.version)
                     } else {
                         Timber.w("NotificationRules: 200 but code=${body?.code} or rules=null")
@@ -130,10 +118,7 @@ class NotificationRulesManager @Inject constructor(
         }
     }
 
-    /**
-     * 获取当前规则（同步，不阻塞）。
-     * 优先级：内存缓存 → SharedPreferences → 硬编码默认值
-     */
+    /** 获取当前规则（同步，不阻塞）。优先级：内存缓存 → SharedPreferences → 硬编码默认值 */
     fun getRules(): NotificationRules = getSnapshot().rules
 
     private fun loadInitialRules(): RulesSnapshot {
@@ -162,13 +147,7 @@ class NotificationRulesManager @Inject constructor(
         Timber.d("NotificationRules: cache updated, generation=$generation")
     }
 
-    /**
-     * 云控 DTO → 规则模型。映射体见 [NotificationRulesMapping]——
-     * 抽成顶层函数是为了让单测能直接把 `scripts/rules.json` 喂进同一条映射
-     * （复制一份映射 = 回归护栏锁的是拷贝，正是本次收口要消灭的东西）。
-     *
-     * `fallback` 是惰性的：只有云控缺字段时才会读 assets/硬编码兜底。
-     */
+    /** 云控 DTO → 规则模型。映射体见 [NotificationRulesMapping]。 */
     private fun mapDtoToRules(dto: NotificationRulesDto): NotificationRules =
         NotificationRulesMapping.fromDto(dto) { defaultRules }
 
@@ -177,10 +156,7 @@ class NotificationRulesManager @Inject constructor(
         private const val KEY_ETAG = "notification_rules_etag"
     }
 
-    /**
-     * 默认规则：从 assets/default_rules.json 读取（编译时从 scripts/rules.json 同步）。
-     * 只维护一份文件，避免硬编码和脚本不一致。
-     */
+    /** 默认规则：从 assets/default_rules.json 读取。只维护一份文件，避免硬编码和脚本不一致。 */
     private val defaultRules: NotificationRules by lazy {
         try {
             val json = application.assets.open("default_rules.json").bufferedReader().readText()
@@ -199,7 +175,7 @@ class NotificationRulesManager @Inject constructor(
         }
     }
 
-    /** 极端兜底（assets也读不到时） */
+    /** 极端兜底（assets 也读不到时） */
     private val emptyFallback = NotificationRules(
         nls = NlsRules(
             paymentSignalRegex = "[¥￥]|支付|付款|到账|转账|消费|扣款|充值|退款",
@@ -216,101 +192,11 @@ class NotificationRulesManager @Inject constructor(
             wechatAlipayExcludeKeywords = emptyList(),
             amountRegex = "[¥￥][ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*(\\d+\\.?\\d{0,2})",
             cooldownMinutes = 5,
-            listPageKeywords = PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS,
-            listPageMinAmounts = PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS,
+            listPageKeywords = A11yRecognition.DEFAULT_LIST_KEYWORDS,
+            listPageMinAmounts = A11yRecognition.LIST_PAGE_MIN_AMOUNTS,
         ),
         sms = SmsRules(spamKeywords = emptyList()),
         sourceMapping = emptyMap(),
         processor = ProcessorRules(10, 60, emptyList(), emptyList(), 10_000_000, 1),
     )
 }
-
-// ═══════════════════════════════════════════════════════════════
-// 规则数据模型
-// ═══════════════════════════════════════════════════════════════
-
-data class NotificationRules(
-    val nls: NlsRules,
-    val a11y: A11yRules,
-    val sms: SmsRules,
-    val sourceMapping: Map<String, String>,
-    val processor: ProcessorRules,
-    /** 入站预筛判据（跨端契约 §3）。默认空 = 云控未下发/旧服务端，行为与今天一致。 */
-    val precheck: PrecheckSpec = PrecheckSpec.EMPTY,
-)
-
-data class NlsRules(
-    val paymentSignalRegex: String,
-    val wechat: WechatRules,
-    val alipay: AlipayRules,
-    val bankPackagePatterns: List<String>,
-    val smsPackages: List<String>,
-    val perPackage: List<PerPackageRule> = emptyList(),
-    val defaultExcludeContent: List<String> = emptyList(),
-)
-
-data class PerPackageRule(
-    val packageName: String? = null,
-    val packagePattern: String? = null,
-    val passAll: Boolean = false,
-    val passTitleExact: List<String> = emptyList(),
-    val passTitleContains: List<String> = emptyList(),
-    val passMsgPrefix: List<String> = emptyList(),
-    val requireAmountSymbol: Boolean = false,
-    val excludeTitleContains: List<String> = emptyList(),
-    val excludeContentContains: List<String> = emptyList(),
-) {
-    fun matches(pkg: String): Boolean {
-        if (packageName != null && packageName == pkg) return true
-        if (packagePattern != null && packagePattern.isNotBlank()) {
-            return pkg.contains(packagePattern) || pkg.startsWith(packagePattern)
-        }
-        return false
-    }
-}
-
-data class WechatRules(
-    val packageName: String,
-    val directPassTitles: List<String>,
-    val directPassTitleContains: List<String>,
-    val messagePrefixes: List<String>,
-    val amountSymbols: List<String>,
-)
-
-data class AlipayRules(
-    val packageName: String,
-    val allowedTitleKeywords: List<String>,
-)
-
-data class A11yRules(
-    val embeddedPaymentApps: List<String>,
-    val successKeywords: List<String>,
-    val embeddedSuccessKeywords: List<String>,
-    val commonExcludeKeywords: List<String>,
-    val wechatAlipayExcludeKeywords: List<String>,
-    val amountRegex: String,
-    val cooldownMinutes: Int,
-    /** 列表页关键词：云控优先，缺省 = [PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS]。 */
-    val listPageKeywords: List<String> = PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS,
-    /** 列表页金额数下限：云控优先，缺省 = [PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS]。 */
-    val listPageMinAmounts: Int = PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS,
-    /** 全局商家标签（服务端 `docs/API.md` 附录 C §10）；缺省 = `findMerchant` 原硬编码 9 标签（行为不变）。 */
-    val merchantLabels: List<String> = A11yProfileResolver.DEFAULT_MERCHANT_LABELS,
-    /** A11Y 摘取 profile 版本；缺失/≠ [A11yProfileResolver.PROFILES_SCHEMA] → 忽略整个 app_profiles。 */
-    val profilesSchema: Int? = null,
-    /** per-App 摘取覆盖（契约 §2/§3）；仅在 schema 认识时被消费。 */
-    val appProfiles: Map<String, A11yProfileOverride> = emptyMap(),
-)
-
-data class SmsRules(
-    val spamKeywords: List<String>,
-)
-
-data class ProcessorRules(
-    val scoringWindowSeconds: Int,
-    val dedupWindowSeconds: Int,
-    val marketingSuffixCutoffs: List<String>,
-    val marketingCommaKeywords: List<String>,
-    val maxAmountCents: Int,
-    val minAmountCents: Int,
-)

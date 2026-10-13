@@ -2,9 +2,9 @@ package com.aibill.android.data.notification
 
 import com.aibill.android.data.remote.dto.response.NotificationRulesDto
 import com.aibill.android.data.remote.dto.response.NlsRulesDto
-import com.aibill.android.service.NotificationRules
-import com.aibill.android.service.NotificationRulesManager
-import com.aibill.android.service.NotificationRulesMapping
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.data.notification.rules.NotificationRulesManager
+import com.aibill.android.data.notification.rules.NotificationRulesMapping
 import com.aibill.android.util.AppLogger
 import com.aibill.android.util.NotificationSourceMapping
 import io.mockk.every
@@ -158,7 +158,7 @@ class NotificationRuleSourceAdaptersTest {
     }
 
     private fun NotificationRulesManager.rulesSnapshot(
-        rules: com.aibill.android.service.NotificationRules,
+        rules: com.aibill.android.domain.notification.rules.NotificationRules,
         generation: Int,
     ): NotificationRulesManager.RulesSnapshot = NotificationRulesManager.RulesSnapshot(rules, generation)
 }

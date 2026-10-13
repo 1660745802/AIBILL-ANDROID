@@ -4,7 +4,7 @@ import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.domain.notification.ParsedTransaction
 import com.aibill.android.domain.notification.ScoredAdmission
 import com.aibill.android.domain.notification.SourceChannel
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 import com.aibill.android.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job

@@ -15,7 +15,7 @@ import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.record.RecordOutcome
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakTracker
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 import com.aibill.android.service.WidgetDataUpdater
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationSourceMapping

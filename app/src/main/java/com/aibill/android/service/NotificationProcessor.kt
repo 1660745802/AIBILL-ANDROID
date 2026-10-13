@@ -1,5 +1,6 @@
 package com.aibill.android.service
 
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.datastore.UserPreferences

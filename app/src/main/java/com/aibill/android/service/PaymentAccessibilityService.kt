@@ -1,5 +1,6 @@
 package com.aibill.android.service
 
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 import android.accessibilityservice.AccessibilityService
 import android.os.Handler
 import android.os.Looper
@@ -94,40 +95,26 @@ internal object PaymentAccessibilityRecognition {
     fun isRecentTextRange(texts: List<String>, today: java.time.LocalDate): Boolean =
         A11yRecognition.isRecentTextRange(texts, today)
 
-    /** 列表页「金额节点」数下限：真实支付结果页最多 2 个（实付 + 原价/优惠）。 */
-    const val LIST_PAGE_MIN_AMOUNTS = 3
+    // ── 列表页启发式：实现已搬到 domain/a11y/A11yRecognition，此处保留原签名供旧单测引用 ──
 
-    /** 列表词必须出现在 `pageText` 前 N 个字符内（页面标题区）。见原 KDoc。 */
-    const val LIST_PAGE_KEYWORD_HEAD_CHARS = A11yProfileResolver.DEFAULT_LIST_PAGE_HEAD_CHARS
+    const val LIST_PAGE_MIN_AMOUNTS = A11yRecognition.LIST_PAGE_MIN_AMOUNTS
 
-    /** 列表页启发式的内置兜底列表词（7 个）。 */
-    val DEFAULT_LIST_KEYWORDS = listOf("账单", "交易记录", "明细", "全部交易", "收支记录", "历史", "月账单")
+    const val LIST_PAGE_KEYWORD_HEAD_CHARS = A11yRecognition.LIST_PAGE_KEYWORD_HEAD_CHARS
 
-    /**
-     * 列表页金额计数专用正则：覆盖 `¥12.00` / `12.00元` 与 `1,000元` 千分位。
-     * 与云控 `a11y.amount_regex` 解耦——这是纯客户端页面结构判据，不看单笔金额语义。
-     */
-    val LIST_PAGE_AMOUNT_REGEX = Regex("""[¥￥][ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\d[\d,]*(?:\.\d{1,2})?|\d[\d,]*(?:\.\d{1,2})?[ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*元""")
+    val DEFAULT_LIST_KEYWORDS = A11yRecognition.DEFAULT_LIST_KEYWORDS
 
-    /** 统计一组文本里像金额的出现次数（同一条文本里有多个则累计）。 */
+    val LIST_PAGE_AMOUNT_REGEX = A11yRecognition.LIST_PAGE_AMOUNT_REGEX
+
     fun countAmountLikeTexts(texts: List<String>, amountRegex: Regex): Int =
-        texts.sumOf { text -> amountRegex.findAll(text).count() }
+        A11yRecognition.countAmountLikeTexts(texts, amountRegex)
 
-    /**
-     * 列表页启发式：金额数 ≥ [minAmounts] 且列表词出现在页面前 [LIST_PAGE_KEYWORD_HEAD_CHARS]
-     * 个字符内（标题区）→ 判为账单/明细页。取舍：宁可漏挡，不可误杀真账。
-     */
     fun looksLikeListPage(
         pageText: String,
         amountRegex: Regex,
         listKeywords: List<String>,
         minAmounts: Int = LIST_PAGE_MIN_AMOUNTS,
         headChars: Int = LIST_PAGE_KEYWORD_HEAD_CHARS,
-    ): Boolean {
-        val head = pageText.take(headChars)
-        if (listKeywords.none { it.isNotBlank() && head.contains(it) }) return false
-        return countAmountLikeTexts(listOf(pageText), amountRegex) >= minAmounts
-    }
+    ): Boolean = A11yRecognition.looksLikeListPage(pageText, amountRegex, listKeywords, minAmounts, headChars)
 }
 
 /**

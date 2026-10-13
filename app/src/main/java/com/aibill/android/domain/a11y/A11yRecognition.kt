@@ -1,5 +1,6 @@
 package com.aibill.android.domain.a11y
 
+import com.aibill.android.domain.notification.A11yProfileResolver
 import java.math.RoundingMode
 
 /**
@@ -120,5 +121,49 @@ internal object A11yRecognition {
         val pureNumber = text.all { it.isDigit() || it == '.' || it == ',' }
         val pureSymbol = text.none { it.isLetterOrDigit() }
         return pureNumber || pureSymbol
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 列表页启发式（页面级结构判据；调用方在下游预筛 NotificationPrefilterImpl）
+    // ─────────────────────────────────────────────────────────────
+
+    /** 列表页「金额节点」数下限：真实支付结果页最多 2 个（实付 + 原价/优惠）。 */
+    const val LIST_PAGE_MIN_AMOUNTS = 3
+
+    /**
+     * 列表词必须出现在 `pageText` 前 N 个字符内（页面标题区）。
+     * 真交易结果页常有 ≥3 个金额、底部又有「查看账单」入口——只看「金额≥3 且命中列表词」
+     * 会把它们当列表页拦掉（P0 误杀）。取舍：宁可漏挡，不可误杀。
+     * 可被云控 `a11y.app_profiles.<pkg>.list_page_head_chars` 覆盖。
+     */
+    const val LIST_PAGE_KEYWORD_HEAD_CHARS = A11yProfileResolver.DEFAULT_LIST_PAGE_HEAD_CHARS
+
+    /** 列表页启发式的内置兜底列表词（7 个）。生产取值云控优先、内置兜底。 */
+    val DEFAULT_LIST_KEYWORDS = listOf("账单", "交易记录", "明细", "全部交易", "收支记录", "历史", "月账单")
+
+    /**
+     * 列表页金额计数专用正则：覆盖 `¥12.00` / `12.00元` 与 `1,000元` 千分位。
+     * 与云控 `a11y.amount_regex` 解耦——这是纯客户端页面结构判据。
+     */
+    val LIST_PAGE_AMOUNT_REGEX = Regex("""[¥￥][ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\d[\d,]*(?:\.\d{1,2})?|\d[\d,]*(?:\.\d{1,2})?[ \t\n\x0B\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*元""")
+
+    /** 统计一组文本里像金额的出现次数（同一条文本里有多个则累计）。 */
+    fun countAmountLikeTexts(texts: List<String>, amountRegex: Regex): Int =
+        texts.sumOf { text -> amountRegex.findAll(text).count() }
+
+    /**
+     * 列表页启发式：金额数 ≥ [minAmounts] 且列表词出现在页面前 [LIST_PAGE_KEYWORD_HEAD_CHARS]
+     * 个字符内（标题区）→ 判为账单/明细页。
+     */
+    fun looksLikeListPage(
+        pageText: String,
+        amountRegex: Regex,
+        listKeywords: List<String>,
+        minAmounts: Int = LIST_PAGE_MIN_AMOUNTS,
+        headChars: Int = LIST_PAGE_KEYWORD_HEAD_CHARS,
+    ): Boolean {
+        val head = pageText.take(headChars)
+        if (listKeywords.none { it.isNotBlank() && head.contains(it) }) return false
+        return countAmountLikeTexts(listOf(pageText), amountRegex) >= minAmounts
     }
 }
