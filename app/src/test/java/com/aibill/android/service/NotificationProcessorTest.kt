@@ -1,5 +1,14 @@
 package com.aibill.android.service
 
+import com.aibill.android.data.notification.InMemoryNotificationRuleSource
+import com.aibill.android.domain.notification.NotificationRuleSource
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.domain.notification.rules.NlsRules
+import com.aibill.android.domain.notification.rules.WechatRules
+import com.aibill.android.domain.notification.rules.AlipayRules
+import com.aibill.android.domain.notification.rules.A11yRules
+import com.aibill.android.domain.notification.rules.SmsRules
+import com.aibill.android.domain.notification.rules.ProcessorRules
 import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
@@ -76,7 +85,7 @@ class NotificationProcessorTest {
     private val userPreferences: UserPreferences = mockk()
     private val categoryLearningEngine: CategoryLearningEngine = mockk(relaxed = true)
     private val appLogger: AppLogger = mockk(relaxed = true)
-    private val rulesManager: NotificationRulesManager = mockk(relaxed = true)
+    private lateinit var ruleSource: NotificationRuleSource
     private val streakTracker: com.aibill.android.domain.usecase.StreakTracker = mockk(relaxed = true)
     private val captureFunnelStats = CaptureFunnelStatsImpl()
     private lateinit var transactionApi: TransactionApi
@@ -98,18 +107,20 @@ class NotificationProcessorTest {
         every { userPreferences.notificationPrivacy } returns flowOf(true)
         coEvery { categoryLearningEngine.matchCategory(any()) } returns null
         transactionApi = confirmingTransactionApi()
-        every { rulesManager.getRules() } returns NotificationRules(
-            nls = NlsRules("", WechatRules("", emptyList(), emptyList(), emptyList(), emptyList()), AlipayRules("", emptyList()), emptyList(), emptyList()),
-            a11y = A11yRules(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), "", 5),
-            sms = SmsRules(emptyList()),
-            sourceMapping = emptyMap(),
-            processor = ProcessorRules(10, 60, listOf("点击领取"), listOf("红包", "领", "优惠"), 10_000_000, 1),
+        ruleSource = InMemoryNotificationRuleSource(
+            NotificationRules(
+                nls = NlsRules("", WechatRules("", emptyList(), emptyList(), emptyList(), emptyList()), AlipayRules("", emptyList()), emptyList(), emptyList()),
+                a11y = A11yRules(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), "", 5),
+                sms = SmsRules(emptyList()),
+                sourceMapping = emptyMap(),
+                processor = ProcessorRules(10, 60, listOf("点击领取"), listOf("红包", "领", "优惠"), 10_000_000, 1),
+            )
         )
         coEvery { notificationRecordDao.findRecentConfirmedFromOtherChannel(any(), any(), any()) } returns null
         inserted = mutableListOf()
         coEvery { notificationRecordDao.insert(capture(inserted)) } returns 1L
 
-        val admission = ScoredAdmissionImpl(notificationRecordDao, rulesManager, appLogger)
+        val admission = ScoredAdmissionImpl(notificationRecordDao, ruleSource, appLogger)
         admission.testDispatcher = testDispatcher
         val interpreter = NotificationInterpreterImpl(
             aiApi = aiApi,
@@ -118,7 +129,7 @@ class NotificationProcessorTest {
             userPreferences = userPreferences,
             categoryLearningEngine = categoryLearningEngine,
             appLogger = appLogger,
-            rulesManager = rulesManager,
+            ruleSource = ruleSource,
             balanceConsistency = com.aibill.android.data.notification.BalanceConsistencyImpl(),
             captureFunnelStats = captureFunnelStats,
         )
@@ -131,7 +142,7 @@ class NotificationProcessorTest {
             recordIntake = intake(),
             userPreferences = userPreferences,
             appLogger = appLogger,
-            rulesManager = rulesManager,
+            ruleSource = ruleSource,
             captureFunnelStats = captureFunnelStats,
         )
     }
@@ -153,7 +164,7 @@ class NotificationProcessorTest {
             userPreferences = userPreferences,
             categoryLearningEngine = categoryLearningEngine,
             streakTracker = streakTracker,
-            rulesManager = rulesManager,
+            ruleSource = ruleSource,
         )
     }
 

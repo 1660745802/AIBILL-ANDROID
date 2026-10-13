@@ -58,7 +58,7 @@ class FunnelStatsPersistenceTest {
         val stats = newStats(store)
         assertEquals(2L, stats.snapshot().unparsedAiFailedTotal)
 
-        repeat(5) { stats.record(aiFailed) }
+        repeat(5) { stats.recordUnparsedFailed(SourceChannel.NLS) }
         advanceTimeBy(2_500)
         runCurrent()
 
@@ -72,7 +72,7 @@ class FunnelStatsPersistenceTest {
         val store = FakeStore()
         val stats = newStats(store)
 
-        stats.record(aiFailed)
+        stats.recordUnparsedFailed(SourceChannel.NLS)
         advanceTimeBy(2_500)
         runCurrent()
         assertTrue(store.counts.isNotEmpty())
@@ -89,7 +89,7 @@ class FunnelStatsPersistenceTest {
         val store = FakeStore()
         val stats = newStats(store)
 
-        stats.record(aiFailed)   // 排一个 2s 后的落盘
+        stats.recordUnparsedFailed(SourceChannel.NLS)   // 排一个 2s 后的落盘
         stats.reset()            // 立刻 drain，epoch 前进并清盘
         advanceTimeBy(2_500)
         runCurrent()
@@ -103,16 +103,16 @@ class FunnelStatsPersistenceTest {
         val store = FakeStore()
         val stats = newStats(store)
 
-        stats.record(CaptureFunnelStats.RECEIVED_NLS)
+        stats.recordReceived(SourceChannel.NLS)
         advanceTimeBy(2_500)
         runCurrent()
         stats.reset()
 
-        stats.record(CaptureFunnelStats.RECEIVED_SMS)
+        stats.recordReceived(SourceChannel.SMS)
         advanceTimeBy(2_500)
         runCurrent()
 
-        assertEquals(1L, store.counts[CaptureFunnelStats.RECEIVED_SMS])
-        assertNull(store.counts[CaptureFunnelStats.RECEIVED_NLS])
+        assertEquals(1L, store.counts[CaptureFunnelStats.receivedKey(SourceChannel.SMS)])
+        assertNull(store.counts[CaptureFunnelStats.receivedKey(SourceChannel.NLS)])
     }
 }

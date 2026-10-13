@@ -15,7 +15,7 @@ import com.aibill.android.domain.notification.NotificationInterpreter
 import com.aibill.android.domain.notification.ParseOutcome
 import com.aibill.android.domain.notification.ParsedTransaction
 import com.aibill.android.domain.usecase.CategoryLearningEngine
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.util.AiResultValidator
 import com.aibill.android.util.AppLogger
 import kotlinx.coroutines.CancellationException
@@ -53,7 +53,7 @@ class NotificationInterpreterImpl @Inject constructor(
     private val userPreferences: UserPreferences,
     private val categoryLearningEngine: CategoryLearningEngine,
     private val appLogger: AppLogger,
-    private val rulesManager: NotificationRulesManager,
+    private val ruleSource: NotificationRuleSource,
     private val balanceConsistency: BalanceConsistency,
     private val captureFunnelStats: CaptureFunnelStats,
 ) : NotificationInterpreter {
@@ -290,11 +290,11 @@ class NotificationInterpreterImpl @Inject constructor(
      * 预筛的 `precheck` 也要用**同一个串**算 `bare_amount` 长度（否则 30 字边界两端分叉）。
      */
     private fun cleanMarketingSuffix(text: String): String {
-        val rules = rulesManager.getRules().processor
+        val snapshot = ruleSource.snapshot()
         return com.aibill.android.domain.notification.MarketingSuffixCleaner.clean(
             text = text,
-            suffixCutoffs = rules.marketingSuffixCutoffs,
-            commaKeywords = rules.marketingCommaKeywords,
+            suffixCutoffs = snapshot.marketingSuffixCutoffs,
+            commaKeywords = snapshot.marketingCommaKeywords,
         )
     }
 
@@ -337,7 +337,7 @@ class NotificationInterpreterImpl @Inject constructor(
             )
         }
         if (localExtra > 0 || extraItemsDropped > 0) {
-            captureFunnelStats.record(CaptureFunnelStats.aiExtraItemsStage(capture.channel))
+            captureFunnelStats.recordAiExtraItems(capture.channel)
         }
     }
 

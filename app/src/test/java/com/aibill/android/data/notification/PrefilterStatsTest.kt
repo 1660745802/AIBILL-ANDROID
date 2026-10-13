@@ -132,4 +132,17 @@ class PrefilterStatsTest {
         assertEquals(1L, snap.passed)
         assertEquals(0L, snap.blockedTotal)
     }
+
+    @Test
+    @DisplayName("渲染：precheck.* 键能渲染出标签（C03 修掉的死标签）")
+    fun renderLabelsPrecheckKeys() {
+        val stats = PrefilterStatsImpl()
+        stats.recordBlocked(SourceChannel.NLS, "precheck.money_verb")
+        stats.recordBlocked(SourceChannel.NLS, PrefilterStats.clientOnlyKey(BlockReason.MARKETING))
+
+        val text = PrefilterStats.render(stats.snapshot())
+        // 旧实现用 removePrefix("client_only.") 查表，precheck.* 永远查不到 → 该标签形同虚设
+        assertTrue(text.contains("云控 precheck 判据"), text)
+        assertTrue(text.contains("营销词"), text)
+    }
 }

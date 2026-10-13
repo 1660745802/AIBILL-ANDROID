@@ -1,26 +1,36 @@
-package com.aibill.android.service
+package com.aibill.android.data.notification.rules
 
 import com.aibill.android.data.remote.dto.response.A11yAppProfileDto
 import com.aibill.android.data.remote.dto.response.NotificationRulesDto
 import com.aibill.android.data.remote.dto.response.PrecheckDto
 import com.aibill.android.data.remote.dto.response.PrecheckSignalDto
+import com.aibill.android.domain.a11y.A11yRecognition
 import com.aibill.android.domain.notification.A11yProfileOverride
 import com.aibill.android.domain.notification.A11yProfileResolver
 import com.aibill.android.domain.notification.PrecheckRuleSpec
 import com.aibill.android.domain.notification.PrecheckSignalSpec
 import com.aibill.android.domain.notification.PrecheckSpec
+import com.aibill.android.domain.notification.rules.A11yRules
+import com.aibill.android.domain.notification.rules.AlipayRules
+import com.aibill.android.domain.notification.rules.NlsRules
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.domain.notification.rules.PerPackageRule
+import com.aibill.android.domain.notification.rules.ProcessorRules
+import com.aibill.android.domain.notification.rules.SmsRules
+import com.aibill.android.domain.notification.rules.WechatRules
 
 /**
  * 云控 DTO → 规则模型的唯一映射。
  *
  * ## 为什么抽出来
  *
- * 收口前它是 [NotificationRulesManager] 的私有方法。收口后回归护栏必须能
- * **把仓库里的 `scripts/rules.json` 喂进生产判据**（而不是在测试里复刻一份映射），
+ * 回归护栏必须能**把仓库里的 `scripts/rules.json` 喂进生产判据**（而不是在测试里复刻一份映射），
  * 而生产判据要求一个 [NotificationRules]——所以映射必须是可复用的顶层实现。
  *
- * `fallback` 是**惰性**的：云控缺字段时才读 assets/硬编码兜底，
- * 与迁移前的行为一致（正常启动不会因为云控字段齐全而多读一次 assets）。
+ * `fallback` 是**惰性**的：云控缺字段时才读 assets/硬编码兜底。
+ *
+ * C04：随 manager 一起下沉 data 层（它 import 的是 `data.remote.dto` + `domain` 模型，
+ * 不再出现 service → data 反向依赖）。
  */
 internal object NotificationRulesMapping {
 
@@ -76,17 +86,13 @@ internal object NotificationRulesMapping {
                 maxAmountCents = dto.processor?.maxAmountCents ?: defaults.processor.maxAmountCents,
                 minAmountCents = dto.processor?.minAmountCents ?: defaults.processor.minAmountCents,
             ),
-            // 契约 §3：precheck **不写在 rules.json 里手抄**，也不进 assets 兜底。
-            // 旧服务端无此键 → EMPTY；schema 不认识也由编译期降级（见 PrecheckCompiler）。
+            // 契约 §3：precheck 不写在 rules.json 里手抄，也不进 assets 兜底。
             precheck = dto.precheck?.toSpec() ?: PrecheckSpec.EMPTY,
         )
     }
 
     /**
-     * `precheck` DTO → 原始领域 spec。
-     *
-     * 固定只认三个 signal 名（`money` / `verb` / `bare_amount`）：它们是服务端 `expr`
-     * 会引用的键，键名漂移会让整条判据静默失效，所以这里不允许「多一个未知 signal」。
+     * `precheck` DTO → 原始领域 spec。固定只认三个 signal 名（`money` / `verb` / `bare_amount`）。
      */
     private fun PrecheckDto.toSpec(): PrecheckSpec {
         val signalSpecs = LinkedHashMap<String, PrecheckSignalSpec>(3)
@@ -112,11 +118,7 @@ internal object NotificationRulesMapping {
     }
 
     /**
-     * `a11y` 子树的映射。抽出来只为把 `fromDto` 的圈复杂度压回阈值内（纯搬家，无语义变化）；
-     * 另两个新键（`profiles_schema`/`app_profiles`）只在 schema 认识时才被快照层消费。
-     *
-     * `defaults` 传的是 **lambda 而非值**：直接传值会在调用点强制求值兜底（`by lazy` 的
-     * delegate 一旦被当普通参数传递就会被 getValue），把「字段齐全就不读 assets」的惰性丢掉。
+     * `a11y` 子树的映射。`defaults` 传 lambda 而非值：直接传值会强制求值兜底，丢掉惰性。
      */
     private fun mapA11y(dto: NotificationRulesDto, defaults: () -> NotificationRules): A11yRules = A11yRules(
         embeddedPaymentApps = dto.a11y?.embeddedPaymentApps ?: defaults().a11y.embeddedPaymentApps,
@@ -126,12 +128,11 @@ internal object NotificationRulesMapping {
         wechatAlipayExcludeKeywords = dto.a11y?.wechatAlipayExcludeKeywords ?: defaults().a11y.wechatAlipayExcludeKeywords,
         amountRegex = dto.a11y?.amountRegex ?: defaults().a11y.amountRegex,
         cooldownMinutes = dto.a11y?.cooldownMinutes ?: defaults().a11y.cooldownMinutes,
-        // 云控优先、**硬编码内置**兜底：缺键时直接用 PaymentAccessibilityRecognition 的默认，
-        // 不读资产（资产也可能缺键/读失败），也不在映射层另抄字面量。
+        // 云控优先、**硬编码内置**兜底：缺键时直接用 A11yRecognition 的默认，不读资产。
         listPageKeywords = dto.a11y?.listPageKeywords
-            ?: PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS,
+            ?: A11yRecognition.DEFAULT_LIST_KEYWORDS,
         listPageMinAmounts = dto.a11y?.listPageMinAmounts
-            ?: PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS,
+            ?: A11yRecognition.LIST_PAGE_MIN_AMOUNTS,
         merchantLabels = dto.a11y?.merchantLabels ?: A11yProfileResolver.DEFAULT_MERCHANT_LABELS,
         profilesSchema = dto.a11y?.profilesSchema,
         appProfiles = dto.a11y?.appProfiles?.mapValues { (_, profile) -> profile.toOverride() }

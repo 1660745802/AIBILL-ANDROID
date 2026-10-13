@@ -15,7 +15,7 @@ import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.record.RecordOutcome
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakTracker
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.service.WidgetDataUpdater
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationSourceMapping
@@ -59,7 +59,7 @@ class RecordIntakeImpl @Inject constructor(
     private val userPreferences: UserPreferences,
     private val categoryLearningEngine: CategoryLearningEngine,
     private val streakTracker: StreakTracker,
-    private val rulesManager: NotificationRulesManager,
+    private val ruleSource: NotificationRuleSource,
 ) : RecordIntake {
 
     override suspend fun intake(intent: RecordIntent): RecordOutcome = when (intent) {
@@ -80,7 +80,7 @@ class RecordIntakeImpl @Inject constructor(
         // 否则跨午夜迟发仍会记错一天（服务端复核 R-24）。401 重放同理 → 落回原始交易日期。
         val moment = recordClock.at(intent.captured.receivedAt)
         // AI 自动入账读**云控**来源名映射（其余路径读硬编码表）——历史差异，保留。
-        val sourceDetail = NotificationSourceMapping.friendlyName(intent.captured.packageName, rulesManager)
+        val sourceDetail = NotificationSourceMapping.friendlyName(intent.captured.packageName, ruleSource.snapshot().sourceMapping)
 
         val pending = PendingTransactionEntity(
             clientId = clientId,

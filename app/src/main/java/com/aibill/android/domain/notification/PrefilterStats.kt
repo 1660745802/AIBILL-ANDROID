@@ -117,7 +117,7 @@ interface PrefilterStats {
                             "拦截率 ${percent(counts.blockRatePercent)}%"
                     )
                     counts.blocked.entries.sortedByDescending { it.value }.forEach { (key, count) ->
-                        appendLine("  $count  $key  ${LABELS[key.removePrefix(CLIENT_ONLY_PREFIX)] ?: ""}")
+                        appendLine("  $count  $key  ${labelOf(key)}")
                     }
                     counts.unusableRules.entries.sortedByDescending { it.value }.forEach { (key, count) ->
                         appendLine("  $count  $key  （云控规则不可用，已忽略）")
@@ -128,20 +128,31 @@ interface PrefilterStats {
 
         private fun percent(value: Double): String = String.format(Locale.ROOT, "%.1f", value)
 
-        private val LABELS: Map<String, String> = mapOf(
-            BlockReason.SELF_NOTIFICATION.name to "自身通知",
-            BlockReason.DUPLICATE_CONTENT.name to "内存去重(5s)",
-            BlockReason.BLANK_TEXT.name to "空正文",
-            BlockReason.SYSTEM_GROUP_SUMMARY.name to "系统分组摘要",
-            BlockReason.SUMMARY_REPORT.name to "日报/汇总",
-            BlockReason.PROMO_SENTENCE.name to "促销句式",
-            BlockReason.MARKETING.name to "营销词",
-            BlockReason.NOT_FINANCIAL.name to "非账务判据",
-            BlockReason.LIST_PAGE.name to "账单/明细列表页",
-            BlockReason.AI_MEMORY.name to "长窗记忆(5min)",
-            BlockReason.AI_MUTED.name to "AI 熔断静音",
-            BlockReason.DB_DUPLICATE.name to "DB 去重(1s)",
-            BlockReason.PRECHECK.name to "云控 precheck 判据",
-        )
+        /**
+         * 键 → 人读标签。`precheck.*` 是云控判据（旧实现用 `removePrefix("client_only.")` 查表，
+         * 永远查不到 → 该标签从未生效；C03 修掉）；其余按 [BlockReason] **穷尽 `when`**，
+         * 新增枚举值漏标签会编译失败，不再靠手工表。
+         */
+        private fun labelOf(key: String): String {
+            if (key.startsWith("precheck.")) return "云控 precheck 判据"
+            val reason = BlockReason.entries.firstOrNull { clientOnlyKey(it) == key } ?: return ""
+            return blockLabel(reason)
+        }
+
+        private fun blockLabel(reason: BlockReason): String = when (reason) {
+            BlockReason.SELF_NOTIFICATION -> "自身通知"
+            BlockReason.DUPLICATE_CONTENT -> "内存去重(5s)"
+            BlockReason.BLANK_TEXT -> "空正文"
+            BlockReason.SYSTEM_GROUP_SUMMARY -> "系统分组摘要"
+            BlockReason.SUMMARY_REPORT -> "日报/汇总"
+            BlockReason.PROMO_SENTENCE -> "促销句式"
+            BlockReason.MARKETING -> "营销词"
+            BlockReason.NOT_FINANCIAL -> "非账务判据"
+            BlockReason.LIST_PAGE -> "账单/明细列表页"
+            BlockReason.AI_MEMORY -> "长窗记忆(5min)"
+            BlockReason.AI_MUTED -> "AI 熔断静音"
+            BlockReason.DB_DUPLICATE -> "DB 去重(1s)"
+            BlockReason.PRECHECK -> "云控 precheck 判据"
+        }
     }
 }

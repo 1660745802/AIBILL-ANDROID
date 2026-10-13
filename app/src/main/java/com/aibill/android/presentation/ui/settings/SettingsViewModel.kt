@@ -8,7 +8,7 @@ import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.domain.repository.AuthRepository
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 import com.aibill.android.service.QuickEntryService
 import com.aibill.android.service.UpdateManager
 import com.aibill.android.util.AppLogger

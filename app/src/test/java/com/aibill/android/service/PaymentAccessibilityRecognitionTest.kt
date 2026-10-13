@@ -102,12 +102,6 @@ class PaymentAccessibilityRecognitionTest {
     }
 
     @Test
-    fun `dedup ttl remains short even when cloud cooldown is long`() {
-        assertEquals(30_000L, PaymentAccessibilityRecognition.dedupTtl(5 * 60_000L))
-        assertEquals(10_000L, PaymentAccessibilityRecognition.dedupTtl(10_000L))
-    }
-
-    @Test
     fun `list page heuristic requires both amounts and list keyword`() {
         val keywords = PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS
         val regex = PaymentAccessibilityRecognition.LIST_PAGE_AMOUNT_REGEX

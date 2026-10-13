@@ -1,5 +1,7 @@
 package com.aibill.android.service
 
+import com.aibill.android.data.notification.rules.NotificationRulesMapping
+import com.aibill.android.domain.notification.rules.NotificationRules
 import com.aibill.android.data.notification.PrefilterTestHarness
 import com.aibill.android.data.remote.dto.response.NotificationRulesData
 import com.aibill.android.domain.notification.Capture

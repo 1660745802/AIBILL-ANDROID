@@ -1,5 +1,7 @@
 package com.aibill.android.service
 
+import com.aibill.android.domain.notification.NotificationRuleSource
+import com.aibill.android.domain.notification.NotificationSink
 import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.datastore.UserPreferences
@@ -59,16 +61,16 @@ class NotificationProcessor @Inject constructor(
     private val recordIntake: RecordIntake,
     private val userPreferences: UserPreferences,
     private val appLogger: AppLogger,
-    private val rulesManager: NotificationRulesManager,
+    private val ruleSource: NotificationRuleSource,
     private val captureFunnelStats: CaptureFunnelStats,
-) {
+) : NotificationSink {
 
     /**
      * 处理一条预筛放行的通知。
      *
      * suspend 不等窗口：评分窗口内部异步产出，本方法只登记后返回。
      */
-    suspend fun process(capture: Capture) {
+    override suspend fun process(capture: Capture) {
         when (val outcome = interpreter.read(capture)) {
             is ParseOutcome.Disabled, is ParseOutcome.NotATransaction -> Unit
             // 解析失败 = **不确定**（区别于「AI 判定不是账」）：既不是「是账」也不是「不是账」。
@@ -78,7 +80,7 @@ class NotificationProcessor @Inject constructor(
             // 本地只做两件事：计数（失败率可见，进 ⑤ 上报与导出日志）+ warn（排障用）。
             // 401 是另一回事（会话过期）→ 见下面的 AuthExpired 分支（待补偿重放）。
             is ParseOutcome.Unparsed -> {
-                captureFunnelStats.record(CaptureFunnelStats.unparsedFailedStage(capture.channel))
+                captureFunnelStats.recordUnparsedFailed(capture.channel)
                 appLogger.warn(
                     "NLS",
                     "解析失败，丢弃（不留待审）: reason=${outcome.reason} " +
@@ -89,7 +91,7 @@ class NotificationProcessor @Inject constructor(
             // 入参被服务端拒（空 / 超长）= **客户端请求问题**，不是「AI 挂了」：
             // 单独成桶（client_only.unparsed_input_invalid），不混入 AI 失败率（服务端 `docs/API.md` 附录 C §10）。
             is ParseOutcome.InvalidInput -> {
-                captureFunnelStats.record(CaptureFunnelStats.unparsedInputInvalidStage(capture.channel))
+                captureFunnelStats.recordUnparsedInputInvalid(capture.channel)
                 appLogger.warn(
                     "NLS",
                     "AI 入参被拒，丢弃（不留待审）: reason=${outcome.reason} pkg=${capture.packageName}"
@@ -204,7 +206,7 @@ class NotificationProcessor @Inject constructor(
             recordId = recordId,
             amount = candidate.amount.takeIf { it > 0 } ?: 0,
             description = candidate.description ?: candidate.categoryName,
-            source = NotificationSourceMapping.friendlyName(candidate.capture.packageName, rulesManager),
+            source = NotificationSourceMapping.friendlyName(candidate.capture.packageName, ruleSource.snapshot().sourceMapping),
             privacyMode = privacyMode,
         )
     }

@@ -6,7 +6,7 @@ import androidx.work.Configuration
 import com.aibill.android.di.ApplicationScope
 import com.aibill.android.service.A11yHealthCheckWorker
 import com.aibill.android.service.NlsHealthCheckWorker
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 import com.aibill.android.service.RulesSyncWorker
 import com.aibill.android.service.UpdateCheckWorker
 import dagger.hilt.android.HiltAndroidApp

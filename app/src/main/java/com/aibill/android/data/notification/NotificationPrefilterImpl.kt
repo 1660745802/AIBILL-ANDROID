@@ -17,7 +17,7 @@ import com.aibill.android.domain.notification.PrecheckJudge
 import com.aibill.android.domain.notification.PrecheckVerdict
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
-import com.aibill.android.service.PaymentAccessibilityRecognition
+import com.aibill.android.domain.a11y.A11yRecognition
 import com.aibill.android.util.AppLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.ConcurrentHashMap
@@ -125,17 +125,17 @@ class NotificationPrefilterImpl @Inject constructor(
             val listKeywords = rules.a11yListPageKeywords
                 .map(String::trim)
                 .filter(String::isNotBlank)
-                .ifEmpty { PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS }
+                .ifEmpty { A11yRecognition.DEFAULT_LIST_KEYWORDS }
             val minAmounts = rules.a11yListPageMinAmounts
                 .takeIf { it > 0 }
-                ?: PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS
+                ?: A11yRecognition.LIST_PAGE_MIN_AMOUNTS
             // 标题区窗口：per-App profile 可覆盖（缺省 = 内置 24）；profile 只改长度，不参与「是不是账」。
             val headChars = rules.a11yPackageProfiles[packageName]?.listPageHeadChars
-                ?: PaymentAccessibilityRecognition.LIST_PAGE_KEYWORD_HEAD_CHARS
+                ?: A11yRecognition.LIST_PAGE_KEYWORD_HEAD_CHARS
             if (
-                PaymentAccessibilityRecognition.looksLikeListPage(
+                A11yRecognition.looksLikeListPage(
                     pageText,
-                    PaymentAccessibilityRecognition.LIST_PAGE_AMOUNT_REGEX,
+                    A11yRecognition.LIST_PAGE_AMOUNT_REGEX,
                     listKeywords,
                     minAmounts,
                     headChars,

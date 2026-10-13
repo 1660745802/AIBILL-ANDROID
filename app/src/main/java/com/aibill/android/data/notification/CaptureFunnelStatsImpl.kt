@@ -1,5 +1,6 @@
 package com.aibill.android.data.notification
 
+import com.aibill.android.domain.notification.CaptureDrop
 import com.aibill.android.di.ApplicationScope
 import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.SourceChannel
@@ -65,7 +66,20 @@ class CaptureFunnelStatsImpl @Inject constructor(
         }
     }
 
-    override fun record(stage: String) {
+    override fun recordReceived(channel: SourceChannel) = recordStage(CaptureFunnelStats.receivedKey(channel))
+
+    override fun recordDropped(drop: CaptureDrop) = recordStage(CaptureFunnelStats.droppedStage(drop))
+
+    override fun recordAiExtraItems(channel: SourceChannel) =
+        recordStage(CaptureFunnelStats.aiExtraItemsStage(channel))
+
+    override fun recordUnparsedFailed(channel: SourceChannel) =
+        recordStage(CaptureFunnelStats.unparsedFailedStage(channel))
+
+    override fun recordUnparsedInputInvalid(channel: SourceChannel) =
+        recordStage(CaptureFunnelStats.unparsedInputInvalidStage(channel))
+
+    private fun recordStage(stage: String) {
         counters.computeIfAbsent(stage) { AtomicLong() }.incrementAndGet()
         scheduleFlush()
     }

@@ -2,7 +2,7 @@ package com.aibill.android.data
 
 import com.aibill.android.data.remote.dto.response.NotificationRulesData
 import com.aibill.android.domain.notification.PrecheckSpec
-import com.aibill.android.service.NotificationRulesMapping
+import com.aibill.android.data.notification.rules.NotificationRulesMapping
 import com.squareup.moshi.Moshi
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue

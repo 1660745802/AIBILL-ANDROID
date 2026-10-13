@@ -6,9 +6,9 @@ import com.aibill.android.domain.notification.LegacyCriteria
 import com.aibill.android.domain.notification.NotificationRuleSnapshot
 import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.domain.notification.PerPackageCriteria
-import com.aibill.android.service.NotificationRules
-import com.aibill.android.service.PerPackageRule
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.domain.notification.rules.PerPackageRule
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 import com.aibill.android.util.AppLogger
 import com.aibill.android.util.NotificationSourceMapping
 import timber.log.Timber
@@ -81,6 +81,12 @@ internal fun deriveSnapshot(rules: NotificationRules, generation: Int, logger: A
             wechatAmountSymbols = rules.nls.wechat.amountSymbols,
             alipayAllowedTitleKeywords = rules.nls.alipay.allowedTitleKeywords,
         ),
+        // C04 决策 2：这些字段原先由 4 处 `getRules()` 绕过快照直接读，现随代际进快照。
+        scoringWindowSeconds = rules.processor.scoringWindowSeconds,
+        dedupWindowSeconds = rules.processor.dedupWindowSeconds,
+        maxAmountCents = rules.processor.maxAmountCents,
+        minAmountCents = rules.processor.minAmountCents,
+        sourceMapping = rules.sourceMapping,
         // precheck 与其它判据同一代际：编译一次、随代际更新（全或无的容错语义在 PrecheckCompiler）。
         precheck = PrecheckCompiler.compile(rules.precheck, logger),
         // 营销后缀截断词随代际进快照：预筛要用它算出与请求 `input` 一致的串。

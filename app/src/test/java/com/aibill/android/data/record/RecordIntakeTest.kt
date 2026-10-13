@@ -18,8 +18,15 @@ import com.aibill.android.domain.record.ReceiptPolicy
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakInfo
 import com.aibill.android.domain.usecase.StreakTracker
-import com.aibill.android.service.NotificationRules
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.domain.notification.rules.ProcessorRules
+import com.aibill.android.domain.notification.rules.SmsRules
+import com.aibill.android.domain.notification.rules.A11yRules
+import com.aibill.android.domain.notification.rules.AlipayRules
+import com.aibill.android.domain.notification.rules.WechatRules
+import com.aibill.android.domain.notification.rules.NlsRules
+import com.aibill.android.data.notification.InMemoryNotificationRuleSource
+import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.service.WidgetDataUpdater
 import com.aibill.android.util.NotificationHelper
 import io.mockk.coEvery
@@ -67,7 +74,7 @@ class RecordIntakeTest {
     private val userPreferences: UserPreferences = mockk()
     private val learningEngine: CategoryLearningEngine = mockk(relaxed = true)
     private val streakTracker: StreakTracker = mockk(relaxed = true)
-    private val rulesManager: NotificationRulesManager = mockk(relaxed = true)
+    private lateinit var ruleSource: NotificationRuleSource
     private val transactionApi: TransactionApi = mockk()
 
     /** 送服务端 → 跨表写入 → 刷 widget → 回执 的调用顺序；每个 hook 都往里记一笔 */
@@ -79,6 +86,7 @@ class RecordIntakeTest {
     private val fixedInstant: Instant = Instant.parse("2026-07-10T04:30:00Z") // = 12:30 +08:00
 
     private lateinit var intake: RecordIntake
+    private lateinit var writer: RecordWriter
 
     @BeforeEach
     fun setUp() {
@@ -101,6 +109,15 @@ class RecordIntakeTest {
             )
         } answers { calls += "receipt"; Unit }
         every { userPreferences.notificationPrivacy } returns flowOf(false)
+        ruleSource = InMemoryNotificationRuleSource(
+            NotificationRules(
+                nls = NlsRules("", WechatRules("", emptyList(), emptyList(), emptyList(), emptyList()), AlipayRules("", emptyList()), emptyList(), emptyList()),
+                a11y = A11yRules(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), "", 5),
+                sms = SmsRules(emptyList()),
+                sourceMapping = emptyMap(),
+                processor = ProcessorRules(10, 60, emptyList(), emptyList(), 10_000_000, 1),
+            )
+        )
 
         val writer = object : RecordWriter {
             override suspend fun write(write: RecordWrite): Long? {
@@ -112,6 +129,7 @@ class RecordIntakeTest {
                 return newId
             }
         }
+        this.writer = writer
         intake = buildIntake(writer)
     }
 
@@ -131,7 +149,7 @@ class RecordIntakeTest {
             userPreferences = userPreferences,
             categoryLearningEngine = learningEngine,
             streakTracker = streakTracker,
-            rulesManager = rulesManager,
+            ruleSource = ruleSource,
         )
     }
 
@@ -308,9 +326,17 @@ class RecordIntakeTest {
     @Test
     @DisplayName("来源名映射：AI 自动走云控，弹窗确认走硬编码——历史差异保留")
     fun `auto reads the cloud source mapping while confirm uses the hardcoded one`() = runTest {
-        val cloudRules = mockk<NotificationRules>(relaxed = true)
-        every { cloudRules.sourceMapping } returns mapOf("com.tencent.mm" to "微信云控")
-        every { rulesManager.getRules() } returns cloudRules
+        ruleSource = InMemoryNotificationRuleSource(
+            NotificationRules(
+                nls = NlsRules("", WechatRules("", emptyList(), emptyList(), emptyList(), emptyList()), AlipayRules("", emptyList()), emptyList(), emptyList()),
+                a11y = A11yRules(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), "", 5),
+                sms = SmsRules(emptyList()),
+                sourceMapping = mapOf("com.tencent.mm" to "微信云控"),
+                processor = ProcessorRules(10, 60, emptyList(), emptyList(), 10_000_000, 1),
+            )
+        )
+        // 重组 intake，使新的规则源生效（intake 在 setUp 里已捕获旧源）
+        intake = buildIntake(writer)
 
         intake.intake(autoIntent())
         assertEquals("微信云控", onlyRow().sourceDetail)

@@ -9,8 +9,8 @@ import com.aibill.android.domain.notification.BlockReason
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
-import com.aibill.android.service.NotificationRules
-import com.aibill.android.service.NotificationRulesMapping
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.data.notification.rules.NotificationRulesMapping
 import com.aibill.android.util.AppLogger
 import com.squareup.moshi.Moshi
 import io.mockk.mockk

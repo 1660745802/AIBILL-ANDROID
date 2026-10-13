@@ -1,5 +1,6 @@
 package com.aibill.android.data.notification
 
+import com.aibill.android.domain.notification.CaptureDrop
 import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.PrefilterReport
 import com.aibill.android.domain.notification.SourceChannel
@@ -26,9 +27,9 @@ class CaptureFunnelStatsImplTest {
     @DisplayName("入参非法 stage：上报键 client_only.unparsed_input_invalid，不计入 AI 失败率")
     fun unparsedInputInvalidIsSeparateBucket() {
         val stats = CaptureFunnelStatsImpl()
-        stats.record(CaptureFunnelStats.unparsedFailedStage(SourceChannel.NLS))
-        stats.record(CaptureFunnelStats.unparsedInputInvalidStage(SourceChannel.NLS))
-        repeat(2) { stats.record(CaptureFunnelStats.unparsedInputInvalidStage(SourceChannel.SMS)) }
+        stats.recordUnparsedFailed(SourceChannel.NLS)
+        stats.recordUnparsedInputInvalid(SourceChannel.NLS)
+        repeat(2) { stats.recordUnparsedInputInvalid(SourceChannel.SMS) }
 
         val snap = stats.snapshot()
         assertEquals(
@@ -54,21 +55,21 @@ class CaptureFunnelStatsImplTest {
     @DisplayName("入口与早退分开计数：received 按渠道，stages 只含 dropped.*")
     fun countsReceivedAndDroppedSeparately() {
         val stats = CaptureFunnelStatsImpl()
-        stats.record(CaptureFunnelStats.RECEIVED_A11Y)
-        repeat(9) { stats.record(CaptureFunnelStats.RECEIVED_A11Y) }
-        repeat(5) { stats.record(CaptureFunnelStats.DROPPED_A11Y_NOT_WHITELISTED) }
-        stats.record(CaptureFunnelStats.DROPPED_A11Y_NO_SUCCESS_KEYWORD)
-        stats.record(CaptureFunnelStats.RECEIVED_NLS)
-        stats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
+        stats.recordReceived(SourceChannel.A11Y)
+        repeat(9) { stats.recordReceived(SourceChannel.A11Y) }
+        repeat(5) { stats.recordDropped(CaptureDrop.A11Y_NOT_WHITELISTED) }
+        stats.recordDropped(CaptureDrop.A11Y_NO_SUCCESS_KEYWORD)
+        stats.recordReceived(SourceChannel.NLS)
+        stats.recordDropped(CaptureDrop.NLS_NO_EXTRAS)
 
         val snap = stats.snapshot()
         assertEquals(10L, snap.received.getValue(SourceChannel.A11Y))
         assertEquals(1L, snap.received.getValue(SourceChannel.NLS))
         assertEquals(0L, snap.received.getValue(SourceChannel.SMS))
         assertEquals(11L, snap.receivedTotal)
-        assertEquals(5L, snap.stages[CaptureFunnelStats.DROPPED_A11Y_NOT_WHITELISTED])
-        assertEquals(1L, snap.stages[CaptureFunnelStats.DROPPED_A11Y_NO_SUCCESS_KEYWORD])
-        assertEquals(1L, snap.stages[CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS])
+        assertEquals(5L, snap.stages[CaptureFunnelStats.droppedStage(CaptureDrop.A11Y_NOT_WHITELISTED)])
+        assertEquals(1L, snap.stages[CaptureFunnelStats.droppedStage(CaptureDrop.A11Y_NO_SUCCESS_KEYWORD)])
+        assertEquals(1L, snap.stages[CaptureFunnelStats.droppedStage(CaptureDrop.NLS_NO_EXTRAS)])
         assertEquals(7L, snap.droppedTotal)
         // received.* 不进 stages
         assertTrue(snap.stages.keys.none { it.startsWith(CaptureFunnelStats.RECEIVED_PREFIX) }, snap.stages.toString())
@@ -78,8 +79,8 @@ class CaptureFunnelStatsImplTest {
     @DisplayName("reset：取走上报后清零（不再重复上报）")
     fun resetClearsCounters() {
         val stats = CaptureFunnelStatsImpl()
-        stats.record(CaptureFunnelStats.RECEIVED_SMS)
-        stats.record(CaptureFunnelStats.DROPPED_SMS_BLANK_TEXT)
+        stats.recordReceived(SourceChannel.SMS)
+        stats.recordDropped(CaptureDrop.SMS_BLANK_TEXT)
         stats.reset()
 
         val snap = stats.snapshot()
@@ -92,35 +93,15 @@ class CaptureFunnelStatsImplTest {
     fun stagesMapToReportableClientOnlyKeys() {
         assertEquals(
             "client_only.capture_dropped_a11y_no_root",
-            CaptureFunnelStats.reportKey(CaptureFunnelStats.DROPPED_A11Y_NO_ROOT),
+            CaptureFunnelStats.reportKey(CaptureFunnelStats.droppedStage(CaptureDrop.A11Y_NO_ROOT)),
         )
         assertEquals(
             "client_only.capture_received_nls",
-            CaptureFunnelStats.reportKey(CaptureFunnelStats.RECEIVED_NLS),
+            CaptureFunnelStats.reportKey(CaptureFunnelStats.receivedKey(SourceChannel.NLS)),
         )
         // 每个 stage 常量都能机械转成服务端接受的键
-        val everyStage = listOf(
-            CaptureFunnelStats.RECEIVED_NLS,
-            CaptureFunnelStats.RECEIVED_A11Y,
-            CaptureFunnelStats.RECEIVED_SMS,
-            CaptureFunnelStats.DROPPED_NLS_NO_PACKAGE,
-            CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS,
-            CaptureFunnelStats.DROPPED_A11Y_NOT_WHITELISTED,
-            CaptureFunnelStats.DROPPED_A11Y_NO_ROOT,
-            CaptureFunnelStats.DROPPED_A11Y_ROOT_MISMATCH,
-            CaptureFunnelStats.DROPPED_A11Y_NO_ACTIVITY,
-            CaptureFunnelStats.DROPPED_A11Y_NOT_PAYMENT_ACTIVITY,
-            CaptureFunnelStats.DROPPED_A11Y_NO_PAGE_TOKEN,
-            CaptureFunnelStats.DROPPED_A11Y_NO_SUCCESS_KEYWORD,
-            CaptureFunnelStats.DROPPED_A11Y_EXCLUDED,
-            CaptureFunnelStats.DROPPED_A11Y_BAD_AMOUNT,
-            CaptureFunnelStats.DROPPED_A11Y_HISTORY_DATE,
-            CaptureFunnelStats.DROPPED_A11Y_DEBOUNCE,
-            CaptureFunnelStats.DROPPED_A11Y_PAGE_DEDUP,
-            CaptureFunnelStats.DROPPED_SMS_NOT_ACTION,
-            CaptureFunnelStats.DROPPED_SMS_NO_MESSAGES,
-            CaptureFunnelStats.DROPPED_SMS_BLANK_TEXT,
-        )
+        val everyStage = SourceChannel.entries.map { CaptureFunnelStats.receivedKey(it) } +
+            CaptureDrop.entries.map { CaptureFunnelStats.droppedStage(it) }
         everyStage.forEach { stage ->
             val key = CaptureFunnelStats.reportKey(stage)
             assertTrue(PrefilterReport.isReportableRuleId(key), "$stage → $key 不在可上报命名空间")
@@ -135,9 +116,9 @@ class CaptureFunnelStatsImplTest {
     @DisplayName("reportCountsFor 按渠道归因，并把 received 也映射进 client_only.*")
     fun reportCountsAreAttributedPerChannel() {
         val stats = CaptureFunnelStatsImpl()
-        repeat(3) { stats.record(CaptureFunnelStats.RECEIVED_A11Y) }
-        stats.record(CaptureFunnelStats.DROPPED_A11Y_EXCLUDED)
-        stats.record(CaptureFunnelStats.DROPPED_NLS_NO_PACKAGE)
+        repeat(3) { stats.recordReceived(SourceChannel.A11Y) }
+        stats.recordDropped(CaptureDrop.A11Y_EXCLUDED)
+        stats.recordDropped(CaptureDrop.NLS_NO_PACKAGE)
 
         val snap = stats.snapshot()
         assertEquals(
@@ -158,9 +139,9 @@ class CaptureFunnelStatsImplTest {
     @DisplayName("AI 响应侧 stage：按渠道归因、上报键 client_only.ai_extra_items、不计入捕获层 droppedTotal")
     fun aiResponseStageIsSeparateAndReportable() {
         val stats = CaptureFunnelStatsImpl()
-        stats.record(CaptureFunnelStats.RECEIVED_NLS)
-        stats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
-        repeat(2) { stats.record(CaptureFunnelStats.aiExtraItemsStage(SourceChannel.NLS)) }
+        stats.recordReceived(SourceChannel.NLS)
+        stats.recordDropped(CaptureDrop.NLS_NO_EXTRAS)
+        repeat(2) { stats.recordAiExtraItems(SourceChannel.NLS) }
 
         val snap = stats.snapshot()
         assertEquals(
@@ -181,10 +162,10 @@ class CaptureFunnelStatsImplTest {
     @DisplayName("AI 失败丢弃 stage：上报键 client_only.unparsed_ai_failed，不计入 droppedTotal")
     fun unparsedStageIsSeparateAndReportable() {
         val stats = CaptureFunnelStatsImpl()
-        stats.record(CaptureFunnelStats.RECEIVED_NLS)
-        stats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
-        stats.record(CaptureFunnelStats.unparsedFailedStage(SourceChannel.NLS))
-        repeat(2) { stats.record(CaptureFunnelStats.unparsedFailedStage(SourceChannel.SMS)) }
+        stats.recordReceived(SourceChannel.NLS)
+        stats.recordDropped(CaptureDrop.NLS_NO_EXTRAS)
+        stats.recordUnparsedFailed(SourceChannel.NLS)
+        repeat(2) { stats.recordUnparsedFailed(SourceChannel.SMS) }
 
         val snap = stats.snapshot()
         val key = CaptureFunnelStats.reportKey(CaptureFunnelStats.unparsedFailedStage(SourceChannel.NLS))
@@ -213,9 +194,9 @@ class CaptureFunnelStatsImplTest {
     @DisplayName("渲染：AI 失败丢弃单独列一节，并在合计行报次数")
     fun renderSeparatesUnparsedStages() {
         val stats = CaptureFunnelStatsImpl()
-        stats.record(CaptureFunnelStats.RECEIVED_NLS)
-        stats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
-        stats.record(CaptureFunnelStats.unparsedFailedStage(SourceChannel.NLS))
+        stats.recordReceived(SourceChannel.NLS)
+        stats.recordDropped(CaptureDrop.NLS_NO_EXTRAS)
+        stats.recordUnparsedFailed(SourceChannel.NLS)
 
         val text = CaptureFunnelStats.render(stats.snapshot())
         assertTrue(text.contains("AI 失败丢弃"), text)
@@ -228,9 +209,9 @@ class CaptureFunnelStatsImplTest {
     @DisplayName("渲染：捕获层与 AI 响应侧分开列出")
     fun renderSeparatesAiResponseStages() {
         val stats = CaptureFunnelStatsImpl()
-        stats.record(CaptureFunnelStats.RECEIVED_NLS)
-        stats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
-        stats.record(CaptureFunnelStats.aiExtraItemsStage(SourceChannel.NLS))
+        stats.recordReceived(SourceChannel.NLS)
+        stats.recordDropped(CaptureDrop.NLS_NO_EXTRAS)
+        stats.recordAiExtraItems(SourceChannel.NLS)
 
         val text = CaptureFunnelStats.render(stats.snapshot())
         assertTrue(text.contains("AI 响应侧"), text)
@@ -243,11 +224,11 @@ class CaptureFunnelStatsImplTest {
     @DisplayName("渲染：列出三渠道入口，早退按条数降序，带人读标签")
     fun renderIsGroupedAndSorted() {
         val stats = CaptureFunnelStatsImpl()
-        stats.record(CaptureFunnelStats.RECEIVED_A11Y)
-        stats.record(CaptureFunnelStats.RECEIVED_NLS)
-        repeat(9) { stats.record(CaptureFunnelStats.DROPPED_A11Y_NOT_WHITELISTED) }
-        repeat(2) { stats.record(CaptureFunnelStats.DROPPED_A11Y_NO_SUCCESS_KEYWORD) }
-        stats.record(CaptureFunnelStats.DROPPED_NLS_NO_EXTRAS)
+        stats.recordReceived(SourceChannel.A11Y)
+        stats.recordReceived(SourceChannel.NLS)
+        repeat(9) { stats.recordDropped(CaptureDrop.A11Y_NOT_WHITELISTED) }
+        repeat(2) { stats.recordDropped(CaptureDrop.A11Y_NO_SUCCESS_KEYWORD) }
+        stats.recordDropped(CaptureDrop.NLS_NO_EXTRAS)
 
         val text = CaptureFunnelStats.render(stats.snapshot())
         assertTrue(text.contains("入口:"), text)
@@ -263,6 +244,19 @@ class CaptureFunnelStatsImplTest {
         // 人读标签
         assertTrue(text.contains("包名不在支付白名单"), text)
         assertTrue(text.contains("未命中支付成功词"), text)
+    }
+
+    @Test
+    @DisplayName("落盘键逐字不变（跨版本持久化与跨端对账依赖字面量）")
+    fun storageKeysAreLiteralStable() {
+        assertEquals("dropped.a11y.no_root", CaptureFunnelStats.droppedStage(CaptureDrop.A11Y_NO_ROOT))
+        assertEquals("dropped.a11y.page_dedup", CaptureFunnelStats.droppedStage(CaptureDrop.A11Y_PAGE_DEDUP))
+        assertEquals("dropped.nls.no_package", CaptureFunnelStats.droppedStage(CaptureDrop.NLS_NO_PACKAGE))
+        assertEquals("dropped.sms.blank_text", CaptureFunnelStats.droppedStage(CaptureDrop.SMS_BLANK_TEXT))
+        assertEquals("received.nls", CaptureFunnelStats.receivedKey(SourceChannel.NLS))
+        assertEquals("ai.a11y.extra_items", CaptureFunnelStats.aiExtraItemsStage(SourceChannel.A11Y))
+        assertEquals("unparsed.sms.ai_failed", CaptureFunnelStats.unparsedFailedStage(SourceChannel.SMS))
+        assertEquals("unparsed.nls.input_invalid", CaptureFunnelStats.unparsedInputInvalidStage(SourceChannel.NLS))
     }
 
     @Test
@@ -285,8 +279,8 @@ class CaptureFunnelStatsImplTest {
                 executor.submit {
                     start.await()
                     repeat(perThread) {
-                        stats.record(CaptureFunnelStats.RECEIVED_A11Y)
-                        stats.record(CaptureFunnelStats.DROPPED_A11Y_DEBOUNCE)
+                        stats.recordReceived(SourceChannel.A11Y)
+                        stats.recordDropped(CaptureDrop.A11Y_DEBOUNCE)
                     }
                 }
             }
@@ -297,6 +291,6 @@ class CaptureFunnelStatsImplTest {
         }
         val snap = stats.snapshot()
         assertEquals((threads * perThread).toLong(), snap.received.getValue(SourceChannel.A11Y))
-        assertEquals((threads * perThread).toLong(), snap.stages[CaptureFunnelStats.DROPPED_A11Y_DEBOUNCE])
+        assertEquals((threads * perThread).toLong(), snap.stages[CaptureFunnelStats.droppedStage(CaptureDrop.A11Y_DEBOUNCE)])
     }
 }

@@ -2,7 +2,7 @@ package com.aibill.android.presentation.ui.settings
 
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.domain.repository.AuthRepository
-import com.aibill.android.service.NotificationRulesManager
+import com.aibill.android.data.notification.rules.NotificationRulesManager
 import com.aibill.android.service.UpdateManager
 import com.aibill.android.util.AppLogger
 import io.mockk.coEvery

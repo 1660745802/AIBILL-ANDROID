@@ -56,6 +56,16 @@ data class NotificationRuleSnapshot(
     val bankPackagePatterns: List<String>,
     val perPackage: List<PerPackageCriteria>,
     val legacy: LegacyCriteria,
+    /** 评分窗口秒数（`processor.scoring_window_seconds`）；C04 决策 2 起经快照消费。 */
+    val scoringWindowSeconds: Int = 10,
+    /** 跨渠道判重窗口秒数（`processor.dedup_window_seconds`）。 */
+    val dedupWindowSeconds: Int = 60,
+    /** 金额上限（分，`processor.max_amount_cents`）。 */
+    val maxAmountCents: Int = 10_000_000,
+    /** 金额下限（分，`processor.min_amount_cents`）。 */
+    val minAmountCents: Int = 1,
+    /** 云控来源名映射（`source_mapping`）；C04 决策 2 起经快照消费友好名。 */
+    val sourceMapping: Map<String, String> = emptyMap(),
     val precheck: PrecheckRules = PrecheckRules.EMPTY,
     val marketingSuffixCutoffs: List<String> = emptyList(),
     val marketingCommaKeywords: List<String> = emptyList(),

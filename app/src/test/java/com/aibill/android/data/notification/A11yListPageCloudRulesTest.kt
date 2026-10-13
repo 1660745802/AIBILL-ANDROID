@@ -7,8 +7,8 @@ import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
-import com.aibill.android.service.NotificationRules
-import com.aibill.android.service.NotificationRulesMapping
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.data.notification.rules.NotificationRulesMapping
 import com.aibill.android.service.PaymentAccessibilityRecognition
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest

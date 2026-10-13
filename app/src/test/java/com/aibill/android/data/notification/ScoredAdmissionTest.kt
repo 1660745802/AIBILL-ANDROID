@@ -5,18 +5,17 @@ import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.ParsedTransaction
 import com.aibill.android.domain.notification.SourceChannel
-import com.aibill.android.service.A11yRules
-import com.aibill.android.service.AlipayRules
-import com.aibill.android.service.NlsRules
-import com.aibill.android.service.NotificationRules
-import com.aibill.android.service.NotificationRulesManager
-import com.aibill.android.service.ProcessorRules
-import com.aibill.android.service.SmsRules
-import com.aibill.android.service.WechatRules
+import com.aibill.android.domain.notification.rules.A11yRules
+import com.aibill.android.domain.notification.rules.AlipayRules
+import com.aibill.android.domain.notification.rules.NlsRules
+import com.aibill.android.domain.notification.rules.NotificationRules
+import com.aibill.android.domain.notification.NotificationRuleSource
+import com.aibill.android.domain.notification.rules.ProcessorRules
+import com.aibill.android.domain.notification.rules.SmsRules
+import com.aibill.android.domain.notification.rules.WechatRules
 import com.aibill.android.util.AppLogger
 import io.mockk.coEvery
 import io.mockk.coVerify
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -44,7 +43,7 @@ class ScoredAdmissionTest {
 
     private val testDispatcher = StandardTestDispatcher()
     private val dao: NotificationRecordDao = mockk(relaxed = true)
-    private val rulesManager: NotificationRulesManager = mockk(relaxed = true)
+    private lateinit var ruleSource: NotificationRuleSource
     private lateinit var admission: ScoredAdmissionImpl
 
     /** 与生产同一个时间锚点的基准时刻；已认领记录以 receivedAt 为时间轴，测试用它对齐。 */
@@ -52,9 +51,9 @@ class ScoredAdmissionTest {
 
     @BeforeEach
     fun setUp() {
-        every { rulesManager.getRules() } returns rules(scoringSeconds = 10, dedupSeconds = 60)
+        ruleSource = InMemoryNotificationRuleSource(rules(scoringSeconds = 10, dedupSeconds = 60))
         coEvery { dao.findRecentConfirmedFromOtherChannel(any(), any(), any()) } returns null
-        admission = ScoredAdmissionImpl(dao, rulesManager, AppLogger(mockk(relaxed = true)))
+        admission = ScoredAdmissionImpl(dao, ruleSource, AppLogger(mockk(relaxed = true)))
         admission.testDispatcher = testDispatcher
     }
 
