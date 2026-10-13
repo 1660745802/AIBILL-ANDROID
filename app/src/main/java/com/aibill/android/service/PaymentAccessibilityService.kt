@@ -81,12 +81,6 @@ internal object PaymentAccessibilityRecognition {
         setOf("com.tencent.mm", "com.eg.android.AlipayGphone") +
             embeddedPackages.asSequence().map(String::trim).filter(String::isNotBlank).toSet()
 
-    /**
-     * 页面冷却 TTL。C01 起 gate 用固定 30s 客户端常量、不再读云控 cooldownMinutes；
-     * 本函数暂留（旧单测引用），实现层已不使用。
-     */
-    fun dedupTtl(cooldownMs: Long): Long = minOf(cooldownMs, 30_000L)
-
     fun containsExcludeKeyword(texts: List<String>, keywords: List<String>): Boolean =
         keywords.any { keyword -> keyword.isNotBlank() && texts.any { it.contains(keyword) } }
 
@@ -236,7 +230,9 @@ class PaymentAccessibilityService : AccessibilityService() {
             else -> return
         }
 
-        // ── 页面身份：STATE 由本事件决定；CONTENT 用已有当前页 ──
+        // root 校验放在平台翻译层。顺序对齐改前：CONTENT 是 root → activity → pageToken；
+        // STATE 先更新 token 再校验 root。
+        val root = rootInActiveWindow
         val activity: String
         val token: PageToken
         if (kind == PageEventKind.STATE) {
@@ -251,7 +247,9 @@ class PaymentAccessibilityService : AccessibilityService() {
             val tokenStr = PaymentAccessibilityRecognition.pageToken(packageName, activity, ev.windowId)
             currentPageToken[packageName] = tokenStr
             token = PageToken(tokenStr)
+            if (!checkRoot(root, packageName)) return
         } else {
+            if (!checkRoot(root, packageName)) return
             activity = currentActivity[packageName]
                 ?: ev.className?.toString()?.takeIf { isActivityClassName(it) }?.also {
                     currentActivity[packageName] = it
@@ -272,16 +270,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             token = PageToken(tokenStr)
         }
 
-        // ── root 校验（平台事实；在节流与遍历之前） ──
-        val root = rootInActiveWindow
-        if (root == null) {
-            captureFunnelStats.recordDropped(CaptureDrop.A11Y_NO_ROOT)
-            return
-        }
-        if (!PaymentAccessibilityRecognition.isRootForEvent(root.packageName?.toString(), packageName)) {
-            captureFunnelStats.recordDropped(CaptureDrop.A11Y_ROOT_MISMATCH)
-            return
-        }
+        val usableRoot = root ?: return
 
         // ── phase 1：节流（返回 Throttled 则不遍历树） ──
         val now = clock.now()
@@ -290,7 +279,20 @@ class PaymentAccessibilityService : AccessibilityService() {
             return
         }
 
-        processSnapshot(root, packageName, activity, token, now)
+        processSnapshot(usableRoot, packageName, activity, token, now)
+    }
+
+    /** root 校验：null → NO_ROOT，跨包 → ROOT_MISMATCH。返回 false = 已记档并应早退。 */
+    private fun checkRoot(root: AccessibilityNodeInfo?, packageName: String): Boolean {
+        if (root == null) {
+            captureFunnelStats.recordDropped(CaptureDrop.A11Y_NO_ROOT)
+            return false
+        }
+        if (!PaymentAccessibilityRecognition.isRootForEvent(root.packageName?.toString(), packageName)) {
+            captureFunnelStats.recordDropped(CaptureDrop.A11Y_ROOT_MISMATCH)
+            return false
+        }
+        return true
     }
 
     /** 判断类名是否是一个 Activity（而非 View/Dialog 等）。 */
@@ -386,17 +388,22 @@ class PaymentAccessibilityService : AccessibilityService() {
      */
     private fun scheduleRetry(packageName: String, plan: RetryPlan) {
         handler.postDelayed({
-            val retryRoot = rootInActiveWindow ?: return@postDelayed
-            if (!PaymentAccessibilityRecognition.isRootForEvent(retryRoot.packageName?.toString(), packageName)) {
-                return@postDelayed
+            val retryRoot = rootInActiveWindow
+            val usableRoot = retryRoot?.takeIf {
+                PaymentAccessibilityRecognition.isRootForEvent(it.packageName?.toString(), packageName)
             }
-            val currentTexts = mutableListOf<String>()
-            collectAllNodeTexts(retryRoot, currentTexts)
+            val currentTexts = if (usableRoot != null) {
+                mutableListOf<String>().also { collectAllNodeTexts(usableRoot, it) }
+            } else {
+                emptyList()
+            }
             val now = clock.now()
+            // 无论 root 是否可用都调 onRetryDue：让它清理挂起态（不可用时 anchor 必不匹配 → 放弃）。
             when (val outcome = gate.onRetryDue(plan.token, currentTexts, now)) {
                 is RetryOutcome.Reread -> {
+                    val root = usableRoot ?: return@postDelayed
                     val activity = currentActivity[packageName] ?: return@postDelayed
-                    processSnapshot(retryRoot, packageName, activity, outcome.token, now)
+                    processSnapshot(root, packageName, activity, outcome.token, now)
                 }
                 is RetryOutcome.Abandoned -> Unit
             }
@@ -431,6 +438,8 @@ class PaymentAccessibilityService : AccessibilityService() {
         super.onDestroy()
         appLogger.warn("A11Y", "无障碍服务销毁")
         handler.removeCallbacksAndMessages(null)
+        // gate 是进程级 @Singleton：显式清瞬时状态，等价于改前「Service 重建即归零」。
+        if (::gate.isInitialized) gate.reset()
     }
 
     /** 查找匹配的关键词（系统 findByText 是模糊匹配，需二次精确校验）。 */

@@ -60,7 +60,7 @@ class NotificationRulesManagerTest {
 
         val defaults = RulesDefaults(application, moshi)
         val store = RulesStore(application, moshi, defaults)
-        val fetcher = RulesFetcher(api, store, moshi)
+        val fetcher = RulesFetcher(api, store, defaults, moshi)
         manager = NotificationRulesManager(store, fetcher)
     }
 

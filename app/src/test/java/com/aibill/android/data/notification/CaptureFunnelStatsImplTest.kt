@@ -247,6 +247,19 @@ class CaptureFunnelStatsImplTest {
     }
 
     @Test
+    @DisplayName("落盘键逐字不变（跨版本持久化与跨端对账依赖字面量）")
+    fun storageKeysAreLiteralStable() {
+        assertEquals("dropped.a11y.no_root", CaptureFunnelStats.droppedStage(CaptureDrop.A11Y_NO_ROOT))
+        assertEquals("dropped.a11y.page_dedup", CaptureFunnelStats.droppedStage(CaptureDrop.A11Y_PAGE_DEDUP))
+        assertEquals("dropped.nls.no_package", CaptureFunnelStats.droppedStage(CaptureDrop.NLS_NO_PACKAGE))
+        assertEquals("dropped.sms.blank_text", CaptureFunnelStats.droppedStage(CaptureDrop.SMS_BLANK_TEXT))
+        assertEquals("received.nls", CaptureFunnelStats.receivedKey(SourceChannel.NLS))
+        assertEquals("ai.a11y.extra_items", CaptureFunnelStats.aiExtraItemsStage(SourceChannel.A11Y))
+        assertEquals("unparsed.sms.ai_failed", CaptureFunnelStats.unparsedFailedStage(SourceChannel.SMS))
+        assertEquals("unparsed.nls.input_invalid", CaptureFunnelStats.unparsedInputInvalidStage(SourceChannel.NLS))
+    }
+
+    @Test
     @DisplayName("空快照渲染：明确「暂无捕获记录」而不是空段")
     fun renderEmptySnapshot() {
         val text = CaptureFunnelStats.render(CaptureFunnelStatsImpl().snapshot())

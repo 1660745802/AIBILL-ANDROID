@@ -121,7 +121,8 @@ class A11yAdmissionGateImpl @Inject constructor() : A11yAdmissionGate {
         lastSummaryAt = t
 
         // G2：同页同内容 30s 内只放一次（页面重发抑制；不承担交易判重）。
-        val dedupKey = "${token.value}|$hash"
+        // key 用完整 summary 串（非 32 位 hash），避免不同交易哈希碰撞被误判为重发。
+        val dedupKey = "${token.value}|$summary"
         pageDedup30s.entries.removeIf { t - it.value >= PAGE_DEDUP_TTL_MS }
         val lastPay = pageDedup30s[dedupKey]
         if (lastPay != null && (t - lastPay) < PAGE_DEDUP_TTL_MS) {
@@ -152,11 +153,24 @@ class A11yAdmissionGateImpl @Inject constructor() : A11yAdmissionGate {
         }
         val anchor = pendingRetries[token] ?: return RetryOutcome.Abandoned(RetryAbandonReason.NOT_PENDING)
         if (!A11yRecognition.matchesRetryAnchor(anchor, currentPageTexts)) {
+            // 放弃也要清挂起态：否则该 token 在 admit 里永远算「已试过」，再也不挂重试。
+            pendingRetries.remove(token)
             return RetryOutcome.Abandoned(RetryAbandonReason.ANCHOR_MISSED)
         }
         pendingRetries.remove(token)
         retriedTokens.add(token)
         return RetryOutcome.Reread(token)
+    }
+
+    override fun reset() {
+        currentToken = null
+        content3s.clear()
+        scan15s.clear()
+        pageDedup30s.clear()
+        lastSummaryHash = 0
+        lastSummaryAt = 0L
+        pendingRetries.clear()
+        retriedTokens.clear()
     }
 
     private companion object {

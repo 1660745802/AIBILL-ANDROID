@@ -240,6 +240,22 @@ class A11yAdmissionGateTest {
     }
 
     @Test
+    fun `重试放弃后可再次挂起（放弃要清挂起态）`() {
+        val gate = newGate()
+        val t = pageToken()
+        gate.beforeScan(t, PageEventKind.STATE, at(0))
+        val texts = listOf("支付成功", "星巴克臻选店", "订单号 12345")
+        dropped(gate.admit(snapshot(t, amount = null, texts = texts), at(0)))
+        // anchor 不匹配 → 放弃（应清挂起态，否则该页终生不再重试）
+        assertTrue(
+            gate.onRetryDue(t, listOf("完全", "不同"), at(600)) is RetryOutcome.Abandoned,
+        )
+        // 再次无金额 → 应能重新挂起重试
+        val again = dropped(gate.admit(snapshot(t, amount = null, texts = texts), at(700)))
+        assertNotNull(again.retry)
+    }
+
+    @Test
     fun `重试：无挂起时作废（NOT_PENDING）`() {
         val gate = newGate()
         // 先让该 token 成为当前页（否则命中 TOKEN_STALE）

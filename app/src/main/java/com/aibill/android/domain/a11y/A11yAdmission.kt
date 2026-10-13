@@ -60,6 +60,13 @@ interface A11yAdmissionGate {
      * 但随后的 `admit` 仍走 G1（8s 防抖）。
      */
     fun onRetryDue(token: PageToken, currentPageTexts: List<String>, now: A11yMoment): RetryOutcome
+
+    /**
+     * 清空全部进程级状态（节流窗 / 防抖槽 / 页面重发 / 挂起重试）。
+     * 由 platform 在服务销毁时调用——gate 是 `@Singleton`（进程级），若不显式清理，
+     * 服务重建后旧状态仍生效（改前闸是 Service 实例字段，重建即归零）。
+     */
+    fun reset()
 }
 
 /** 页面身份：platform 组装（`pkg|windowId|activity`），gate 只当不透明键。 */

@@ -19,6 +19,7 @@ import javax.inject.Singleton
 class RulesFetcher @Inject constructor(
     private val api: NotificationRulesApi,
     private val store: RulesStore,
+    private val defaults: RulesDefaults,
     private val moshi: Moshi,
 ) {
     suspend fun fetch(): NotificationRulesManager.RulesFetchResult {
@@ -38,8 +39,8 @@ class RulesFetcher @Inject constructor(
                     if (body?.code == 0 && rulesDto != null) {
                         val json = moshi.adapter(NotificationRulesDto::class.java).toJson(rulesDto)
                         val newEtag = response.headers()["ETag"]
-                        // 缺字段时的兜底 = 当前已生效规则（比 assets 更贴近线上），再兜 defaults（由 store 负责）
-                        val rules = NotificationRulesMapping.fromDto(rulesDto) { store.snapshot().rules }
+                        // 缺字段时的兜底源 = assets 默认规则（与改前 `mapDtoToRules(dto) { defaultRules }` 一致）。
+                        val rules = NotificationRulesMapping.fromDto(rulesDto) { defaults.rules }
                         store.save(json, newEtag, rules)
                         Timber.d(
                             "NotificationRules: updated to version=${body.data.version} etag=${newEtag?.take(16)} " +
