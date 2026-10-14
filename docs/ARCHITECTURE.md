@@ -218,6 +218,14 @@ L4 路由 NotificationProcessor（协调者）
 语义与护栏见 `domain/notification/Precheck.kt` / `data/notification/PrecheckCompiler.kt`（`flags` 必须与
 `pattern` 成对、`expr` 只接受封闭小语法、`bare_amount` 长度按 UTF-16 计）。
 
+**归表 `prefilter_policy`（命中之后怎么处置，服务端可维护）**：每个拦截点用该点的 `rule_id`
+（与 ⑤ 上报键同源：`PrefilterStats.clientOnlyKey` / `CaptureFunnelStats.reportKey`）查云控 `prefilter_policy`：
+`block` → 丢；`forward` → **不拦、走完判据链后转发 `/api/ai/parse` 交服务端判**（原则：正则与 AI 冲突以 AI 为准）；
+`sample` → 丢 + 采样上报 `POST /api/ai/capture-report`（`content_hash` 去重、每 (包,规则)/用户每天上限；
+A11Y 只采命中片段、不采整页）。**缺省 = `block`**（旧快照零变化）；改归表 = 服务端改 `rules.json` →
+`content_hash` 变 → 自动重拉，**免发版**。契约见服务端 `docs/API.md` 附录 C §11；键口径由
+`PrefilterPolicyKeyAlignmentTest` 守（客户端 rule_id 闭集 ↔ 服务端归表键）。
+
 **规则真源已归属服务端**（跨端契约见服务端 `docs/API.md` 附录 C）：`server/config/rules.json` 是内容真源
 （进 git），服务端启动时校验 + 内容 hash 派生 ETag 后自动激活；DB 只是发布载体，admin UI 只做查看/
 激活历史/回滚。客户端**不再随规则演进发版**；回归护栏读 `notification-rules-payload.json`
