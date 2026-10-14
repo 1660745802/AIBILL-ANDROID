@@ -205,7 +205,7 @@ class NotificationPerPackageCriteriaTest {
     // 支付宝
     // ═══════════════════════════════════════════════════════════════
 
-    // 支付宝线上真实配置（与 scripts/rules.json nls.per_package 保持一致）。
+    // 支付宝线上真实配置（与服务端真源 nls.per_package 保持一致）。
     private val alipayRule = PerPackageRule(
         packageName = "com.eg.android.AlipayGphone",
         passTitleContains = listOf("交易提醒", "支付", "账单", "花呗", "余额", "到账", "收款", "退款"),

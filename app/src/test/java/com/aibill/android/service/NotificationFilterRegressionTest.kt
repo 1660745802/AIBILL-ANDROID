@@ -1,71 +1,68 @@
 package com.aibill.android.service
 
-import com.aibill.android.data.notification.rules.NotificationRulesMapping
+import com.aibill.android.data.notification.NotificationRulesRealPayload
 import com.aibill.android.domain.notification.rules.NotificationRules
 import com.aibill.android.data.notification.PrefilterTestHarness
-import com.aibill.android.data.remote.dto.response.NotificationRulesData
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.MarketingCriteria
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.NotificationTextClassifier
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
-import com.squareup.moshi.Moshi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
-import java.io.File
 
 /**
  * 放行链路的**回归护栏**（2026-10-05 建，2026-10-10 改为直接打生产判据）。
  *
  * 背景：`nls.default_rule.exclude_content_contains` 是纯黑名单，加词很容易，
  * 但加错的代价是**误杀真实交易**——用户丢账且毫无感知，比漏拦一条广告严重得多。
- * 本测试直接读 `scripts/rules.json`（单一数据源），用两轮真机日志里的真实
- * 交易文案 + 已知广告文案做**双向**断言，任何一侧回归都会红。
+ * 本测试用两轮真机日志里的真实交易文案 + 已知广告文案做**双向**断言，任何一侧回归都会红。
+ *
+ * ## 规则来自「真载荷」，不是手拷的 scripts/rules.json
+ *
+ * 规则读 [NotificationRulesRealPayload]（服务端发布载荷的真副本，由
+ * `server/scripts/export-client-fixture.ts` 从 `server/config/rules.json` 导出）。
+ * 旧实现直接读 `scripts/rules.json`，那份手工副本已与真源结构性漂移
+ * （缺 `per_package`/`default_rule`、词表不同），护栏护的是一条生产到不了的分支。
+ * 现在：真源改了 → `content_hash` 变 → 服务端夹具护栏变红 → 重导后才轮到本测试。
  *
  * ## 本文件同时吸收了促销句式的单元护栏
  *
  * 原 `NlsPromoPatternTest` 测的是同一条不变量的另一面：**促销句式拦截及其反向误杀防护**。
- * 收口后并入本文件——促销句式与真机文案回归共用同一份 `scripts/rules.json` 语境，
+ * 收口后并入本文件——促销句式与真机文案回归共用同一份**真载荷**语境，
  * 不再各自维护一份 fixture。
  *
  * ## 护栏护的是实现，不是拷贝
  *
  * 收口前这里的 `passes()` 是「复刻 `NotificationMonitorService.isLikelyFinancial` 的
  * default_rule 分支」写的一份实现。现在它做的是：
- * `scripts/rules.json` →（生产 DTO + **生产映射** [NotificationRulesMapping]）
+ * `notification-rules-payload.json` →（生产 DTO + **生产映射** [NotificationRulesMapping]）
  * → `InMemoryNotificationRuleSource` → **生产预筛链**。
  * 也就是说：改词表、改分支顺序、改判据语义，三处都会让这里变红。
+ *
+ * ## 归表（`prefilter_policy`）不在本护栏的口径里
+ *
+ * 真载荷带了服务端下发的归表（§11.2）：`MARKETING`/`NOT_FINANCIAL`/`LIST_PAGE` 等
+ * **F 类判据可以被配置成 `forward`**（客户端不再自己判死，交服务端预筛判）。
+ * 那是**策略**，不是判据；护栏要守的是「判据还在」，所以这里显式把归表剥掉再断言。
+ * 策略本身由 `PrefilterPolicyTest`（读表）与 `PrefilterPolicyGateTest`（查表后的行为）守住。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class NotificationFilterRegressionTest {
 
     /**
-     * 直接解析仓库里的 scripts/rules.json —— 单一数据源，改词表即改测试输入。
-     * 单元测试的工作目录是 app/，所以从它往上一级找仓库根。
+     * 规则来自服务端发布载荷的真副本（meta 与真源一致，见 [NotificationRulesRealPayload]）。
      *
-     * 解析用生产的 `NotificationRulesData` DTO，映射用生产的
-     * [NotificationRulesMapping]：测试侧不再持有任何「云控字段名 ↔ 判据字段名」的翻译。
+     * `.copy(prefilterPolicy = emptyMap())` = 把归表置空（全部 BLOCK），让下面的断言只覆盖
+     * **判据链**：词表/分支顺序/判据语义改了就红，而服务端把某条改成 `forward` 不会误报。
      */
-    private val rulesJson: String by lazy {
-        val repoRoot = generateSequence(File(".").absoluteFile) { it.parentFile }
-            .firstOrNull { File(it, "scripts/rules.json").exists() }
-            ?: error("找不到 scripts/rules.json（工作目录=${File(".").absolutePath}）")
-        File(repoRoot, "scripts/rules.json").readText()
-    }
-
-    /** 走生产映射得到的规则模型（in-memory 源喂的就是它）。 */
     private val productionRules: NotificationRules by lazy {
-        val data = Moshi.Builder().build()
-            .adapter(NotificationRulesData::class.java)
-            .fromJson(rulesJson)
-            ?: error("scripts/rules.json 解析失败")
-        val dto = data.rules ?: error("scripts/rules.json 缺 rules 段")
-        NotificationRulesMapping.fromDto(dto) { error("规则字段齐全，不应回退兜底") }
+        NotificationRulesRealPayload.rules().copy(prefilterPolicy = emptyMap())
     }
 
     private val prefilter: NotificationPrefilter by lazy {
@@ -92,6 +89,13 @@ class NotificationFilterRegressionTest {
     // ── 真实交易：必须放行（任何误杀都会让用户丢账）──
 
     @Test
+    @DisplayName("真载荷带 provenance（content_hash / corpus_hash 非空）")
+    fun `真载荷 provenance 完整`() {
+        assertTrue(NotificationRulesRealPayload.contentHash().isNotBlank(), "缺 content_hash")
+        assertTrue(NotificationRulesRealPayload.corpusHash().isNotBlank(), "缺 corpus_hash")
+    }
+
+    @Test
     @DisplayName("真实交易文案全部放行——回归护栏，改词表时必过")
     fun `真实交易不被误杀`() = runTest {
         val real = listOf(
@@ -102,11 +106,19 @@ class NotificationFilterRegressionTest {
             "话费账单提醒 尊敬的136****9969客户您好，您2026年09月话费账单已更新，本期消费总额82.00元。点击立即查看详情>>",
             "已记账 · com.greenpoint.android.mc10086.activity ¥82.00 · 9月话费账单",
             "交易提醒 你有一笔20.00元的支出，点击领取9个支付宝积分。",
-            "[QQ红包]太越林全员老公型: [红包]国庆快乐",
         )
         for (t in real) {
             assertTrue(passes(t), "真实交易被误杀：$t")
         }
+    }
+
+    @Test
+    @DisplayName("社交红包文案（金额来自群名）被服务端 social_redpacket 拦下——不是真实交易")
+    fun `社交红包不是真实交易`() = runTest {
+        // 旧的手写夹具（scripts/rules.json）没有 precheck 这一段，于是这条被当成「真交易必须放行」；
+        // 真载荷带上了服务端 STRONG_NOISE.social_redpacket（金额来自群名/昵称，真实事故 §5），
+        // 它本就该被拦——改读真载荷后这条断言才回到服务端的真实口径。
+        assertFalse(passes("[QQ红包]太越林全员老公型: [红包]国庆快乐"))
     }
 
     // ── 广告：必须拦截 ──
@@ -125,6 +137,33 @@ class NotificationFilterRegressionTest {
         )
         for (t in ads) {
             assertFalse(passes(t), "广告穿透：$t")
+        }
+    }
+
+    @Test
+    @DisplayName("真实归表下广告文案的去向：要么客户端拦下，要么转发给服务端预筛判（两条都不落账）")
+    fun `真实归表下广告不落账`() = runTest {
+        val shippedRules = NotificationRulesRealPayload.rules()
+        val shipped = PrefilterTestHarness.newPrefilter(shippedRules)
+        val ads = listOf(
+            "0.01元购的活动 一人仅限一单",
+            "支付宝卡包 爆红包等4张优惠券未使用，请关注券过期时间",
+            "淘宝有新版本啦～ 官方立减：爆款商品8.5折起，叠券更便宜",
+        )
+        for (t in ads) {
+            val verdict = shipped.evaluate(
+                Capture(
+                    channel = SourceChannel.NLS,
+                    packageName = "com.example.notifier",
+                    title = "",
+                    fullText = t,
+                    receivedAt = 1_000_000L,
+                )
+            )
+            // 归表把 F 类判据改成 forward 后，客户端可能**放行去调 AI**——这是契约允许的
+            // （原则：正则与 AI 冲突以 AI 为准），服务端预筛会落 ai_parse_filters 并回 not_a_bill。
+            // 两条路径都不会把广告写成交易；本断言钉的是「不会出现第三种状态」。
+            assertTrue(verdict is Verdict.Block || verdict is Verdict.Pass, "$t → $verdict")
         }
     }
 

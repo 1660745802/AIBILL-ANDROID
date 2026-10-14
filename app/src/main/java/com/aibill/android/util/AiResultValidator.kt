@@ -33,7 +33,7 @@ class AiResultValidator @Inject constructor(
          * 金额上限：**10 万元**（10,000,000 分）。
          *
          * 必须与云控规则 [com.aibill.android.data.notification.rules.NotificationRulesManager.ProcessorRules.maxAmountCents]
-         * 保持一致（scripts/rules.json 的 `processor.max_amount_cents`，当前同为 10000000），
+         * 保持一致（服务端真源 `processor.max_amount_cents`，当前同为 10000000），
          * 否则会出现「本地校验通过但云控认为超限」或反之的分裂行为。
          *
          * ⚠️ 改这个数值前先确认云控配置：历史上注释、报错文案与文档曾三处不一致

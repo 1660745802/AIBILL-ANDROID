@@ -209,7 +209,7 @@ L4 路由 NotificationProcessor（协调者）
 
 **判据数据源可替换**：生产 `CloudNotificationRuleSource`（云控 + ETag + 代际缓存）、
 单测 `InMemoryNotificationRuleSource`（固定规则，零 IO）。回归护栏复用生产映射与生产链，
-输入用 `scripts/rules.json`（它只是**测试语料**，不是运行时真源；见下段），不是复刻判据。
+输入用**真载荷夹具** `notification-rules-payload.json`（服务端发布载荷的真副本，由服务端 `scripts/export-client-fixture.ts` 导出，见下段），不是复刻判据。
 
 **云控 `precheck` 与客户端自有判据的关系**：两者是**两套分类学**（客户端：自身通知/系统摘要/
 日报/促销/营销/账务判据/状态闸；服务端：tier 档位链），契约明确**不做映射表**。因此客户端在
@@ -220,8 +220,9 @@ L4 路由 NotificationProcessor（协调者）
 
 **规则真源已归属服务端**（跨端契约见服务端 `docs/API.md` 附录 C）：`server/config/rules.json` 是内容真源
 （进 git），服务端启动时校验 + 内容 hash 派生 ETag 后自动激活；DB 只是发布载体，admin UI 只做查看/
-激活历史/回滚。客户端**不再随规则演进发版**；`scripts/rules.json` 降级为**测试语料/本地联调**
-（非运行时真源）。客户端内置的 `assets/default_rules.json` 是**手写的最小冻结兜底**，只负责
+激活历史/回滚。客户端**不再随规则演进发版**；回归护栏读 `notification-rules-payload.json`
+（服务端发布载荷的真副本，带 `content_hash`/`corpus_hash`；`server/scripts/export-client-fixture.ts` 导出，
+服务端 `tests/lib/notification-rules-fixture.test.ts` 守其不陈旧）。客户端内置的 `assets/default_rules.json` 是**手写的最小冻结兜底**，只负责
 「首启未拉到云控 / 服务端无激活规则」这个窗口，由 `NotificationRulesFallbackTest` 守其结构完整与可用性。
 只有**新增判据类型**（如 `precheck`）才需要客户端发版——靠 schema 版本做能力协商。
 
@@ -270,13 +271,12 @@ DELETE /api/transactions/:id/permanent   # 彻底删除
 POST /api/ai/parse               # { input } 必填；可选上下文 channel/source/title/body/received_at/hints
                                  # 响应 items 含 S3 机械抽取字段（merchant/card_tail/balance_*/time）
                                  # 与 needs_review（**服务端唯一待审阈值**）/confidence（仅展示）
-                                 # 成功形态带 parse_log_id；预筛挡下/超时等形态没有（无可反馈对象）
+                                 # 成功形态带 parse_log_id；预筛挡下/超时等形态没有
+                                 # （该字段客户端已不消费：parse-feedback 已下线，见 §6.1）
                                  # **items 恒 ≤ 1**（单笔契约不变量：挑笔标准在服务端 lib/main-item.ts，
                                  #   客户端只取 items[0] 不自挑）；多余条数见 data.extra_items_dropped
                                  #   通知链路：0 笔 = 手动兜底，1 笔 = 正常入账
                                  # （POST /transactions 的 items[] 批量保留：导入/离线补传依赖）
-POST /api/ai/parse-feedback      # { parse_log_id, final_items, modified, channel }
-                                 # 用户最终态；删除 = 空数组（AI 越用越准的闭环）
 POST /api/ai/filter-report       # { window_start, window_end, client_version, channel,
                                  #   counts:[{rule_id,count}], totals:{notifications,blocked} }
                                  # 预筛拦截计数**按窗口聚合**（每渠道一条）；`precheck.*` 与
@@ -344,8 +344,8 @@ GitHub 更新检查连接 15s / 读 30s。
 | 列 | 含义 |
 |---|---|
 | `client_id` | 幂等与撤销的唯一凭据 |
-| `server_transaction_id` | 服务端那一笔的 id；**撤销时删的就是它**；也是 AI 反馈反查锚点的键 |
-| `parse_log_id` | 该笔来自哪一次 AI 解析（服务端 `ai_parse_logs.id`），用户改动/删除时据此回传反馈；null = 非 AI 路径或服务端无可反馈对象（DB v10） |
+| `server_transaction_id` | 服务端那一笔的 id；**撤销时删的就是它** |
+| `parse_log_id` | 该笔来自哪一次 AI 解析（服务端 `ai_parse_logs.id`）。**已废弃**：仍随 AI 解析落库，但客户端不再读取（消费方 parse-feedback 已下线）；null = 非 AI 路径或服务端未返回。列保留、不写 migration |
 | `sync_status` / `retry_count` / `last_error` | **已废弃**：新写入恒为 `synced` / `0` / `null`，不再被读取。列保留、不写 migration |
 
 `sync_status` 的唯一残留用途是**区分历史遗留行**：只有 `synced` 才当缓存；老版本写下的

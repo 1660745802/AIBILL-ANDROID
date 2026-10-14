@@ -2,7 +2,8 @@
 # ===========================================
 # 通知记账规则云控 - 更新脚本
 # ===========================================
-# 用法: 修改 rules.json 后执行本脚本推送并激活
+# 用法: 指定一个**完整规则文件**（格式同服务端 `server/config/rules.json`）推送并激活
+#       ⚠️ 规则真源已在服务端：本脚本只做**本地联调**，试验规则会被服务端下次启动覆盖。
 #
 # 前置条件:
 #   1. 已部署后端 AIBILL（含 notification-rules 路由）
@@ -15,7 +16,13 @@ set -e
 SERVER_URL="${AIBILL_SERVER_URL:-http://localhost:3000}"
 ADMIN_USER="${AIBILL_ADMIN_USER:-admin}"
 ADMIN_PASS="${AIBILL_ADMIN_PASS:-}"
-RULES_FILE="${1:-rules.json}"
+RULES_FILE="${1:-}"
+
+if [ -z "$RULES_FILE" ]; then
+  echo "用法: AIBILL_ADMIN_PASS=xxx ./update_rules.sh <完整规则文件>"
+  echo "（格式同服务端 server/config/rules.json；本仓库不再保留手工副本）"
+  exit 1
+fi
 
 if [ -z "$ADMIN_PASS" ]; then
   echo "请设置环境变量 AIBILL_ADMIN_PASS 或通过参数传入"
