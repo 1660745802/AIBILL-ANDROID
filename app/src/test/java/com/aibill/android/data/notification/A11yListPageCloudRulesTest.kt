@@ -9,7 +9,7 @@ import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.Verdict
 import com.aibill.android.domain.notification.rules.NotificationRules
 import com.aibill.android.data.notification.rules.NotificationRulesMapping
-import com.aibill.android.service.PaymentAccessibilityRecognition
+import com.aibill.android.domain.a11y.A11yRecognition
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -78,8 +78,8 @@ class A11yListPageCloudRulesTest {
 
     /** 在出厂规则基础上覆写列表页参数（避免给通用脚手架再加参数）。 */
     private fun rulesWithListPage(
-        keywords: List<String> = PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS,
-        minAmounts: Int = PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS,
+        keywords: List<String> = A11yRecognition.DEFAULT_LIST_KEYWORDS,
+        minAmounts: Int = A11yRecognition.LIST_PAGE_MIN_AMOUNTS,
     ): NotificationRules {
         val base = PrefilterTestHarness.rules()
         return base.copy(
@@ -120,8 +120,8 @@ class A11yListPageCloudRulesTest {
         val rules = NotificationRulesMapping.fromDto(dto(a11yDto(keywords = null, minAmounts = null))) {
             PrefilterTestHarness.rules()
         }
-        assertEquals(PaymentAccessibilityRecognition.DEFAULT_LIST_KEYWORDS, rules.a11y.listPageKeywords)
-        assertEquals(PaymentAccessibilityRecognition.LIST_PAGE_MIN_AMOUNTS, rules.a11y.listPageMinAmounts)
+        assertEquals(A11yRecognition.DEFAULT_LIST_KEYWORDS, rules.a11y.listPageKeywords)
+        assertEquals(A11yRecognition.LIST_PAGE_MIN_AMOUNTS, rules.a11y.listPageMinAmounts)
 
         assertEquals(
             BlockReason.LIST_PAGE,

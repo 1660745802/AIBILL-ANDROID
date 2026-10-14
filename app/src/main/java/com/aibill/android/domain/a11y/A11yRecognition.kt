@@ -6,12 +6,11 @@ import java.math.RoundingMode
 /**
  * A11Y 准入状态机 [A11yAdmissionGate] 需要的**纯文本判据**：无状态、无 Android 依赖、可 JVM 单测。
  *
- * C01 收口：这些函数原先私有在 `service/PaymentAccessibilityService` 里。gate 在 domain 层，
- * 不能反向依赖 service，因此搬到这里。留在 platform 的是「树上的平台事实」——
- * `pageToken` / `isRootForEvent` / `findMatchedKeyword`（成功词精确匹配）/ 排除词包含 /
- * 列表页启发式（其调用方在下游预筛）。
- *
- * `service/PaymentAccessibilityRecognition` 保留原签名并**委托**到这里，避免两份实现。
+ * 原先这些函数散在 `service/PaymentAccessibilityService` 与其 facade
+ * `service/PaymentAccessibilityRecognition` 里：同一套判据有两个名字，且 facade 一半是
+ * 真实现、一半是委托。现在**全部纯字符串判据**（页面身份 / root 归属 / 成功词 / 排除词 /
+ * 金额 / 历史日期 / 重试锚点 / 列表页启发式）都归这里，facade 已删除；
+ * platform 层只剩「操作 `AccessibilityNodeInfo` 树」的部分（遍历 / 摘取 / 调度）。
  */
 internal object A11yRecognition {
 
@@ -122,6 +121,50 @@ internal object A11yRecognition {
         val pureSymbol = text.none { it.isLetterOrDigit() }
         return pureNumber || pureSymbol
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // 页面身份 / root 归属 / 成功词 / 排除词
+    //（原 `service/PaymentAccessibilityRecognition` 的真实现部分；纯字符串判据，无 Android 依赖）
+    // ─────────────────────────────────────────────────────────────
+
+    /** 页面身份 token：包名 + windowId + 类名（都规范化小写）。 */
+    fun pageToken(packageName: String, className: String, windowId: Int): String =
+        "${packageName.trim().lowercase()}|$windowId|${className.trim().lowercase()}"
+
+    /** `(activity 类名, pageToken)`，供 CONTENT 事件在没有 STATE 时回退。 */
+    fun pageState(packageName: String, className: String, windowId: Int): Pair<String, String> =
+        className to pageToken(packageName, className, windowId)
+
+    /** root 是否属于本次事件：**仅跳包才拒绝**，刻意不比较 windowId。 */
+    fun isRootForEvent(rootPackage: String?, eventPackage: String): Boolean =
+        rootPackage == eventPackage
+
+    /**
+     * 成功词**精确**匹配（系统 `findByText` 是模糊匹配，需二次校验）。
+     * 允许「了」「空白」「标点」这类无害后缀，拒绍「率」「查看…的订单」这类语义后缀。
+     */
+    fun isSuccessKeywordMatch(text: String, keyword: String): Boolean {
+        val value = text.trim()
+        if (value == keyword) return true
+        if (value.length > keyword.length * 3 || !value.contains(keyword)) return false
+        val suffix = value.substring(value.indexOf(keyword) + keyword.length)
+        if (suffix.isBlank()) return true
+        if (suffix == "了" || suffix.startsWith("了 ") || suffix.startsWith("了，") ||
+            suffix.startsWith("了。") || suffix.startsWith("了！")
+        ) {
+            return true
+        }
+        return suffix.first().isWhitespace() || suffix.first() in "!！。,.，:：¥￥(（[【"
+    }
+
+    /** 参与 A11Y 监听的支付类包：微信/支付宝 + 云控 `a11y.embedded_payment_apps`。 */
+    fun paymentPackages(embeddedPackages: List<String>): Set<String> =
+        setOf("com.tencent.mm", "com.eg.android.AlipayGphone") +
+            embeddedPackages.asSequence().map(String::trim).filter(String::isNotBlank).toSet()
+
+    /** 排除词命中：任一非空排除词是任一文本的子串。 */
+    fun containsExcludeKeyword(texts: List<String>, keywords: List<String>): Boolean =
+        keywords.any { keyword -> keyword.isNotBlank() && texts.any { it.contains(keyword) } }
 
     // ─────────────────────────────────────────────────────────────
     // 列表页启发式（页面级结构判据；调用方在下游预筛 NotificationPrefilterImpl）
