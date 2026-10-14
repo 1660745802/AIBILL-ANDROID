@@ -24,7 +24,7 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
         CategoryRuleEntity::class,
         AppLogEntity::class,
     ],
-    version = 10, // v9 → v10: pending_transactions 加 parse_log_id（AI 反馈闭环的本地锚点）
+    version = 10, // v9 → v10: pending_transactions 加 parse_log_id（列保留；其消费方 parse-feedback 已下线）
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {

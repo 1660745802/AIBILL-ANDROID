@@ -1,6 +1,7 @@
 package com.aibill.android.service
 
 import com.aibill.android.domain.notification.CaptureDrop
+import com.aibill.android.domain.notification.CaptureDropHandler
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -27,17 +28,27 @@ class SmsReceiverService : BroadcastReceiver() {
 
     @Inject lateinit var ingress: CaptureIngress
     @Inject lateinit var captureFunnelStats: CaptureFunnelStats
+    @Inject lateinit var captureDropHandler: CaptureDropHandler
     @Inject lateinit var appLogger: com.aibill.android.util.AppLogger
+
+    /**
+     * 归因包名（与审计记录同口径）：`sms:<发件号码>`。
+     *
+     * 拿不到号码的早退（非短信广播 / 空数组）用固定占位：服务端 `package` 必填，
+     * 而「哪个号码」在这两个分支里本就无从得知。
+     */
+    private fun smsPackageOf(sender: String?): String =
+        "sms:" + sender.orEmpty().ifBlank { UNKNOWN_SENDER }
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
-            captureFunnelStats.recordDropped(CaptureDrop.SMS_NOT_ACTION)
+            captureDropHandler.onDrop(CaptureDrop.SMS_NOT_ACTION, smsPackageOf(null))
             return
         }
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         if (messages.isNullOrEmpty()) {
-            captureFunnelStats.recordDropped(CaptureDrop.SMS_NO_MESSAGES)
+            captureDropHandler.onDrop(CaptureDrop.SMS_NO_MESSAGES, smsPackageOf(null))
             return
         }
 
@@ -47,7 +58,7 @@ class SmsReceiverService : BroadcastReceiver() {
         captureFunnelStats.recordReceived(SourceChannel.SMS)
         if (fullText.isBlank()) {
             // 预筛在空正文之前就会被 return 掉，所以这一层必须在捕获层计（跟 NLS 不同）
-            captureFunnelStats.recordDropped(CaptureDrop.SMS_BLANK_TEXT)
+            captureDropHandler.onDrop(CaptureDrop.SMS_BLANK_TEXT, smsPackageOf(sender), rawText = fullText)
             return
         }
 
@@ -65,5 +76,10 @@ class SmsReceiverService : BroadcastReceiver() {
                 receivedAt = System.currentTimeMillis(),
             )
         ).invokeOnCompletion { pendingResult.finish() }
+    }
+
+    private companion object {
+        /** 发件号码不可得时的占位（仅用于早退样本归因）。 */
+        const val UNKNOWN_SENDER = "unknown"
     }
 }

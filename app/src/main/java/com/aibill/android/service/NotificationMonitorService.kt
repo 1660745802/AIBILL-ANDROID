@@ -1,6 +1,7 @@
 package com.aibill.android.service
 
 import com.aibill.android.domain.notification.CaptureDrop
+import com.aibill.android.domain.notification.CaptureDropHandler
 import android.app.Notification
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -40,14 +41,19 @@ class NotificationMonitorService : NotificationListenerService() {
     interface NlsEntryPoint {
         fun captureIngress(): CaptureIngress
         fun captureFunnelStats(): CaptureFunnelStats
+        fun captureDropHandler(): CaptureDropHandler
         fun appLogger(): AppLogger
     }
 
     private lateinit var ingress: CaptureIngress
     private lateinit var captureFunnelStats: CaptureFunnelStats
+    private lateinit var captureDropHandler: CaptureDropHandler
     private lateinit var appLogger: AppLogger
 
     companion object {
+        /** 包名缺失时的占位（服务端 `package` 必填；这种早退本就没有归因信息）。 */
+        private const val UNKNOWN_PACKAGE = "unknown"
+
         /** 全局可读的 NLS 连接状态，供权限引导页检测"权限有但未连接" */
         @Volatile
         var isConnected: Boolean = false
@@ -61,6 +67,7 @@ class NotificationMonitorService : NotificationListenerService() {
         val entryPoint = EntryPointAccessors.fromApplication(applicationContext, NlsEntryPoint::class.java)
         ingress = entryPoint.captureIngress()
         captureFunnelStats = entryPoint.captureFunnelStats()
+        captureDropHandler = entryPoint.captureDropHandler()
         appLogger = entryPoint.appLogger()
     }
 
@@ -103,13 +110,13 @@ class NotificationMonitorService : NotificationListenerService() {
         val packageName = sbn.packageName
         if (packageName == null) {
             // 捕获层早退：包名为空的通知无法归因，预筛也看不到（不重复计）
-            captureFunnelStats.recordDropped(CaptureDrop.NLS_NO_PACKAGE)
+            captureDropHandler.onDrop(CaptureDrop.NLS_NO_PACKAGE, UNKNOWN_PACKAGE)
             return
         }
 
         val extras = sbn.notification?.extras
         if (extras == null) {
-            captureFunnelStats.recordDropped(CaptureDrop.NLS_NO_EXTRAS)
+            captureDropHandler.onDrop(CaptureDrop.NLS_NO_EXTRAS, packageName)
             return
         }
         val title = sanitizeNotificationText(

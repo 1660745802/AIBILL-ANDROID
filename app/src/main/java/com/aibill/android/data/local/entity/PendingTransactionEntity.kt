@@ -72,12 +72,14 @@ data class PendingTransactionEntity(
     val aiRawInput: String? = null,
 
     /**
-     * 这笔来自哪一次 AI 解析（服务端 `ai_parse_logs.id`），用户改动/删除时据此回传反馈。
+     * 这笔来自哪一次 AI 解析（服务端 `ai_parse_logs.id`）。
+     *
+     * **已废弃（parse-feedback 已下线，双端一致）**：值仍随 AI 解析落库，但客户端不再读取
+     * （历史用途是「从服务端事务 id 反查锚点 → 回传用户改动」，那条链路已删）。
+     * 列保留、不写 migration，同 [syncStatus]。
      *
      * null = 非 AI 解析路径（手工记账、外部静默入账）或服务端未返回日志 id
-     * （被服务端预筛挡下、上游超时等形态没有可反馈对象）。
-     * 这是「AI 越用越准」闭环的本地锚点：从服务端事务 id 反查它，才能告诉服务端
-     * 「你上次这么解析，用户在客户端改成了什么」。
+     * （被服务端预筛挡下、上游超时等形态）。
      */
     @ColumnInfo(name = "parse_log_id")
     val parseLogId: Long? = null,

@@ -46,6 +46,8 @@ interface NotificationRuleSource {
  * @param a11yGlobalProfile 全局 A11Y 摘取配置（amount_regex 已在建快照时编译并兜底）
  * @param a11yPackageProfiles 已逐键回退的 per-App 摘取策略（服务端 `docs/API.md` 附录 C §10；空 = 无 profile，
  *   行为与今天完全一致）。**只在 schema 认识时非空**，且只用于「选/取文本」。
+ * @param prefilterPolicy 云控归表（契约 §11.2）：拦截点查它决定 block/forward/sample；
+ *   空表 = 全部 BLOCK（旧载荷 / 旧快照，行为不变）。
  */
 data class NotificationRuleSnapshot(
     val generation: Int,
@@ -73,7 +75,22 @@ data class NotificationRuleSnapshot(
     val a11yListPageMinAmounts: Int = 0,
     val a11yGlobalProfile: A11yGlobalProfile = A11yGlobalProfile(),
     val a11yPackageProfiles: Map<String, A11yPackageProfile> = emptyMap(),
+    /**
+     * 云控归表（跨端契约 §11.2）：`rule_id → BlockAction`。
+     *
+     * **默认 [PrefilterPolicy.EMPTY] = 全部 BLOCK**；旧快照（引入本字段前落盘的）缺该键时
+     * 反序列化后也是空表 → 行为与今天逐字一致。
+     */
+    val prefilterPolicy: PrefilterPolicy = PrefilterPolicy.EMPTY,
 ) {
+
+    /**
+     * 某个拦截点的处置动作。**缺键 → [BlockAction.BLOCK]**（契约 §11.2 的缺省语义）。
+     *
+     * 调用方传的 `ruleId` 必须是上报用的那套键（`client_only.*` / `precheck.*`），
+     * 见 [PrefilterStats.clientOnlyKey] 与 [CaptureFunnelStats.reportKey]。
+     */
+    fun actionFor(ruleId: String): BlockAction = prefilterPolicy.actionFor(ruleId)
 
     /**
      * 是否为已知支付来源。**仅用于观测与熔断作用域，不参与放行/拦截判定**

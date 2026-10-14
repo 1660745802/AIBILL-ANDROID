@@ -6,7 +6,9 @@ import com.aibill.android.data.notification.CloudNotificationRuleSource
 import com.aibill.android.data.notification.DataStoreFunnelStatsStore
 import com.aibill.android.data.notification.FunnelStatsStore
 import com.aibill.android.data.notification.NotificationPrefilterImpl
+import com.aibill.android.domain.notification.CaptureDropHandler
 import com.aibill.android.domain.notification.CaptureFunnelStats
+import com.aibill.android.domain.notification.CaptureSampler
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.domain.notification.PrefilterReport
@@ -52,6 +54,28 @@ object NotificationPrefilterModule {
     @Provides
     @Singleton
     fun providePrefilterStats(impl: com.aibill.android.data.notification.PrefilterStatsImpl): PrefilterStats = impl
+
+    /**
+     * 被拦内容采集（契约附录 C §11.3）：归表给出 `sample` 的拦截点在这里入队。
+     *
+     * 内存队列 + 窗口内去重 + 每天限流；真正的发送由 [PrefilterReport] 在
+     * **同一个窗口**里完成（复用其原窗口重发语义）。
+     */
+    @Provides
+    @Singleton
+    fun provideCaptureSampler(
+        impl: com.aibill.android.data.notification.CaptureSamplerImpl,
+    ): CaptureSampler = impl
+
+    /**
+     * 捕获层早退的统一入口（契约 §11.2）：计数口径不变，额外查归表决定是否采样。
+     * adapter 只交平台事实（包名 / 原文 / 命中锚点），键与限流都在实现里。
+     */
+    @Provides
+    @Singleton
+    fun provideCaptureDropHandler(
+        impl: com.aibill.android.data.notification.CaptureDropHandlerImpl,
+    ): CaptureDropHandler = impl
 
     /**
      * 捕获层漏斗计数（PRODUCT §三「漏账率」缺的那块：adapter 早退的每一层）。

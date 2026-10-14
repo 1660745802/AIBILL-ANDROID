@@ -21,6 +21,15 @@ data class NotificationRules(
     val processor: ProcessorRules,
     /** 入站预筛判据（跨端契约 §3）。默认空 = 云控未下发/旧服务端，行为与今天一致。 */
     val precheck: PrecheckSpec = PrecheckSpec.EMPTY,
+    /**
+     * 云控归表 `prefilter_policy` 的**原始载荷**（`Record<rule_id, 'block'|'forward'|'sample'>`，
+     * 跨端契约 §11.2）。默认空 = 旧服务端/旧载荷，行为与今天一致（全部 BLOCK）。
+     *
+     * 这里保留**字符串**：合法性校验（未知值 / 非契约命名空间）与编译成
+     * [PrefilterPolicy] 都发生在快照派生（那里才有 logger 可 warn），
+     * 与 `precheck`（raw [PrecheckSpec] → 编译 `PrecheckRules`）同一套分工。
+     */
+    val prefilterPolicy: Map<String, String> = emptyMap(),
 )
 
 data class NlsRules(

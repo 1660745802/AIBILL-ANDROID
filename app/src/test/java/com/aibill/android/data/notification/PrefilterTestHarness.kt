@@ -3,6 +3,7 @@ package com.aibill.android.data.notification
 import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.domain.notification.AiCircuitBreaker
+import com.aibill.android.domain.notification.CaptureSampler
 import com.aibill.android.domain.notification.NotificationPrefilter
 import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.domain.notification.PrefilterStats
@@ -54,11 +55,15 @@ internal object PrefilterTestHarness {
         dao: NotificationRecordDao = emptyDao(),
         circuitBreaker: AiCircuitBreaker = mockk(relaxed = true),
         generation: Int = 0,
+        stats: PrefilterStats = PrefilterStatsImpl(),
+        sampler: CaptureSampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true))),
     ): NotificationPrefilter = newPrefilterWithSource(
         source = InMemoryNotificationRuleSource(rules, generation),
         ownPackage = ownPackage,
         dao = dao,
         circuitBreaker = circuitBreaker,
+        stats = stats,
+        sampler = sampler,
     )
 
     /** 直接注入任意规则源（用于「云控换代后判据立刻变」这类用例）。 */
@@ -68,6 +73,7 @@ internal object PrefilterTestHarness {
         dao: NotificationRecordDao = emptyDao(),
         circuitBreaker: AiCircuitBreaker = mockk(relaxed = true),
         stats: PrefilterStats = PrefilterStatsImpl(),
+        sampler: CaptureSampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true))),
     ): NotificationPrefilter {
         val context = mockk<Context>(relaxed = true)
         every { context.packageName } returns ownPackage
@@ -78,6 +84,7 @@ internal object PrefilterTestHarness {
             appLogger = AppLogger(mockk(relaxed = true)),
             circuitBreaker = circuitBreaker,
             stats = stats,
+            sampler = sampler,
         )
     }
 
@@ -142,6 +149,17 @@ internal object PrefilterTestHarness {
         processor = ProcessorRules(10, 60, marketingSuffixCutoffs, marketingCommaKeywords, 10_000_000, 1),
         precheck = precheck,
     )
+
+    /**
+     * 在一份判据夹具上叠一层归表（契约 §11.2）。
+     *
+     * 单独一个入口而不是往 [rules] 再加一个参数：[rules] 已经在 detekt 的参数阈值上，
+     * 而归表是**策略**不是**判据**——它叠在已有夹具之上，两者的职责也由此分开。
+     */
+    fun rulesWithPolicy(
+        policy: Map<String, String>,
+        base: NotificationRules = rules(),
+    ): NotificationRules = base.copy(prefilterPolicy = policy)
 
     /**
      * 一份接近服务端 `precheck` 载荷的 spec（形状/顺序按跨端契约 §3），供单测注入。

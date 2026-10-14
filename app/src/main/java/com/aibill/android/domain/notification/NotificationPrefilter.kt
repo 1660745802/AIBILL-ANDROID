@@ -88,8 +88,21 @@ sealed interface Verdict {
     /** 值得当账，交给下游 [com.aibill.android.service.NotificationProcessor.process]。 */
     data class Pass(val capture: Capture) : Verdict
 
-    /** 不值得当账。[reason] 供测试与日志定位，[detail] 是人读的现场信息。 */
-    data class Block(val reason: BlockReason, val detail: String) : Verdict
+    /**
+     * 不值得当账。[reason] 供测试与日志定位，[detail] 是人读的现场信息。
+     *
+     * @param blockedBy 触发拦截的规则 id（契约 §11 的 `rule_id`）：客户端自有判据是
+     *   `client_only.<BlockReason>`，云控 `precheck` 直接是它下发的 `precheck.<reason>`。
+     *   它就是查归表/上报计数用的同一个键（键口径同源，不另起名字）。
+     * @param action 本次拦截实际采取的策略：缺省 [BlockAction.BLOCK]；
+     *   [BlockAction.SAMPLE] 表示同时已采样上报。[BlockAction.FORWARD] **不会**产生 Block。
+     */
+    data class Block(
+        val reason: BlockReason,
+        val detail: String,
+        val blockedBy: String = PrefilterStats.clientOnlyKey(reason),
+        val action: BlockAction = BlockAction.BLOCK,
+    ) : Verdict
 }
 
 /**

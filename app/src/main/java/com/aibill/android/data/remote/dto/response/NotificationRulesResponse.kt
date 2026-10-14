@@ -25,6 +25,14 @@ data class NotificationRulesDto(
     @Json(name = "processor") val processor: ProcessorRulesDto?,
     /** 入站预筛判据（跨端契约 §3）。旧服务端没有此键 → null → 客户端行为与今天一致。 */
     @Json(name = "precheck") val precheck: PrecheckDto? = null,
+    /**
+     * 归表 `Record<rule_id, action>`（跨端契约 §11.2）。旧服务端没有此键 → null →
+     * 全部拦截点按缺省 `block`，行为与今天一致。
+     *
+     * 故意用 `Map<String, String>` 而不是枚举：非法值必须能**被看见并 warn**
+     * （校验在 `deriveSnapshot`），Moshi 直接映射枚举会在遇到未知值时抛异常 → 整份规则加载失败。
+     */
+    @Json(name = "prefilter_policy") val prefilterPolicy: Map<String, String>? = null,
 )
 
 /**

@@ -2,10 +2,13 @@ package com.aibill.android.data.notification
 
 import com.aibill.android.domain.notification.A11yGlobalProfile
 import com.aibill.android.domain.notification.A11yProfileResolver
+import com.aibill.android.domain.notification.BlockAction
 import com.aibill.android.domain.notification.LegacyCriteria
 import com.aibill.android.domain.notification.NotificationRuleSnapshot
 import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.domain.notification.PerPackageCriteria
+import com.aibill.android.domain.notification.PrefilterPolicy
+import com.aibill.android.domain.notification.PrefilterReport
 import com.aibill.android.domain.notification.rules.NotificationRules
 import com.aibill.android.domain.notification.rules.PerPackageRule
 import com.aibill.android.data.notification.rules.NotificationRulesManager
@@ -39,6 +42,7 @@ internal fun deriveSnapshot(rules: NotificationRules, generation: Int, logger: A
             "perPackage=${rules.nls.perPackage.size} " +
             "bankPatterns=${rules.nls.bankPackagePatterns.size} " +
             "spamKeywords=${rules.sms.spamKeywords.size} " +
+            "prefilterPolicy=${rules.prefilterPolicy.size} " +
             "knownPackages=$knownPackages.size"
     )
     // 全局 A11Y 摘取配置：amount_regex 在这里**只编译一次**（失败→内置兜底）；
@@ -97,7 +101,39 @@ internal fun deriveSnapshot(rules: NotificationRules, generation: Int, logger: A
         a11yListPageMinAmounts = rules.a11y.listPageMinAmounts,
         a11yGlobalProfile = a11yGlobalProfile,
         a11yPackageProfiles = a11yPackageProfiles,
+        // 契约 §11.2：归表在这一层校验并编译（非法值 → 不入表 = BLOCK，并 warn）。
+        prefilterPolicy = compilePrefilterPolicy(rules.prefilterPolicy, logger),
     )
+}
+
+/**
+ * `prefilter_policy` 原始载荷 → 领域表。
+ *
+ * 两条容错（都是「宁可维持今天的行为」而不是「宁可不拦」）：
+ * 1. 键不在契约命名空间（`precheck.*` / `client_only.*`）→ **忽略并 warn**：服务端
+ *    `validateRules` 已校验，但客户端不该信云控——拼错的键永远匹配不上拦截点，
+ *    静默留着只会让运维以为生效了；
+ * 2. 值不是 `block`/`forward`/`sample` → **不入表（= BLOCK）并 warn**：写错一个字母
+ *    的后果必须是「照旧拦」，绝不能让 `forward` 的拼写错误变成「静默放行一批」。
+ */
+private fun compilePrefilterPolicy(raw: Map<String, String>, logger: AppLogger?): PrefilterPolicy {
+    if (raw.isEmpty()) return PrefilterPolicy.EMPTY
+    val compiled = LinkedHashMap<String, BlockAction>(raw.size)
+    raw.forEach { (ruleId, actionText) ->
+        if (!PrefilterReport.isReportableRuleId(ruleId)) {
+            Timber.w("预筛: prefilter_policy 键不在契约命名空间，忽略: %s", ruleId)
+            logger?.warn("NLS", "prefilter_policy 键非法（非 precheck.*/client_only.*），已忽略: $ruleId")
+            return@forEach
+        }
+        val action = BlockAction.fromWire(actionText)
+        if (action == null) {
+            Timber.w("预筛: prefilter_policy 值非法，按 BLOCK 处理: %s=%s", ruleId, actionText)
+            logger?.warn("NLS", "prefilter_policy 值非法（非 block/forward/sample），按 BLOCK: $ruleId=$actionText")
+            return@forEach
+        }
+        compiled[ruleId] = action
+    }
+    return PrefilterPolicy(compiled)
 }
 
 /**

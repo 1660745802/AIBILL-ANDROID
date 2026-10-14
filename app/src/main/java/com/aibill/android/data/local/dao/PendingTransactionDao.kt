@@ -40,15 +40,4 @@ interface PendingTransactionDao {
 
     @Query("DELETE FROM pending_transactions WHERE client_id = :clientId")
     suspend fun deleteByClientId(clientId: String)
-
-    /**
-     * 按服务端事务 id 反查本地缓存行——AI 反馈闭环要用它从「用户改的那笔」
-     * 反查到 `parse_log_id`（用户看到的只有服务端事务 id）。
-     */
-    @Query("SELECT * FROM pending_transactions WHERE server_transaction_id = :serverTransactionId LIMIT 1")
-    suspend fun findByServerTransactionId(serverTransactionId: Int): PendingTransactionEntity?
-
-    /** 反馈发送成功后清掉锚点，避免同一笔被反复上报（幂等由客户端先手保障）。 */
-    @Query("UPDATE pending_transactions SET parse_log_id = NULL WHERE server_transaction_id = :serverTransactionId")
-    suspend fun clearParseLogId(serverTransactionId: Int)
 }

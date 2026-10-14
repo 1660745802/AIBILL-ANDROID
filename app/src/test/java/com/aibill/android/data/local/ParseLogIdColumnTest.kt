@@ -13,12 +13,12 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 
 /**
- * `parse_log_id` 列的存在性 + 导出 schema 的一致性（DB v9 → v10 迁移）。
+ * `parse_log_id` 列的**存在性** + 导出 schema 的一致性（DB v9 → v10）。
  *
- * 为什么单独守这一列：它是 AI 反馈闭环的本地锚点（跨端契约 §2），
- * 而「加了实体列但忘了写 Migration」只会在**老用户升级时**炸
- * （Room 迁移后校验 schema，AppDatabase 禁 destructive fallback）。
- * 这里用两条便宜的护栏把它钉死：
+ * 列本身已随 parse-feedback 下线而**失去消费方**，但列保留、不写 migration；
+ * 于是这里的护栏仍要钉住「实体声明的列与导出 schema 一致」——
+ * 漏写 Migration 只会在**老用户升级时**炸（Room 迁移后校验 schema，AppDatabase 禁 destructive fallback）。
+ * 两条便宜的护栏：
  *
  * 1. 真建库（v10）后 `PRAGMA table_info` 能查到该列 —— 验证实体声明；
  * 2. 导出的 `10.json` 里 `pending_transactions` 的 createSql 含该列 ——

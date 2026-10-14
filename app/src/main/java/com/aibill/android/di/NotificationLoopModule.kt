@@ -5,7 +5,6 @@ import com.aibill.android.data.notification.BalanceConsistencyImpl
 import com.aibill.android.data.notification.CaptureIngressImpl
 import com.aibill.android.data.notification.CaptureArchiveImpl
 import com.aibill.android.data.notification.NotificationInterpreterImpl
-import com.aibill.android.data.notification.ParseFeedbackImpl
 import com.aibill.android.data.notification.ScoredAdmissionImpl
 import com.aibill.android.domain.notification.AiCircuitBreaker
 import com.aibill.android.domain.notification.BalanceConsistency
@@ -13,7 +12,6 @@ import com.aibill.android.domain.notification.CaptureArchive
 import com.aibill.android.domain.notification.CaptureIngress
 import com.aibill.android.domain.notification.NotificationInterpreter
 import com.aibill.android.domain.notification.NotificationSink
-import com.aibill.android.domain.notification.ParseFeedback
 import com.aibill.android.domain.notification.ScoredAdmission
 import dagger.Module
 import dagger.Provides
@@ -72,12 +70,4 @@ object NotificationLoopModule {
     @Provides
     @Singleton
     fun provideBalanceConsistency(impl: BalanceConsistencyImpl): BalanceConsistency = impl
-
-    /**
-     * AI 反馈：把用户对解析结果的纠正回传服务端（跨端契约 §2）。
-     * best-effort —— 失败只记日志，不影响用户操作。
-     */
-    @Provides
-    @Singleton
-    fun provideParseFeedback(impl: ParseFeedbackImpl): ParseFeedback = impl
 }

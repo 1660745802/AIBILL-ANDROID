@@ -1,6 +1,7 @@
 package com.aibill.android.service
 
 import com.aibill.android.domain.notification.CaptureDrop
+import com.aibill.android.domain.notification.CaptureDropHandler
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.data.notification.rules.NotificationRulesManager
 import android.accessibilityservice.AccessibilityService
@@ -33,84 +34,6 @@ import dagger.hilt.components.SingletonComponent
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * A11Y 平台的**纯文本判据**（列表页启发式、页面身份、成功词精确匹配、排除词包含）。
- *
- * C01 收口：准入状态机已搬到 [A11yAdmissionGate]（domain）+ `data/a11y` 实现；
- * 需要纯判据的 `amountKey` / 历史日期 / 重试锚点等已搬到 `domain/a11y/A11yRecognition`，
- * 这里保留原签名并**委托**过去，避免两份实现（调用方与单测不必改）。
- *
- * 留下的都是「平台事实」：页面身份（pageToken）、root 是否同包、成功词精确匹配、
- * 排除词包含、列表页启发式（其调用方在下游预筛 `NotificationPrefilterImpl`）。
- */
-internal object PaymentAccessibilityRecognition {
-
-    fun pageToken(packageName: String, className: String, windowId: Int): String =
-        "${packageName.trim().lowercase()}|$windowId|${className.trim().lowercase()}"
-
-    fun pageState(packageName: String, className: String, windowId: Int): Pair<String, String> =
-        className to pageToken(packageName, className, windowId)
-
-    /** 见 `A11yRecognition` 对应 KDoc：仅跨包才拒绝，刻意不比较 windowId。 */
-    fun isRootForEvent(rootPackage: String?, eventPackage: String): Boolean =
-        rootPackage == eventPackage
-
-    /** 金额文本 → 整数分。委托 `domain/a11y/A11yRecognition`。 */
-    fun amountKey(amountText: String): String? = A11yRecognition.amountKey(amountText)
-
-    fun isSuccessKeywordMatch(text: String, keyword: String): Boolean {
-        val value = text.trim()
-        if (value == keyword) return true
-        if (value.length > keyword.length * 3 || !value.contains(keyword)) return false
-        val suffix = value.substring(value.indexOf(keyword) + keyword.length)
-        if (suffix.isBlank()) return true
-        if (suffix == "了" || suffix.startsWith("了 ") || suffix.startsWith("了，") ||
-            suffix.startsWith("了。") || suffix.startsWith("了！")
-        ) {
-            return true
-        }
-        return suffix.first().isWhitespace() || suffix.first() in "!！。,.，:：¥￥(（[【"
-    }
-
-    fun retryAnchor(texts: List<String>, successKeyword: String): Set<String> =
-        A11yRecognition.retryAnchor(texts, successKeyword)
-
-    fun matchesRetryAnchor(anchor: Set<String>, currentTexts: List<String>): Boolean =
-        A11yRecognition.matchesRetryAnchor(anchor, currentTexts)
-
-    fun paymentPackages(embeddedPackages: List<String>): Set<String> =
-        setOf("com.tencent.mm", "com.eg.android.AlipayGphone") +
-            embeddedPackages.asSequence().map(String::trim).filter(String::isNotBlank).toSet()
-
-    fun containsExcludeKeyword(texts: List<String>, keywords: List<String>): Boolean =
-        keywords.any { keyword -> keyword.isNotBlank() && texts.any { it.contains(keyword) } }
-
-    /** 历史日期判据。委托 `domain/a11y/A11yRecognition`。 */
-    fun isRecentTextRange(texts: List<String>, today: java.time.LocalDate): Boolean =
-        A11yRecognition.isRecentTextRange(texts, today)
-
-    // ── 列表页启发式：实现已搬到 domain/a11y/A11yRecognition，此处保留原签名供旧单测引用 ──
-
-    const val LIST_PAGE_MIN_AMOUNTS = A11yRecognition.LIST_PAGE_MIN_AMOUNTS
-
-    const val LIST_PAGE_KEYWORD_HEAD_CHARS = A11yRecognition.LIST_PAGE_KEYWORD_HEAD_CHARS
-
-    val DEFAULT_LIST_KEYWORDS = A11yRecognition.DEFAULT_LIST_KEYWORDS
-
-    val LIST_PAGE_AMOUNT_REGEX = A11yRecognition.LIST_PAGE_AMOUNT_REGEX
-
-    fun countAmountLikeTexts(texts: List<String>, amountRegex: Regex): Int =
-        A11yRecognition.countAmountLikeTexts(texts, amountRegex)
-
-    fun looksLikeListPage(
-        pageText: String,
-        amountRegex: Regex,
-        listKeywords: List<String>,
-        minAmounts: Int = LIST_PAGE_MIN_AMOUNTS,
-        headChars: Int = LIST_PAGE_KEYWORD_HEAD_CHARS,
-    ): Boolean = A11yRecognition.looksLikeListPage(pageText, amountRegex, listKeywords, minAmounts, headChars)
-}
-
-/**
  * 支付页面无障碍识别服务——**平台翻译 adapter**（C01 后）。
  *
  * 本类只剩平台事实：白名单、事件分类、Activity 跟踪、root 校验、树遍历 + profile 摘取、
@@ -136,6 +59,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         fun captureFunnelStats(): CaptureFunnelStats
         fun a11yAdmissionGate(): A11yAdmissionGate
         fun a11yClock(): A11yClock
+        fun captureDropHandler(): CaptureDropHandler
     }
 
     private lateinit var ingress: CaptureIngress
@@ -143,6 +67,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     private lateinit var rulesManager: NotificationRulesManager
     private lateinit var ruleSource: NotificationRuleSource
     private lateinit var captureFunnelStats: CaptureFunnelStats
+    private lateinit var captureDropHandler: CaptureDropHandler
     private lateinit var gate: A11yAdmissionGate
     private lateinit var clock: A11yClock
 
@@ -163,6 +88,9 @@ class PaymentAccessibilityService : AccessibilityService() {
     companion object {
         private const val PACKAGE_WECHAT = "com.tencent.mm"
         private const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
+
+        /** A11Y 节点文本拼成「整页」时的分隔符（与预筛列表页判据同一形状）。 */
+        private const val PAGE_TEXT_SEPARATOR = " "
 
         /** 无 profile 的包走全局默认：不触发回退告警。 */
         private val NO_PROFILE_WARN = A11yProfileResolver.Warn { _, _, _ -> }
@@ -204,7 +132,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         if (!force && snapshot.generation == lastRulesGeneration) return
         val rules = snapshot.rules
         embeddedPaymentApps = rules.a11y.embeddedPaymentApps.map(String::trim).filter(String::isNotBlank).toSet()
-        paymentApps = PaymentAccessibilityRecognition.paymentPackages(rules.a11y.embeddedPaymentApps)
+        paymentApps = A11yRecognition.paymentPackages(rules.a11y.embeddedPaymentApps)
         // A11Y 摘取策略：schema 守卫 + 逐键回退在快照层做完（与预筛共用）。
         val a11ySnapshot = ruleSource.snapshot()
         a11yGlobal = a11ySnapshot.a11yGlobalProfile
@@ -220,7 +148,8 @@ class PaymentAccessibilityService : AccessibilityService() {
 
         refreshRulesIfNeeded()
         if (packageName !in paymentApps) {
-            captureFunnelStats.recordDropped(CaptureDrop.A11Y_NOT_WHITELISTED)
+            // 白名单外不做树遍历（成本），因此没有内容可采：只归因（package + 规则）
+            captureDropHandler.onDrop(CaptureDrop.A11Y_NOT_WHITELISTED, packageName, receivedAt = clock.now().epochMillis)
             return
         }
 
@@ -244,7 +173,7 @@ class PaymentAccessibilityService : AccessibilityService() {
                 currentActivity[packageName] ?: className
             }
             currentWindowId[packageName] = ev.windowId
-            val tokenStr = PaymentAccessibilityRecognition.pageToken(packageName, activity, ev.windowId)
+            val tokenStr = A11yRecognition.pageToken(packageName, activity, ev.windowId)
             currentPageToken[packageName] = tokenStr
             token = PageToken(tokenStr)
             if (!checkRoot(root, packageName)) return
@@ -255,16 +184,16 @@ class PaymentAccessibilityService : AccessibilityService() {
                     currentActivity[packageName] = it
                 }
                 ?: run {
-                    captureFunnelStats.recordDropped(CaptureDrop.A11Y_NO_ACTIVITY)
+                    captureDropHandler.onDrop(CaptureDrop.A11Y_NO_ACTIVITY, packageName, receivedAt = clock.now().epochMillis)
                     return
                 }
             if (!isPotentialPaymentActivity(activity, packageName)) {
-                captureFunnelStats.recordDropped(CaptureDrop.A11Y_NOT_PAYMENT_ACTIVITY)
+                captureDropHandler.onDrop(CaptureDrop.A11Y_NOT_PAYMENT_ACTIVITY, packageName, receivedAt = clock.now().epochMillis)
                 return
             }
             val tokenStr = currentPageToken[packageName]
             if (tokenStr == null) {
-                captureFunnelStats.recordDropped(CaptureDrop.A11Y_NO_PAGE_TOKEN)
+                captureDropHandler.onDrop(CaptureDrop.A11Y_NO_PAGE_TOKEN, packageName, receivedAt = clock.now().epochMillis)
                 return
             }
             token = PageToken(tokenStr)
@@ -275,7 +204,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         // ── phase 1：节流（返回 Throttled 则不遍历树） ──
         val now = clock.now()
         if (gate.beforeScan(token, kind, now) == ScanDecision.Throttled) {
-            captureFunnelStats.recordDropped(CaptureDrop.A11Y_DEBOUNCE)
+            captureDropHandler.onDrop(CaptureDrop.A11Y_DEBOUNCE, packageName, receivedAt = now.epochMillis)
             return
         }
 
@@ -285,11 +214,11 @@ class PaymentAccessibilityService : AccessibilityService() {
     /** root 校验：null → NO_ROOT，跨包 → ROOT_MISMATCH。返回 false = 已记档并应早退。 */
     private fun checkRoot(root: AccessibilityNodeInfo?, packageName: String): Boolean {
         if (root == null) {
-            captureFunnelStats.recordDropped(CaptureDrop.A11Y_NO_ROOT)
+            captureDropHandler.onDrop(CaptureDrop.A11Y_NO_ROOT, packageName)
             return false
         }
-        if (!PaymentAccessibilityRecognition.isRootForEvent(root.packageName?.toString(), packageName)) {
-            captureFunnelStats.recordDropped(CaptureDrop.A11Y_ROOT_MISMATCH)
+        if (!A11yRecognition.isRootForEvent(root.packageName?.toString(), packageName)) {
+            captureDropHandler.onDrop(CaptureDrop.A11Y_ROOT_MISMATCH, packageName)
             return false
         }
         return true
@@ -369,7 +298,15 @@ class PaymentAccessibilityService : AccessibilityService() {
         when (val admission = gate.admit(snapshot, now)) {
             is Admission.Captured -> routeToPrefilter(admission, packageName)
             is Admission.Dropped -> {
-                captureFunnelStats.recordDropped(funnelStage(admission.reason))
+                // gate 丢的是**整页**（成功词/排除词/金额/历史日期已在树里摘过）：
+                // 把整页文本与命中锚点交给采样侧，由它只取命中片段（不采整页）。
+                captureDropHandler.onDrop(
+                    drop = funnelStage(admission.reason),
+                    packageName = packageName,
+                    rawText = allTexts.joinToString(PAGE_TEXT_SEPARATOR),
+                    anchors = listOfNotNull(successKeyword, excludeKeyword, amountText),
+                    receivedAt = now.epochMillis,
+                )
                 appLogger.debug("A11Y_SKIP", admission.detail)
                 admission.retry?.let { scheduleRetry(packageName, it) }
             }
@@ -390,7 +327,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         handler.postDelayed({
             val retryRoot = rootInActiveWindow
             val usableRoot = retryRoot?.takeIf {
-                PaymentAccessibilityRecognition.isRootForEvent(it.packageName?.toString(), packageName)
+                A11yRecognition.isRootForEvent(it.packageName?.toString(), packageName)
             }
             val currentTexts = if (usableRoot != null) {
                 mutableListOf<String>().also { collectAllNodeTexts(usableRoot, it) }
@@ -450,8 +387,8 @@ class PaymentAccessibilityService : AccessibilityService() {
             for (node in nodes) {
                 val text = node.text?.toString()?.trim() ?: ""
                 val desc = node.contentDescription?.toString()?.trim() ?: ""
-                if (PaymentAccessibilityRecognition.isSuccessKeywordMatch(text, kw) ||
-                    PaymentAccessibilityRecognition.isSuccessKeywordMatch(desc, kw)
+                if (A11yRecognition.isSuccessKeywordMatch(text, kw) ||
+                    A11yRecognition.isSuccessKeywordMatch(desc, kw)
                 ) {
                     return kw
                 }

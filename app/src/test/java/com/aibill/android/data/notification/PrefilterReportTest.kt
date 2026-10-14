@@ -5,6 +5,7 @@ import com.aibill.android.data.remote.dto.request.FilterReportRequest
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.data.remote.dto.response.FilterReportResponseDto
 import com.aibill.android.domain.notification.CaptureDrop
+import com.aibill.android.domain.notification.CaptureSampler
 import com.aibill.android.domain.notification.PrefilterReport
 import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.domain.notification.SourceChannel
@@ -39,6 +40,7 @@ class PrefilterReportTest {
     private fun reporter(
         stats: PrefilterStatsImpl,
         captureFunnelStats: CaptureFunnelStatsImpl = CaptureFunnelStatsImpl(),
+        sampler: CaptureSampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true))),
         failWhen: () -> Boolean = { false },
         unknownIds: List<String>? = null,
     ): Pair<PrefilterReportImpl, MutableList<FilterReportRequest>> {
@@ -52,6 +54,7 @@ class PrefilterReportTest {
         return PrefilterReportImpl(
             stats = stats,
             captureFunnelStats = captureFunnelStats,
+            sampler = sampler,
             aiApi = aiApi,
             appLogger = logger,
         ) to requests

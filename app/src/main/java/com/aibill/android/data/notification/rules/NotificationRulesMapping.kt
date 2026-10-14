@@ -24,7 +24,7 @@ import com.aibill.android.domain.notification.rules.WechatRules
  *
  * ## 为什么抽出来
  *
- * 回归护栏必须能**把仓库里的 `scripts/rules.json` 喂进生产判据**（而不是在测试里复刻一份映射），
+ * 回归护栏必须能**把服务端发布载荷的真副本喂进生产判据**（而不是在测试里复刻一份映射），
  * 而生产判据要求一个 [NotificationRules]——所以映射必须是可复用的顶层实现。
  *
  * `fallback` 是**惰性**的：云控缺字段时才读 assets/硬编码兜底。
@@ -88,6 +88,12 @@ internal object NotificationRulesMapping {
             ),
             // 契约 §3：precheck 不写在 rules.json 里手抄，也不进 assets 兜底。
             precheck = dto.precheck?.toSpec() ?: PrecheckSpec.EMPTY,
+            // 契约 §11.2：归表原样带过来（只做去空白），校验/编译在快照派生。
+            // 同样不进 assets 兜底：缺键 = 全 BLOCK，本就不需要兜底值。
+            prefilterPolicy = dto.prefilterPolicy.orEmpty().mapNotNull { (key, value) ->
+                val trimmed = key.trim()
+                if (trimmed.isEmpty()) null else trimmed to value.trim()
+            }.toMap(),
         )
     }
 

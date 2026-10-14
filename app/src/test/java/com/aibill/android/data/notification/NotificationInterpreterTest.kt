@@ -408,31 +408,6 @@ class NotificationInterpreterTest {
         }
     }
 
-    @Test
-    @DisplayName("解析结果带上服务端日志 id（反馈闭环的钥匙）")
-    fun `解析结果带 parseLogId`() = runTest {
-        // data 层（快捷解析 / 模型成功）
-        coEvery { aiApi.parse(any()) } returns ApiResponse(
-            code = 0, data = AiParseResponseDto(items = listOf(aiItem()), rawInput = "x", parseLogId = 777L), message = "",
-        )
-        assertEquals(777L, parsed(interpreter.read(captureOf())).parseLogId)
-    }
-
-    @Test
-    @DisplayName("顶层 parse_log_id 形态（模型空结果）也不丢 id；缺失时为 null")
-    fun `顶层 parseLogId 与缺失形态`() = runTest {
-        coEvery { aiApi.parse(any()) } returns ApiResponse(
-            code = 0, data = AiParseResponseDto(items = listOf(aiItem()), rawInput = "x"), message = "", parseLogId = 888L,
-        )
-        assertEquals(888L, parsed(interpreter.read(captureOf())).parseLogId)
-
-        // 服务端预筛挡下的形态：没有任何日志 id → 必须是 null（不得凭空构造）
-        coEvery { aiApi.parse(any()) } returns ApiResponse(
-            code = 0, data = AiParseResponseDto(items = listOf(aiItem()), rawInput = "x"), message = "",
-        )
-        assertEquals(null, parsed(interpreter.read(captureOf())).parseLogId)
-    }
-
     // ══════════════════════════════════════════════════════════
     // S3：服务端 needs_review 是唯一阈值（客户端不再自设第二套）
     // ══════════════════════════════════════════════════════════

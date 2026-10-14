@@ -3,8 +3,13 @@ package com.aibill.android.data.notification
 import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.domain.notification.AiCircuitBreaker
+import com.aibill.android.domain.notification.BlockAction
 import com.aibill.android.domain.notification.BlockReason
 import com.aibill.android.domain.notification.Capture
+import com.aibill.android.domain.notification.CaptureKind
+import com.aibill.android.domain.notification.CaptureSampleInput
+import com.aibill.android.domain.notification.CaptureSampler
+import com.aibill.android.domain.notification.CaptureStage
 import com.aibill.android.domain.notification.MarketingCriteria
 import com.aibill.android.domain.notification.MarketingSuffixCleaner
 import com.aibill.android.domain.notification.NotificationRuleSnapshot
@@ -43,6 +48,20 @@ import javax.inject.Singleton
  * → 11 云控 precheck（tier 0/4 拦、1-3 放行；不可用/未知 schema 降级放行）
  * ```
  *
+ * ## 归表（契约附录 C §11.2）：判定链不变，**处置**可变
+ *
+ * 每个拦截点在返回前查一次 `prefilter_policy`（键 = 上报键，[PrefilterStats.clientOnlyKey]
+ * 或云控自己的 `precheck.<reason>`）：
+ *
+ * - `block`（缺省）→ 与今天逐字一致；
+ * - `forward` → **不拦，继续走完后续判据链**（不是提前放行：后面的判据仍可能拦它）；
+ *   整条链都没拦 → 交给下游 `interpreter.read` → `POST /api/ai/parse`，由服务端预筛判并落
+ *   `ai_parse_filters`（含原文）。原则：**正则与 AI 冲突以 AI 为准**；
+ * - `sample` → 照旧拦 + 采一条样本（§11.3）。
+ *
+ * 代价是 `forward` 的条目会**计入 passed**（它们确实去调 AI 了），拦截率随之下降——
+ * 这是对的，归表改的是「谁判」，不是「谁拦」。
+ *
  * - **1 必须排在所有早退分支之前**：系统「正在运行」分组摘要会以完全相同的文本
  *   post 数十次（实测单秒 10 条），原先排在分支之后对它们完全失效；
  * - **4/5 必须早于 6**：日报含「支出」会触发营销词表的强交易特征豁免，靠词表拦不住
@@ -77,6 +96,7 @@ class NotificationPrefilterImpl @Inject constructor(
     private val appLogger: AppLogger,
     private val circuitBreaker: AiCircuitBreaker,
     private val stats: PrefilterStats,
+    private val sampler: CaptureSampler,
 ) : NotificationPrefilter {
 
     private val ownPackageName: String = context.packageName
@@ -114,36 +134,8 @@ class NotificationPrefilterImpl @Inject constructor(
         val rules = ruleSource.snapshot()
 
         // ── 0（A11Y 专属，最先）：页面级结构判据——账单/明细列表页。
-        // 理由：这是「整页形状」而非「这句话像不像账」，不依赖词表演进顺序，越早拦越省
-        // （后续判据还要跑正则/查库）。列表页每行常带「交易成功」+ 各自金额，本地
-        // deduKey=金额|商户|pageToken 因每行金额不同而逐行放行 → 整页滚动会逐行送 AI。
-        // 仅在 A11Y 且 adapter 填了 pageText 时生效；pageText 为 null 时既有链逐字不变。
-        val pageText = capture.pageText
-        if (capture.channel == SourceChannel.A11Y && pageText != null) {
-            // 云控优先、内置兜底：空词表 / 非正阈值一律回退内置默认
-            //（服务端会校验类型，但客户端不该信：阈值 0 = 拦一切）。
-            val listKeywords = rules.a11yListPageKeywords
-                .map(String::trim)
-                .filter(String::isNotBlank)
-                .ifEmpty { A11yRecognition.DEFAULT_LIST_KEYWORDS }
-            val minAmounts = rules.a11yListPageMinAmounts
-                .takeIf { it > 0 }
-                ?: A11yRecognition.LIST_PAGE_MIN_AMOUNTS
-            // 标题区窗口：per-App profile 可覆盖（缺省 = 内置 24）；profile 只改长度，不参与「是不是账」。
-            val headChars = rules.a11yPackageProfiles[packageName]?.listPageHeadChars
-                ?: A11yRecognition.LIST_PAGE_KEYWORD_HEAD_CHARS
-            if (
-                A11yRecognition.looksLikeListPage(
-                    pageText,
-                    A11yRecognition.LIST_PAGE_AMOUNT_REGEX,
-                    listKeywords,
-                    minAmounts,
-                    headChars,
-                )
-            ) {
-                return block(capture, BlockReason.LIST_PAGE, "账单/明细页，跳过: pkg=$packageName")
-            }
-        }
+        // 见 listPageVerdict 的 KDoc。
+        listPageVerdict(capture, rules)?.let { return it }
 
         // 0. 自身通知必须丢弃（2026-10-01 日志回归）。
         // 本 App 自己会发两类通知：自动入库的「已记账 · …」和待审的
@@ -153,7 +145,8 @@ class NotificationPrefilterImpl @Inject constructor(
         // 手动记账 / 小组件 / 外部 Intent 走 AutoRecordActionReceiver 直写 DB，
         // 不经过本链路，所以这里丢弃自身通知零副作用。
         if (packageName == ownPackageName) {
-            return block(capture, BlockReason.SELF_NOTIFICATION, "自身通知，跳过: pkg=$packageName")
+            block(capture, BlockReason.SELF_NOTIFICATION, "自身通知，跳过: pkg=$packageName", rules = rules)
+                ?.let { return it }
         }
 
         // 1. 内存级去重（用内容 hash，防系统重复触发 + 协程竞态）。仅 NLS。
@@ -165,12 +158,13 @@ class NotificationPrefilterImpl @Inject constructor(
                 // **计数不采样**（计数是判据调参的唯一依据）。
                 val shouldLog = now - (lastDedupLoggedAt[packageName] ?: 0L) > DEDUP_LOG_SAMPLE_MS
                 if (shouldLog) lastDedupLoggedAt[packageName] = now
-                return block(
+                block(
                     capture,
                     BlockReason.DUPLICATE_CONTENT,
                     "内存去重(${CONTENT_DEDUP_WINDOW_MS}ms): pkg=$packageName",
                     log = shouldLog,
-                )
+                    rules = rules,
+                )?.let { return it }
             }
             // 每次清理过期 key（>10s），防泄漏
             recentContentKeys.entries.removeIf { now - it.value > 10_000L }
@@ -178,57 +172,63 @@ class NotificationPrefilterImpl @Inject constructor(
 
         // 2. 空文本
         if (fullText.isBlank()) {
-            return block(capture, BlockReason.BLANK_TEXT, "空文本: pkg=$packageName")
+            block(capture, BlockReason.BLANK_TEXT, "空文本: pkg=$packageName", rules = rules)
+                ?.let { return it }
         }
 
         // 3. 排除系统运行通知和通知分组摘要（无意义）。
         // 注：分组摘要在 MIUI 上表现为 title 就是「"短信"正在运行」的
         // 独立通知（text 为空），不是靠类名匹配，所以只判正文。
         if (fullText.contains(SYSTEM_GROUP_MARKER)) {
-            return block(
+            block(
                 capture,
                 BlockReason.SYSTEM_GROUP_SUMMARY,
                 "系统/分组摘要: pkg=$packageName title=${capture.title}",
-            )
+                rules = rules,
+            )?.let { return it }
         }
 
         // 4. 排除「记账日报」等统计汇总通知：金额是区间总计而非单笔交易。
         // 必须早于营销词表判断——日报含「支出」会触发强交易特征豁免，靠词表拦不住。
         if (NotificationTextClassifier.isSummaryNotification(fullText)) {
-            return block(
+            block(
                 capture,
                 BlockReason.SUMMARY_REPORT,
                 "汇总/日报通知（非单笔交易）: pkg=$packageName text=${fullText.take(50)}",
-            )
+                rules = rules,
+            )?.let { return it }
         }
 
         // 5. 排除「促销句式」推送：花3得29 / 0元兑 / 加赠99积分 这类结构，
         // 看着有数字有「元」但不是真实付款（会从促销句式里幻觉出金额）。
         // 必须排在调 AI 之前——排后面就只是把噪音从待审池挪到记账失败。
         if (NotificationTextClassifier.isPromoNotification(fullText)) {
-            return block(
+            block(
                 capture,
                 BlockReason.PROMO_SENTENCE,
                 "促销推送拦截: pkg=$packageName text=${fullText.take(50)}",
-            )
+                rules = rules,
+            )?.let { return it }
         }
 
         // 6. 排除营销/广告/优惠券推送（含金额关键词但不是真实账务）——所有渠道生效
         if (rules.isMarketing(fullText)) {
-            return block(
+            block(
                 capture,
                 BlockReason.MARKETING,
                 "营销推送拦截: pkg=$packageName text=${fullText.take(50)}",
-            )
+                rules = rules,
+            )?.let { return it }
         }
 
         // 7. 账务判据：per_package → default_rule → 旧硬编码兜底
         if (!isLikelyFinancial(rules, packageName, capture.title, fullText)) {
-            return block(
+            block(
                 capture,
                 BlockReason.NOT_FINANCIAL,
                 "排除(非账务): pkg=$packageName title=${capture.title.take(30)} text=${fullText.take(50)}",
-            )
+                rules = rules,
+            )?.let { return it }
         }
 
         // v6 default_rule 的设计承诺："新增 App 默认自动生效，无需配置"。
@@ -251,25 +251,28 @@ class NotificationPrefilterImpl @Inject constructor(
             aiCalledContentKeys.entries.removeIf { now - it.value > AI_CONTENT_MEMORY_MS }
             val lastAiCall = aiCalledContentKeys[contentKey]
             if (lastAiCall != null && (now - lastAiCall) < AI_CONTENT_MEMORY_MS) {
-                return block(
+                block(
                     capture,
                     BlockReason.AI_MEMORY,
                     "长窗内容记忆(${AI_CONTENT_MEMORY_MS / 60_000}min)，跳过重复调AI: pkg=$packageName",
-                )
+                    rules = rules,
+                )?.let { return it }
             }
 
             // 9. 单包 AI 熔断：非支付类包名连续 AI 失败 N 次后静音一段时间。
             //    只对「不在白名单」的包生效，银行/微信/支付宝永不被熔断，
             //    避免真交易因网络抖动被误杀。作用域见类 KDoc。
             if (!knownSource && circuitBreaker.isMuted(packageName, now)) {
-                return block(capture, BlockReason.AI_MUTED, "AI 熔断中（该包连续失败），跳过: pkg=$packageName")
+                block(capture, BlockReason.AI_MUTED, "AI 熔断中（该包连续失败），跳过: pkg=$packageName", rules = rules)
+                    ?.let { return it }
             }
             aiCalledContentKeys[contentKey] = now
 
             // 10. DB 1s 内容去重（防同一条通知被系统多次分发）
             val duplicate = notificationRecordDao.findDuplicate(packageName, fullText, now - DB_DEDUP_WINDOW_MS)
             if (duplicate != null) {
-                return block(capture, BlockReason.DB_DUPLICATE, "DB去重(1s): pkg=$packageName")
+                block(capture, BlockReason.DB_DUPLICATE, "DB去重(1s): pkg=$packageName", rules = rules)
+                    ?.let { return it }
             }
         }
 
@@ -283,7 +286,8 @@ class NotificationPrefilterImpl @Inject constructor(
             suffixCutoffs = rules.marketingSuffixCutoffs,
             commaKeywords = rules.marketingCommaKeywords,
         )
-        return when (val verdict = PrecheckJudge.evaluate(precheckInput, rules.precheck)) {
+        // 归表允许 `forward`：命中也不拦，继续（到这里已经没有后续判据 → 放行走 AI）。
+        val blocked = when (val verdict = PrecheckJudge.evaluate(precheckInput, rules.precheck)) {
             is PrecheckVerdict.Blocked -> block(
                 capture,
                 BlockReason.PRECHECK,
@@ -291,12 +295,57 @@ class NotificationPrefilterImpl @Inject constructor(
                     "pkg=$packageName text=${fullText.take(50)}",
                 // 键就是服务端 rule_id（`precheck.<reason>`），⑤ 对账无需映射表
                 statsKey = verdict.ruleId,
+                tier = verdict.tier,
+                rules = rules,
             )
             // Pass 与 NotAvailable 都放行：判据不可用（无云控 / schema 不认识）时**降级放行**
             // —— 宁可多发一次请求，不可静默丢账。
-            PrecheckVerdict.Pass, PrecheckVerdict.NotAvailable ->
-                Verdict.Pass(capture).also { stats.recordPassed(capture.channel) }
+            PrecheckVerdict.Pass, PrecheckVerdict.NotAvailable -> null
         }
+        return blocked ?: Verdict.Pass(capture).also { stats.recordPassed(capture.channel) }
+    }
+
+    /**
+     * 判据 0（A11Y 专属，链首）：页面级结构判据——账单/明细列表页。
+     *
+     * 这是「整页形状」而非「这句话像不像账」，不依赖词表演进顺序，越早拦越省
+     * （后续判据还要跑正则/查库）。列表页每行常带「交易成功」+ 各自金额，本地
+     * deduKey=金额|商户|pageToken 因每行金额不同而逐行放行 → 整页滚动会逐行送 AI。
+     * 仅在 A11Y 且 adapter 填了 pageText 时生效；pageText 为 null 时既有链逐字不变。
+     *
+     * 返回 null = 非列表页（或归表要求 forward）；[Verdict.Block] = 被拦。
+     * 抽出来纯粹为了让 [evaluate] 的圈复杂度留在阈值内，不改变任何行为。
+     */
+    private fun listPageVerdict(capture: Capture, rules: NotificationRuleSnapshot): Verdict.Block? {
+        val pageText = capture.pageText ?: return null
+        if (capture.channel != SourceChannel.A11Y) return null
+        val packageName = capture.packageName
+        // 云控优先、内置兜底：空词表 / 非正阈值一律回退内置默认
+        //（服务端会校验类型，但客户端不该信：阈值 0 = 拦一切）。
+        val listKeywords = rules.a11yListPageKeywords
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .ifEmpty { A11yRecognition.DEFAULT_LIST_KEYWORDS }
+        val minAmounts = rules.a11yListPageMinAmounts
+            .takeIf { it > 0 }
+            ?: A11yRecognition.LIST_PAGE_MIN_AMOUNTS
+        // 标题区窗口：per-App profile 可覆盖（缺省 = 内置 24）；profile 只改长度，不参与「是不是账」。
+        val headChars = rules.a11yPackageProfiles[packageName]?.listPageHeadChars
+            ?: A11yRecognition.LIST_PAGE_KEYWORD_HEAD_CHARS
+        val looksLikeListPage = A11yRecognition.looksLikeListPage(
+            pageText,
+            A11yRecognition.LIST_PAGE_AMOUNT_REGEX,
+            listKeywords,
+            minAmounts,
+            headChars,
+        )
+        if (!looksLikeListPage) return null
+        return block(
+            capture,
+            BlockReason.LIST_PAGE,
+            "账单/明细页，跳过: pkg=$packageName",
+            rules = rules,
+        )
     }
 
     /**
@@ -398,9 +447,14 @@ class NotificationPrefilterImpl @Inject constructor(
     }
 
     /**
-     * 拦截统一从这里走：计数与日志都只在这里做一次，避免三个 adapter 各写一份口径。
+     * 拦截统一从这里走：**查归表** + 计数 + 日志都只在这里做一次，避免每处拦截各写一份口径。
+     *
+     * 返回 `null` = 归表要求 `forward`：**不拦**，调用方必须继续走后续判据链
+     * （而不是提前放行——后面还可能有 `block` 的判据）。
      *
      * @param log 是否写日志（去重等高频路径采样写，避免冲掉账务结果行）；**计数不受它影响**。
+     * @param statsKey 上报键（缺省 = `client_only.<reason>`；云控 precheck 传它下发的 `rule_id`）
+     * @param tier 云控 precheck 的档位（采样样本可选字段）
      */
     private fun block(
         capture: Capture,
@@ -408,10 +462,52 @@ class NotificationPrefilterImpl @Inject constructor(
         message: String,
         log: Boolean = true,
         statsKey: String = PrefilterStats.clientOnlyKey(reason),
+        tier: Int? = null,
+        rules: NotificationRuleSnapshot,
+    ): Verdict.Block? = when (rules.actionFor(statsKey)) {
+        BlockAction.BLOCK -> recordBlock(capture, reason, message, log, statsKey, BlockAction.BLOCK)
+
+        // sample：照旧丢，额外采一条样本（§11.3）。内容形态按渠道：A11Y 只采命中片段（不采整页）。
+        BlockAction.SAMPLE -> {
+            val isA11yPage = capture.channel == SourceChannel.A11Y
+            sampler.record(
+                CaptureSampleInput(
+                    channel = capture.channel,
+                    packageName = capture.packageName,
+                    kind = if (isA11yPage) CaptureKind.A11Y_PAGE else CaptureKind.NOTIFICATION,
+                    stage = CaptureStage.PREFILTER,
+                    blockedBy = statsKey,
+                    receivedAt = capture.receivedAt,
+                    rawText = if (isA11yPage) capture.pageText ?: capture.fullText else capture.fullText,
+                    tier = tier,
+                ),
+            )
+            recordBlock(capture, reason, message, log, statsKey, BlockAction.SAMPLE)
+        }
+
+        // forward：不拦，交服务端判（原则：正则与 AI 冲突以 AI 为准）。
+        // 日志保留：oper 需要看到「哪些本该被拦的现在被转发调 AI 了」。
+        BlockAction.FORWARD -> {
+            appLogger.info(
+                capture.channel.logTag,
+                "归表 forward，不拦（交服务端预筛判）: rule=$statsKey pkg=${capture.packageName} " +
+                    "text=${capture.fullText.take(50)}",
+            )
+            null
+        }
+    }
+
+    private fun recordBlock(
+        capture: Capture,
+        reason: BlockReason,
+        message: String,
+        log: Boolean,
+        statsKey: String,
+        action: BlockAction,
     ): Verdict.Block {
         stats.recordBlocked(capture.channel, statsKey)
         if (log) appLogger.debug(capture.channel.logTag, message)
-        return Verdict.Block(reason, message)
+        return Verdict.Block(reason, message, blockedBy = statsKey, action = action)
     }
 
     /** 内容级去重的键：包名 + 正文 hash（内容相同即视为同一次投递）。 */

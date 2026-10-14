@@ -8,8 +8,6 @@ import com.aibill.android.domain.model.Category
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.Transaction
 import com.aibill.android.domain.repository.AccountRepository
-import com.aibill.android.domain.notification.FeedbackItem
-import com.aibill.android.domain.notification.ParseFeedback
 import com.aibill.android.domain.repository.CategoryRepository
 import com.aibill.android.domain.repository.TransactionRepository
 import com.aibill.android.domain.usecase.CategoryLearningEngine
@@ -36,14 +34,13 @@ class TransactionDetailViewModel @Inject constructor(
     private val categoryLearningEngine: CategoryLearningEngine,
     private val categoryRepository: CategoryRepository,
     private val accountRepository: AccountRepository,
-    private val parseFeedback: ParseFeedback,
 ) : ViewModel() {
 
     private val transactionId: Int = savedStateHandle.toRoute<Route.TransactionDetail>().id
 
     /**
-     * 加载时的原始交易快照：既用于判断用户是否改了分类（学习规则），也用于给反馈的
-     * `modified` 提供**可对比的原值**（见 [hasConfirmedChange]）。加载失败时为 null。
+     * 加载时的原始交易快照：用于判断用户是否改了分类，从而触发本地学习规则
+     * （[CategoryLearningEngine]，PRD §4.11）。加载失败时为 null。
      */
     private var originalTransaction: Transaction? = null
 
@@ -174,27 +171,6 @@ class TransactionDetailViewModel @Inject constructor(
                     ) {
                         categoryLearningEngine.learnFromCorrection(description, newCategoryId)
                     }
-                    // AI 反馈：把用户改后的**最终态**回传（契约 §2，best-effort，绝不阻塞保存）。
-                    // amountCents 为空 = 用户没改金额标识（文本为空），此时无法如实描述
-                    // 最终态 → 跳过本次反馈，不编造数据。
-                    // modified 不写死：由 [hasConfirmedChange] 用加载时的原值逐字段对比得出，
-                    // 确证有变化才置 true（删除路径在 ParseFeedbackImpl 里恒 true）。
-                    if (amountCents != null) {
-                        parseFeedback.reportCorrected(
-                            serverTransactionId = transactionId,
-                            modified = hasConfirmedChange(state, amountCents),
-                            finalItem = FeedbackItem(
-                                type = state.type,
-                                amount = amountCents,
-                                categoryId = state.categoryId,
-                                description = state.description.takeIf(String::isNotBlank),
-                                date = state.date.takeIf(String::isNotBlank),
-                                time = state.time.takeIf(String::isNotBlank),
-                                accountId = state.accountId,
-                                accountName = state.accountName.takeIf(String::isNotBlank),
-                            ),
-                        )
-                    }
                     _uiState.update { it.copy(isSaving = false) }
                     _uiEvent.send(UiEvent.ShowToast("保存成功 ✅"))
                     _uiEvent.send(UiEvent.NavigateBack)
@@ -224,30 +200,6 @@ class TransactionDetailViewModel @Inject constructor(
                 is Result.Loading -> Unit
             }
         }
-    }
-
-    /**
-     * 「用户是否真的改过」——只有能用加载时的 [originalTransaction] 逐字段对比时才敢说 true。
-     *
-     * 依据：本页加载时用快照回填了全部输入框，因此**未被用户触碰**的字段必然与快照相等；
-     * `modified=true` 只在这份快照存在、且某个**会真正提交**的字段与之不同时给出。
-     *
-     * 局限（宁漏学不误学，拿不准不臆断）：
-     * - 快照缺失（加载失败）→ 返回 false（无法确证，不猜「改过」）；
-     * - 文本字段（description/date/time）留空时请求会**省略该字段**（服务端保留旧值），
-     *   所以「清空」不算改动——只有非空且与原值不同才算；
-     * - 金额：入参已是解析后的最终值，调用方只在 `amountCents != null` 时才反馈。
-     */
-    private fun hasConfirmedChange(state: UiState, amountCents: Int): Boolean {
-        val original = originalTransaction ?: return false
-        if (state.type != original.type.value) return true
-        if (amountCents != original.amount) return true
-        if (state.categoryId != original.categoryId) return true
-        if (state.accountId != original.accountId) return true
-        if (state.description.isNotBlank() && state.description != original.description.orEmpty()) return true
-        if (state.date.isNotBlank() && state.date != original.date) return true
-        if (state.time.isNotBlank() && state.time != original.time.orEmpty()) return true
-        return false
     }
 
     private fun loadAvailableTags() {

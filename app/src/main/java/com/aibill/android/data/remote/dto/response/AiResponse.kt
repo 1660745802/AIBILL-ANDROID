@@ -8,9 +8,10 @@ data class AiParseResponseDto(
     @Json(name = "items") val items: List<AiParsedItemDto>,
     @Json(name = "raw_input") val rawInput: String,
     /**
-     * 本次解析在服务端的日志 id（反馈闭环的钥匙，见 [ApiResponse.parseLogId]）。
-     * 只有「服务端真的调了模型 / 走了快捷解析」的形态才有；
-     * 被服务端预筛挡下、上游超时等形态没有 → **不存在可反馈对象**，不要凭空构造。
+     * 本次解析在服务端的日志 id（见 [ApiResponse.parseLogId]）。
+     * 客户端已不再消费（parse-feedback 下线）；字段保留仅为契约同步——
+     * 只有「服务端真的调了模型 / 走了快捷解析」的形态才有，
+     * 被服务端预筛挡下、上游超时等形态没有。
      */
     @Json(name = "parse_log_id") val parseLogId: Long? = null,
     /**

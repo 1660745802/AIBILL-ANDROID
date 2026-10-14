@@ -2,10 +2,14 @@ package com.aibill.android.data.notification
 
 import com.aibill.android.BuildConfig
 import com.aibill.android.data.remote.api.AiApi
+import com.aibill.android.data.remote.dto.request.CaptureReportRequest
+import com.aibill.android.data.remote.dto.request.CaptureSampleDto
 import com.aibill.android.data.remote.dto.request.FilterCountDto
 import com.aibill.android.data.remote.dto.request.FilterReportRequest
 import com.aibill.android.data.remote.dto.request.FilterTotalsDto
 import com.aibill.android.domain.notification.CaptureFunnelStats
+import com.aibill.android.domain.notification.CaptureSample
+import com.aibill.android.domain.notification.CaptureSampler
 import com.aibill.android.domain.notification.PrefilterReport
 import com.aibill.android.domain.notification.PrefilterStats
 import com.aibill.android.domain.notification.SourceChannel
@@ -43,24 +47,33 @@ import javax.inject.Singleton
  * 因此这里让 `notifications = blockedTotal + passed`（纯预筛口径，恒满足 blocked ≤ notifications），
  * 捕获层只作为 `client_only.capture_*` 的**观察量**上报；服务端要拿漏斗对账时按前缀剥离即可，
  * 不会因为捕获层计数把一个合法请求变成 400。
+ *
+ * ## 被拦样本（[CaptureSampler]）如何并入
+ *
+ * 契约 §11.3 的 `capture-report` 走**同一个窗口、同一次 `report()`**：样本由
+ * [CaptureSampler.drain] 取走，与计数一起进入 [Window]，失败同样原窗口重发。
+ * 样本**不按渠道拆**（每条自带 `channel`），但为了与计数共享重试语义，仍然挂在同一个 [Window] 上。
  */
 @Singleton
 class PrefilterReportImpl @Inject constructor(
     private val stats: PrefilterStats,
     private val captureFunnelStats: CaptureFunnelStats,
+    private val sampler: CaptureSampler,
     private val aiApi: AiApi,
     private val appLogger: AppLogger,
 ) : PrefilterReport {
 
     /**
-     * 一个上报窗口 = 预筛计数 + 捕获层漏斗计数。
+     * 一个上报窗口 = 预筛计数 + 捕获层漏斗计数 + 被拦样本。
      *
-     * 两者必须绑定成一个整体：[pending] 重发时若只保留预筛那半，捕获层的账就永远丢了。
+     * 三者必须绑定成一个整体：[pending] 重发时若只保留其中一部分，剩下的账/样本就永远丢了。
      */
     private data class Window(
         val prefilter: PrefilterStats.Snapshot,
         /** 已按渠道分好的 `client_only.capture_*` 计数（reportKey → count）。 */
         val capture: Map<SourceChannel, Map<String, Long>>,
+        /** 待发样本（每条自带渠道，不按渠道拆）。 */
+        val samples: List<CaptureSample> = emptyList(),
     )
 
     /** 上次没发成功的窗口；下次先重发它（边界原样保留）。 */
@@ -78,7 +91,11 @@ class PrefilterReportImpl @Inject constructor(
         }
         // 2) 再发新窗口；失败则原样保留（各自边界，跨度不会是「失败天数叠加」）。
         pending = sendWindow(
-            Window(prefilter = stats.drain(now), capture = drainCaptureCounts()),
+            Window(
+                prefilter = stats.drain(now),
+                capture = drainCaptureCounts(),
+                samples = sampler.drain(),
+            ),
         )
     }
 
@@ -103,8 +120,7 @@ class PrefilterReportImpl @Inject constructor(
         channels += window.capture.keys
         val failedPrefilter = LinkedHashMap<SourceChannel, PrefilterStats.Snapshot.ChannelCounts>()
         val failedCapture = LinkedHashMap<SourceChannel, Map<String, Long>>()
-        for (channel in channels) {
-            val counts = window.prefilter.channels[channel] ?: EMPTY_CHANNEL_COUNTS
+        for (channel in channels) {            val counts = window.prefilter.channels[channel] ?: EMPTY_CHANNEL_COUNTS
             val captureCounts = window.capture[channel].orEmpty()
             // 预筛空不代表没得发：只要有捕获层计数就要发（否则 A11Y 全早退的窗口永远不可见）。
             if (isEffectivelyEmpty(counts) && captureCounts.isEmpty()) continue
@@ -113,12 +129,84 @@ class PrefilterReportImpl @Inject constructor(
                 failedCapture[channel] = captureCounts
             }
         }
-        return if (failedPrefilter.isEmpty() && failedCapture.isEmpty()) {
+        val failedSamples = sendSamples(window.samples, window.prefilter.windowStart, window.prefilter.windowEnd)
+        return if (failedPrefilter.isEmpty() && failedCapture.isEmpty() && failedSamples.isEmpty()) {
             null
         } else {
-            Window(window.prefilter.copy(channels = failedPrefilter), failedCapture)
+            Window(window.prefilter.copy(channels = failedPrefilter), failedCapture, failedSamples)
         }
     }
+
+    /**
+     * 发送本窗口的样本（跨渠道，一次一条请求，按 [CaptureReportRequest.MAX_SAMPLES_PER_REQUEST] 拆包）。
+     *
+     * 返回仍需重发的样本（空 = 全部成功）。与计数同窗口边界：重发时服务端靠
+     * `UNIQUE(user_id, content_hash, blocked_by)` 幂等，重复只会计进 `duplicates`。
+     */
+    private suspend fun sendSamples(
+        samples: List<CaptureSample>,
+        windowStart: Long,
+        windowEnd: Long,
+    ): List<CaptureSample> {
+        if (samples.isEmpty()) return emptyList()
+        val startText = PrefilterReport.formatWindowTime(PrefilterReport.clampWindowStart(windowStart, windowEnd))
+        val endText = PrefilterReport.formatWindowTime(windowEnd)
+        val failed = mutableListOf<CaptureSample>()
+        for (chunk in samples.chunked(CaptureReportRequest.MAX_SAMPLES_PER_REQUEST)) {
+            if (!sendSampleChunk(chunk, startText, endText)) failed += chunk
+        }
+        return failed
+    }
+
+    private suspend fun sendSampleChunk(
+        samples: List<CaptureSample>,
+        windowStart: String,
+        windowEnd: String,
+    ): Boolean {
+        val request = CaptureReportRequest(
+            clientVersion = BuildConfig.VERSION_NAME,
+            windowStart = windowStart,
+            windowEnd = windowEnd,
+            samples = samples.map { it.toDto() },
+        )
+        return try {
+            val response = aiApi.captureReport(request)
+            if (response.code == 0) {
+                appLogger.info(
+                    "REPORT",
+                    "被拦样本已上报: samples=${samples.size} accepted=${response.data?.accepted} " +
+                        "duplicates=${response.data?.duplicates}",
+                )
+                true
+            } else {
+                appLogger.warn(
+                    "REPORT",
+                    "被拦样本上报失败 code=${response.code} msg=${response.message}，保留到下次",
+                )
+                false
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 老服务端没有该端点 → 404：同样落在这里（只 warn，不崩、不阻塞）
+            appLogger.warn("REPORT", "被拦样本上报异常（保留到下次）: ${e.message}")
+            false
+        }
+    }
+
+    private fun CaptureSample.toDto(): CaptureSampleDto = CaptureSampleDto(
+        channel = PrefilterReport.channelName(channel),
+        packageName = packageName,
+        kind = kind.wire,
+        stage = stage.wire,
+        blockedBy = blockedBy,
+        tier = tier,
+        receivedAt = CaptureReportRequest.receivedAtText(receivedAt),
+        text = text,
+        textLen = textLen,
+        contentHash = contentHash,
+        redacted = redacted,
+    )
 
     private suspend fun sendChannel(
         channel: SourceChannel,
