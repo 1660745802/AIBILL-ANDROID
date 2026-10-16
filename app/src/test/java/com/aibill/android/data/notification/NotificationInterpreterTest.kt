@@ -339,10 +339,15 @@ class NotificationInterpreterTest {
         assertEquals("微信支付", req.title)
         // body = 未截断的原文；input = 清洗后（模型看到的）；佐证用 body 更全
         assertTrue(req.body!!.isNotBlank())
-        // 带时区偏移的 ISO-8601（不带偏移服务端会 400）
+        // 带时区偏移的 ISO-8601（不带偏移服务端会 400）。
+        //
+        // ⚠️ 必须同时接受 `Z`：生产侧用 `ISO_OFFSET_DATE_TIME` 格式化
+        // （NotificationInterpreterImpl.formatWithOffset），而它在 **UTC 时区下输出 `Z`
+        // 而不是 `+00:00`**。断言此前只认 `[+-]HH:MM`，于是本地（+08:00）绿、CI runner（UTC）红。
+        // 正则与服务端校验逐字一致：billserver `routes/ai.ts` received_at 的 refine。
         assertTrue(
-            Regex(""".*[+-]\d{2}:\d{2}$""").matches(req.receivedAt ?: ""),
-            "received_at 必须带时区偏移：${req.receivedAt}",
+            Regex(""".*(Z|[+-]\d{2}:\d{2})$""").matches(req.receivedAt ?: ""),
+            "received_at 必须带时区偏移（Z 或 +08:00 均可）：${req.receivedAt}",
         )
     }
 
