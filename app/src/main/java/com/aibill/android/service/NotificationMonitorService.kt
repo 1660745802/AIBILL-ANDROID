@@ -107,6 +107,22 @@ class NotificationMonitorService : NotificationListenerService() {
     /** 平台翻译：`StatusBarNotification` → [Capture]，判定与放行都交给预筛 module。 */
     private fun handleNotification(sbn: StatusBarNotification) {
         captureFunnelStats.recordReceived(SourceChannel.NLS)
+        // 绝不让异常逃出 onNotificationPosted：它跑在 **NLS 的 binder 线程**上，
+        // 抛出 = 监听服务崩溃 = 「通知监听不到」，而进程被杀时 onListenerDisconnected
+        // 根本不会被调用，只能靠系统重绑（MIUI 上经常不重绑）。
+        // catch Throwable：单条畸形通知不该让整个监听服务挂掉。
+        try {
+            translateAndAdmit(sbn)
+        } catch (e: Throwable) {
+            appLogger.error(
+                "NLS",
+                "通知处理异常（已兜住，服务保活）: ${e.javaClass.simpleName}: ${e.message} " +
+                    "pkg=${sbn.packageName}",
+            )
+        }
+    }
+
+    private fun translateAndAdmit(sbn: StatusBarNotification) {
         val packageName = sbn.packageName
         if (packageName == null) {
             // 捕获层早退：包名为空的通知无法归因，预筛也看不到（不重复计）

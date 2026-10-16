@@ -55,14 +55,24 @@ object BatteryOptimizationHelper {
     }
 
     /**
-     * 检查通知监听权限是否开启
+     * 检查通知监听权限是否开启。
+     *
+     * ⚠️ **只反映开关，不反映服务是否真的连上**（那是
+     * [com.aibill.android.service.NotificationMonitorService.isConnected]），
+     * 需要「两者合一」的地方（如 [com.aibill.android.service.NlsHealthCheckWorker]、
+     * 权限引导页）必须自己再取一次连接态。
      */
     fun isNotificationListenerEnabled(context: Context): Boolean {
         val flat = Settings.Secure.getString(
             context.contentResolver,
             "enabled_notification_listeners"
         ) ?: return false
-        val componentName = ComponentName(context, "com.aibill.android.service.NotificationMonitorService")
+        // 用类引用而不是手写 FQN 字符串：类一旦改包名/改名，这里会编译报错，
+        // 而不是静默地永远返回 false（那会让整个通知监听健康检查失效）。
+        val componentName = ComponentName(
+            context.packageName,
+            com.aibill.android.service.NotificationMonitorService::class.java.name,
+        )
         return flat.contains(componentName.flattenToString())
     }
 

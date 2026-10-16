@@ -85,6 +85,9 @@ class PaymentAccessibilityService : AccessibilityService() {
     private var a11yProfiles: Map<String, A11yPackageProfile> = emptyMap()
     private var lastRulesGeneration: Int = -1
 
+    /** [setServiceInfo] 的下发时机闸门（见 [A11yServiceInfoGate]）。 */
+    private val serviceInfoGate = A11yServiceInfoGate()
+
     companion object {
         private const val PACKAGE_WECHAT = "com.tencent.mm"
         private const val PACKAGE_ALIPAY = "com.eg.android.AlipayGphone"
@@ -102,6 +105,24 @@ class PaymentAccessibilityService : AccessibilityService() {
         )
 
         /**
+         * 节点树遍历的**深度上限**。
+         *
+         * 支付页的真实文本都在浅层；深的是支付宝/微信的 WebView 容器（可达上百层）。
+         * 无上限的递归遇上那种树会 `StackOverflowError` → 进程死 → 服务解绑 →
+         * （无 a11y rebind API）只能用户手动重开。截断的代价只是「这一页读不全」，
+         * 与崩溃的代价比差着量级：读不全 → 当作未命中成功词丢弃，与今天的失败路径一致。
+         */
+        private const val MAX_TREE_DEPTH = 40
+
+        /**
+         * 单次扫描的**节点数上限**。同上：防「很浅但极宽」的畸形树把主线程/无障碍线程拖死。
+         */
+        private const val MAX_TREE_NODES = 4000
+
+        /** 计入整页文本的节点文本长度上限（沿用改动前的口径：1..50 字）。 */
+        private const val MAX_NODE_TEXT_LEN = 50
+
+        /**
          * 服务是否已成功连接到无障碍框架。国内 ROM 常在后台断开连接但设置开关仍是开的，
          * [A11yHealthCheckWorker] 用它做辅助信号。进程被杀时随进程消失。
          */
@@ -113,7 +134,6 @@ class PaymentAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        isServiceConnected = true
         val entryPoint = EntryPointAccessors.fromApplication(applicationContext, A11yEntryPoint::class.java)
         ingress = entryPoint.captureIngress()
         appLogger = entryPoint.appLogger()
@@ -124,7 +144,15 @@ class PaymentAccessibilityService : AccessibilityService() {
         clock = entryPoint.a11yClock()
 
         refreshRulesIfNeeded(force = true)
-        appLogger.info("A11Y", "无障碍服务已连接 (v5: gate 收口)")
+        // 连接态是下发 serviceInfo 的安全时机（此刻不在事件分发链路上）。
+        applyPendingServiceInfo()
+        appLogger.info("A11Y", "无障碍服务已连接 (v6: 事件回调不再下发 serviceInfo)")
+
+        // ⚠️ 必须放在**最后**：改动前它在方法第一行置位，于是
+        // 「初始化中途抛异常」这种最需要被发现的情况反而会被报成「服务正常」，
+        // 而此时每个事件都会崩 → 静默永久失效，只有手动 toggle 能救。
+        // 现在初始化失败就保持 false，让心跳如实报「开关开着但服务没连上」。
+        isServiceConnected = true
     }
 
     private fun refreshRulesIfNeeded(force: Boolean = false) {
@@ -138,11 +166,46 @@ class PaymentAccessibilityService : AccessibilityService() {
         a11yGlobal = a11ySnapshot.a11yGlobalProfile
         a11yProfiles = a11ySnapshot.a11yPackageProfiles
         lastRulesGeneration = snapshot.generation
-        serviceInfo = serviceInfo?.apply { packageNames = paymentApps.toTypedArray() }
+        // 只**记下**待下发的包名，不在这里下发——本方法会在事件回调链路上被调用
+        // （onAccessibilityEvent 第一件事就是它），而连接态下改 serviceInfo 可能被系统
+        // 解绑。真正的下发由 [applyPendingServiceInfo] 在安全时机完成。
+        serviceInfoGate.onGenerationChanged(paymentApps.toTypedArray())
+    }
+
+    /**
+     * 下发 `serviceInfo.packageNames`——**只允许在不在事件分发链路时调用**。
+     *
+     * 安全时机： [onServiceConnected] 与 [onInterrupt]（系统保证此刻没有事件在派发）。
+     * 若此刻正在分发，[A11yServiceInfoGate] 会把更新留在 pending，
+     * 等下一次安全时机补上——不丢，也不冒险。
+     */
+    private fun applyPendingServiceInfo() {
+        val packages = serviceInfoGate.takeIfApplicable(serviceInfo?.packageNames) ?: return
+        serviceInfo = serviceInfo?.apply { this.packageNames = packages }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val ev = event ?: return
+        // 绝不让异常逃出事件回调：进程一死，无障碍服务解绑，而 Android 没有 a11y rebind API
+        // → 只能用户手动去设置里关掉再开。单个页面的识别失败远不值得赔上整个服务。
+        // catch Throwable（含 StackOverflowError / OOM 这类 Error）而不是 Exception。
+        serviceInfoGate.enterEvent()
+        try {
+            handleAccessibilityEvent(ev)
+        } catch (e: Throwable) {
+            if (::appLogger.isInitialized) {
+                appLogger.error(
+                    "A11Y",
+                    "事件处理异常（已兜住，服务保活）: ${e.javaClass.simpleName}: ${e.message} " +
+                        "pkg=${ev.packageName}",
+                )
+            }
+        } finally {
+            serviceInfoGate.exitEvent()
+        }
+    }
+
+    private fun handleAccessibilityEvent(ev: AccessibilityEvent) {
         val packageName = ev.packageName?.toString() ?: return
         captureFunnelStats.recordReceived(SourceChannel.A11Y)
 
@@ -480,21 +543,77 @@ class PaymentAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 收集整页文本（trim、1..50 字、text/desc 去重）。gate 的判据与 pageText 都复用这一份。
+     * 收集整页文本（trim、≤ [MAX_NODE_TEXT_LEN] 字、text/desc 去重）。gate 的判据与 pageText 都复用这一份。
+     *
+     * ⚠️ **深度与节点数都有上限**（[MAX_TREE_DEPTH] / [MAX_TREE_NODES]）：
+     * 改动前是无上限递归，而支付宝/微信的 WebView 容器深达上百层 → `StackOverflowError`
+     * → 进程死 → 服务解绑 → 无 a11y rebind API → 用户手动重开。
+     * 截断的代价只是「这一页读不全」（表现为未命中成功词，与今天的失败路径一致），
+     * 比崩溃小几个量级。预算对象跨递归共享，顺手也防住「很浅但极宽」的畸形树。
      */
     private fun collectAllNodeTexts(node: AccessibilityNodeInfo, result: MutableList<String>) {
+        collectAllNodeTexts(node, result, depth = 0, budget = TreeScanBudget())
+    }
+
+    private fun collectAllNodeTexts(
+        node: AccessibilityNodeInfo,
+        result: MutableList<String>,
+        depth: Int,
+        budget: TreeScanBudget,
+    ) {
+        if (depth > MAX_TREE_DEPTH || budget.exhausted()) {
+            budget.markTruncated()
+            return
+        }
+        budget.spend()
         val text = node.text?.toString()?.trim()
-        if (!text.isNullOrBlank() && text.length in 1..50) result.add(text)
+        if (!text.isNullOrBlank() && text.length <= MAX_NODE_TEXT_LEN) result.add(text)
         val desc = node.contentDescription?.toString()?.trim()
-        if (!desc.isNullOrBlank() && desc.length in 1..50 && desc != text) result.add(desc)
+        if (!desc.isNullOrBlank() && desc.length <= MAX_NODE_TEXT_LEN && desc != text) result.add(desc)
         for (i in 0 until node.childCount) {
+            if (budget.exhausted()) {
+                budget.markTruncated()
+                return
+            }
             val child = node.getChild(i) ?: continue
-            collectAllNodeTexts(child, result)
+            collectAllNodeTexts(child, result, depth + 1, budget)
+        }
+    }
+
+    /** 一次树扫描的节点预算；跨递归共享同一个实例。[truncated] 供诊断。 */
+    private class TreeScanBudget {
+        private var remaining: Int = MAX_TREE_NODES
+
+        /** 本次扫描是否因深度/节点上限被截断（诊断用）。 */
+        var truncated: Boolean = false
+
+        fun exhausted(): Boolean = remaining <= 0
+
+        fun spend() {
+            remaining--
+        }
+
+        fun markTruncated() {
+            truncated = true
         }
     }
 
     /** 递归查找匹配正则的节点文本。 */
-    private fun findTextByPattern(node: AccessibilityNodeInfo, pattern: Regex): String? {
+    private fun findTextByPattern(node: AccessibilityNodeInfo, pattern: Regex): String? =
+        findTextByPattern(node, pattern, depth = 0, budget = TreeScanBudget())
+
+    /** 与 [collectAllNodeTexts] 同一条防线：递归必须有深度/节点上限（否则深 WebView 树会栈溢出）。 */
+    private fun findTextByPattern(
+        node: AccessibilityNodeInfo,
+        pattern: Regex,
+        depth: Int,
+        budget: TreeScanBudget,
+    ): String? {
+        if (depth > MAX_TREE_DEPTH || budget.exhausted()) {
+            budget.markTruncated()
+            return null
+        }
+        budget.spend()
         val text = node.text?.toString()
         if (text != null) {
             val match = pattern.find(text)
@@ -506,8 +625,12 @@ class PaymentAccessibilityService : AccessibilityService() {
             if (match != null) return match.value
         }
         for (i in 0 until node.childCount) {
+            if (budget.exhausted()) {
+                budget.markTruncated()
+                return null
+            }
             val child = node.getChild(i) ?: continue
-            val result = findTextByPattern(child, pattern)
+            val result = findTextByPattern(child, pattern, depth + 1, budget)
             if (result != null) return result
         }
         return null
