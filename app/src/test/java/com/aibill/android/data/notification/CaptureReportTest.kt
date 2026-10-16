@@ -11,6 +11,7 @@ import com.aibill.android.data.remote.dto.response.FilterReportResponseDto
 import com.aibill.android.domain.notification.CaptureKind
 import com.aibill.android.domain.notification.CaptureSampleInput
 import com.aibill.android.domain.notification.CaptureSampler
+import com.aibill.android.domain.notification.PrefilterReport
 import com.aibill.android.domain.notification.CaptureStage
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.util.AppLogger
@@ -93,14 +94,20 @@ class CaptureReportTest {
     @Test
     @DisplayName("请求体形状：契约字段名 / null 省略 / 窗口是北京墙钟串 / received_at 带 +08:00")
     fun `请求体形状`() = runTest {
-        val sampler = CaptureSamplerImpl(logger)
+        val sampler = CaptureSamplerImpl(logger, archiveDao())
         sampler.record(sample("结算页 加入购物车 ￥12.00"))
         reporter(sampler).report(t0)
 
         val req = captureRequests.single()
         assertEquals(BuildConfig.VERSION_NAME, req.clientVersion)
         assertEquals("2026-10-14 12:00:00", req.windowEnd, "窗口串与 ⑤ 同口径（北京时间，无时区）")
-        assertTrue(req.windowStart.startsWith("2026-10-14 "), req.windowStart)
+        // windowStart = 首个窗口的起点 = PrefilterStatsImpl 构造时刻（真实墙钟），
+        // 所以只能按「当天」断言，**不能**写死日期：写死会让本用例只在 2026-10-14 当天绿
+        // （2026-10-16 实测已红：断言的是 2026-10-16 vs 硬编码的 2026-10-14）。
+        val todayInBeijing = PrefilterReport.formatWindowTime(System.currentTimeMillis()).substring(0, 10)
+        val startsOnToday: Boolean = req.windowStart.startsWith("$todayInBeijing ")
+        val noTimezoneSuffix: Boolean = !req.windowStart.endsWith("Z")
+        assertTrue(startsOnToday && noTimezoneSuffix, "窗口起点必须是北京墙钟串（无时区、以当天开头）：${req.windowStart}")
 
         val dto = req.samples.single()
         assertEquals("a11y", dto.channel)
@@ -127,7 +134,7 @@ class CaptureReportTest {
     @Test
     @DisplayName("样本 ≤50/请求：60 条拆成 50 + 10（不截断）")
     fun `拆包`() = runTest {
-        val sampler = CaptureSamplerImpl(logger)
+        val sampler = CaptureSamplerImpl(logger, archiveDao())
         // 3 个包 × 20 条：绕开「每 (package, rule) 每天 20 条」的限流（那是采样器的职责，另有用例）
         repeat(60) { i -> sampler.record(sample("第 $i 条被拦页面 加入购物车", packageName = "pkg.${i % 3}")) }
         reporter(sampler).report(t0)
@@ -142,7 +149,7 @@ class CaptureReportTest {
     @Test
     @DisplayName("失败原窗口重发：失败期间不 drain 新样本；下次先用原窗口重发")
     fun `失败重发`() = runTest {
-        val sampler = CaptureSamplerImpl(logger)
+        val sampler = CaptureSamplerImpl(logger, archiveDao())
         var offline = true
         val impl = reporter(sampler, failCapture = { offline })
 
@@ -175,7 +182,7 @@ class CaptureReportTest {
     fun `与计数并存`() = runTest {
         val stats = PrefilterStatsImpl()
         stats.recordBlocked(SourceChannel.A11Y, "client_only.capture_dropped_a11y_excluded")
-        val sampler = CaptureSamplerImpl(logger)
+        val sampler = CaptureSamplerImpl(logger, archiveDao())
         sampler.record(sample("结算页 加入购物车"))
 
         reporter(sampler, stats).report(t0)
@@ -188,7 +195,7 @@ class CaptureReportTest {
     @Test
     @DisplayName("空样本不发请求（服务端 samples 至少 1 条）")
     fun `空样本不发`() = runTest {
-        reporter(CaptureSamplerImpl(logger)).report(t0)
+        reporter(CaptureSamplerImpl(logger, archiveDao())).report(t0)
         assertTrue(captureRequests.isEmpty())
     }
 
@@ -196,7 +203,7 @@ class CaptureReportTest {
     @Test
     @DisplayName("tier 非空时进入请求体（precheck.* 样本带档位）")
     fun `tier 上送`() = runTest {
-        val sampler = CaptureSamplerImpl(logger)
+        val sampler = CaptureSamplerImpl(logger, archiveDao())
         sampler.record(
             sample(
                 "验证码 123456",
