@@ -5,6 +5,7 @@ import com.aibill.android.domain.notification.PrecheckMatcher
 import com.aibill.android.domain.notification.PrecheckRule
 import com.aibill.android.domain.notification.PrecheckRuleSpec
 import com.aibill.android.domain.notification.PrecheckRules
+import com.aibill.android.domain.notification.PrecheckSignal
 import com.aibill.android.domain.notification.PrecheckSignalSpec
 import com.aibill.android.domain.notification.PrecheckSpec
 import com.aibill.android.util.AppLogger
@@ -50,7 +51,7 @@ internal object PrecheckCompiler {
     fun compile(spec: PrecheckSpec?, logger: AppLogger?): PrecheckRules {
         if (spec == null || spec.schema != PrecheckSpec.SUPPORTED_SCHEMA) return PrecheckRules.EMPTY
 
-        val signals = compileSignals(spec.signals, logger)
+        val signals = compileSignals(spec, logger)
 
         // ⚠️ **全或无**：任一 signal 编译失败（或数量对不上）即整链不可用。
         // 理由：部分降级会改变链的**结论**——正向信号规则被丢、而 `no_signal`(fallback, tier 4)
@@ -82,18 +83,43 @@ internal object PrecheckCompiler {
         return PrecheckRules(signals = signals, rules = rules, unusableRuleIds = emptyList())
     }
 
-    private fun compileSignals(specs: Map<String, PrecheckSignalSpec>, logger: AppLogger?): Map<String, Regex> {
-        val compiled = LinkedHashMap<String, Regex>(specs.size)
-        for ((name, signal) in specs) {
+    private fun compileSignals(
+        spec: PrecheckSpec,
+        logger: AppLogger?,
+    ): Map<String, PrecheckSignal> {
+        val compiled = LinkedHashMap<String, PrecheckSignal>(spec.signals.size)
+        for ((name, signal) in spec.signals) {
             val regex = compilePattern(signal.pattern, signal.flags, "signal=$name", logger) ?: continue
-            compiled[name] = regex
+            compiled[name] = PrecheckSignal(regex = regex, channels = spec.effectiveChannels(signal))
         }
         return compiled
     }
 
+    /**
+     * 这条信号最终生效的入口约束（null = 不吃约束）。
+     *
+     * 两条规则：
+     * 1. `channel_agnostic != false` → **一律返回 null**（忽略 `channels`）。这是老载荷 /
+     *    老服务端的口径，必须逐字不变；
+     * 2. `channels` 为 null **或空数组** → 同样返回 null（视为「不约束」）。
+     *
+     * ⚠️ 空数组为什么是「不约束」而不是「哪都不成立」：后者会让这条信号**静默失效**，
+     * 正向信号没了、而 `no_signal`(tier 4) 还在 → 真账被判无信号 → 拦 → P0 误杀。
+     * 本工程一贯的取舍是「宁可多调一次模型，也不要残缺的链去拦人」（见本文件类头），
+     * 这里同向：约束读不出来时**往放行方向退**。
+     */
+    private fun PrecheckSpec.effectiveChannels(signal: PrecheckSignalSpec): Set<String>? {
+        if (channelAgnostic) return null
+        val declared = signal.channels ?: return null
+        if (declared.isEmpty()) {
+            return null
+        }
+        return declared.filter { it.isNotBlank() }.toSet().ifEmpty { null }
+    }
+
     private fun compileRule(
         rule: PrecheckRuleSpec,
-        signals: Map<String, Regex>,
+        signals: Map<String, PrecheckSignal>,
         logger: AppLogger?,
     ): PrecheckRule? {
         // tier 恒为 0..4 的整数（契约 §3：没有 tier:null）；越界说明载荷已漂移 →
@@ -159,7 +185,7 @@ internal object PrecheckCompiler {
      * `expr` 封闭小语法（契约 §3）：`signal` / `signal && signal` / `len<=<int> && signal`。
      * 其余形态一律返回 null（调用方据此把整链停用 + 计数），**不猜命中与否**。
      */
-    private fun parseExpr(expr: String?, signals: Map<String, Regex>): PrecheckExpr? {
+    private fun parseExpr(expr: String?, signals: Map<String, PrecheckSignal>): PrecheckExpr? {
         if (expr.isNullOrBlank()) return null
         if (!expr.contains(AND_SEPARATOR)) {
             return signalRef(expr, signals)?.let { PrecheckExpr.Signal(it) }
@@ -177,7 +203,7 @@ internal object PrecheckCompiler {
     }
 
     /** 合法标识符**且**是 `signals` 的键才可用（契约 §3「signal 必须是 signals 的键」）。 */
-    private fun signalRef(name: String, signals: Map<String, Regex>): String? =
+    private fun signalRef(name: String, signals: Map<String, PrecheckSignal>): String? =
         name.takeIf { IDENTIFIER.matches(it) && it in signals }
 
     private fun warn(logger: AppLogger?, ruleId: String, reason: String) {

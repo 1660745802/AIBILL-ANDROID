@@ -5,6 +5,7 @@ import com.aibill.android.domain.notification.PrecheckRuleSpec
 import com.aibill.android.domain.notification.PrecheckRules
 import com.aibill.android.domain.notification.PrecheckVerdict
 import com.aibill.android.domain.notification.PrecheckSpec
+import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.util.AppLogger
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -44,7 +45,7 @@ class PrecheckJudgeTest {
         val input = "验证码 微信支付 ¥32.50" // 同时命中 strong_noise 与 money_verb
 
         assertTrue(
-            PrecheckJudge.evaluate(input, rules) is PrecheckVerdict.Pass,
+            PrecheckJudge.evaluate(input, rules, SourceChannel.NLS) is PrecheckVerdict.Pass,
             "第一条命中是 money_verb(tier1) → 必须放行，后面的 tier0 不能反悔",
         )
 
@@ -58,7 +59,7 @@ class PrecheckJudgeTest {
                 )
             )
         )
-        assertEquals(PrecheckVerdict.Blocked("precheck.strong_noise", 0), PrecheckJudge.evaluate(input, reversed))
+        assertEquals(PrecheckVerdict.Blocked("precheck.strong_noise", 0), PrecheckJudge.evaluate(input, reversed, SourceChannel.NLS))
     }
 
     @Test
@@ -67,6 +68,7 @@ class PrecheckJudgeTest {
         fun verdictFor(tier: Int, id: String): PrecheckVerdict = PrecheckJudge.evaluate(
             "任意文本",
             compile(PrefilterTestHarness.precheckSpec(rules = listOf(PrecheckRuleSpec(id, tier, "fallback")))),
+            SourceChannel.NLS,
         )
 
         // fallback（无条件命中）用每个 tier 各判一次
@@ -94,37 +96,37 @@ class PrecheckJudgeTest {
 
         val len30 = "a".repeat(27) + " 32"
         assertEquals(30, len30.trim().length)
-        assertTrue(PrecheckJudge.evaluate(len30, rules) is PrecheckVerdict.Pass, "恰 30 字应命中 bare_amount")
+        assertTrue(PrecheckJudge.evaluate(len30, rules, SourceChannel.NLS) is PrecheckVerdict.Pass, "恰 30 字应命中 bare_amount")
 
         val len31 = "a".repeat(28) + " 32"
         assertEquals(31, len31.trim().length)
-        assertTrue(PrecheckJudge.evaluate(len31, rules) is PrecheckVerdict.Blocked, "31 字不应命中 bare_amount")
+        assertTrue(PrecheckJudge.evaluate(len31, rules, SourceChannel.NLS) is PrecheckVerdict.Blocked, "31 字不应命中 bare_amount")
 
         // emoji = 2 个 UTF-16 code unit：13 个 emoji(26) + " 32"(3) = 29 → 命中
         val emoji29 = "😀".repeat(13) + " 32"
         assertEquals(29, emoji29.trim().length)
-        assertTrue(PrecheckJudge.evaluate(emoji29, rules) is PrecheckVerdict.Pass, "29 code unit 应命中")
+        assertTrue(PrecheckJudge.evaluate(emoji29, rules, SourceChannel.NLS) is PrecheckVerdict.Pass, "29 code unit 应命中")
 
         // 14 个 emoji(28) + " 32"(3) = 31 → 不命中（按 code point 计会误判成 17 ≤ 30）
         val emoji31 = "😀".repeat(14) + " 32"
         assertEquals(31, emoji31.trim().length)
         assertTrue(
-            PrecheckJudge.evaluate(emoji31, rules) is PrecheckVerdict.Blocked,
+            PrecheckJudge.evaluate(emoji31, rules, SourceChannel.NLS) is PrecheckVerdict.Blocked,
             "emoji 必须按 UTF-16 code unit 计（与 Kotlin String.length / 契约同口径）",
         )
 
         // 前后空白不参与长度（trim）
         val padded = "  " + "a".repeat(27) + " 32" + "   "
         assertEquals(30, padded.trim().length)
-        assertTrue(PrecheckJudge.evaluate(padded, rules) is PrecheckVerdict.Pass, "trim 后 30 字应命中")
+        assertTrue(PrecheckJudge.evaluate(padded, rules, SourceChannel.NLS) is PrecheckVerdict.Pass, "trim 后 30 字应命中")
     }
 
     @Test
     @DisplayName("判据不可用：无 precheck / schema 不认识 → NotAvailable（降级放行，不是 Pass）")
     fun unavailableIsNotPass() {
-        assertEquals(PrecheckVerdict.NotAvailable, PrecheckJudge.evaluate("任意文本", PrecheckRules.EMPTY))
+        assertEquals(PrecheckVerdict.NotAvailable, PrecheckJudge.evaluate("任意文本", PrecheckRules.EMPTY, SourceChannel.NLS))
         val unknownSchema = compile(PrefilterTestHarness.precheckSpec(schema = 42))
-        assertEquals(PrecheckVerdict.NotAvailable, PrecheckJudge.evaluate("任意文本", unknownSchema))
+        assertEquals(PrecheckVerdict.NotAvailable, PrecheckJudge.evaluate("任意文本", unknownSchema, SourceChannel.NLS))
     }
 
     @Test
@@ -138,6 +140,6 @@ class PrecheckJudgeTest {
             )
         )
         // 没有任何信号、也没有 fallback → 不应拦
-        assertTrue(PrecheckJudge.evaluate("普通文本", rules) is PrecheckVerdict.Pass)
+        assertTrue(PrecheckJudge.evaluate("普通文本", rules, SourceChannel.NLS) is PrecheckVerdict.Pass)
     }
 }

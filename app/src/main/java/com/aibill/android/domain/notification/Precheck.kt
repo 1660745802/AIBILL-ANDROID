@@ -21,6 +21,10 @@ package com.aibill.android.domain.notification
  * 4. `bare_amount` 的长度口径 = `input.trim().length`（UTF-16 code unit，Kotlin `String.length` 同口径）。
  *    客户端在**预筛阶段**执行，但传入的是**与请求 `input` 同一个串**：预筛先用
  *    `MarketingSuffixCleaner` 做营销后缀清洗，再算长度（否则 30 字边界会与两端计数口径分叉）。
+ * 5. **信号级入口约束**（`channel_agnostic` + `signals.*.channels`）：见
+ *    [PrecheckSignalSpec.channels] 与 [PrecheckSignal]。服务端把这条判据收紧到
+ *    `bare_amount.channels=['manual']`，因为它在线上 104 条记录里 89 条是通知侧噪声
+ *    （群编号 / 手机号 / 预计 12:33 的 12 / 90% 的 90）、15 条真账全是手打短句。
  *
  * ## 本文件的分工
  *
@@ -33,6 +37,16 @@ data class PrecheckSpec(
     val signals: Map<String, PrecheckSignalSpec>,
     val bareAmountMaxLen: Int,
     val rules: List<PrecheckRuleSpec>,
+    /**
+     * 「整条判据链是否吃 channel」。
+     *
+     * ⚠️ **缺省必须视为 `true`（老口径）**：老服务端不读这个字段，
+     * 行为不变（继续在通知侧用 `bare_amount` 放行）——那是安全方向（多调模型，不会误杀）。
+     * 所以这个 flag 可以随服务端先发、客户端后跟，不会出兼容事故。
+     *
+     * `true` → 忽略所有 [PrecheckSignalSpec.channels]；`false` → 逐条生效。
+     */
+    val channelAgnostic: Boolean = true,
 ) {
     companion object {
         /** 认识的载荷版本；不认识整体忽略并降级（契约 §3「schema 不认识 → 降级」）。 */
@@ -55,6 +69,17 @@ data class PrecheckSpec(
 data class PrecheckSignalSpec(
     val pattern: String,
     val flags: String?,
+    /**
+     * 这条信号**只在这些入口成立**；null/空 → 不吃入口约束（全入口生效）。
+     *
+     * ⚠️ **只在 [PrecheckSpec.channelAgnostic] 为 false 时才被读取**——
+     * 载荷说 `channel_agnostic: true`（或干脆没这个键）时它被忽略，老行为逐字不变。
+     *
+     * 值是入口名（`PrefilterReport.channelName` 口径：小写），如 `nls` / `sms` / `a11y`。
+     * 服务端目前只对 `bare_amount` 下发 `["manual"]`（手打短句），
+     * 而客户端**只有 nls/sms/a11y 三个入口** → 永远不吃这条信号。
+     */
+    val channels: List<String>? = null,
 )
 
 /** `precheck.rules[]` 的原始形态。字段按 `type` 二选一。 */
@@ -76,7 +101,7 @@ data class PrecheckRuleSpec(
  * `precheck_unknown_expr`（契约 §3 要求「忽略该条 + 记日志 + 计数」，绝不猜命中与否）。
  */
 data class PrecheckRules(
-    val signals: Map<String, Regex>,
+    val signals: Map<String, PrecheckSignal>,
     val rules: List<PrecheckRule>,
     val unusableRuleIds: List<String>,
 ) {
@@ -85,6 +110,29 @@ data class PrecheckRules(
 
     companion object {
         val EMPTY = PrecheckRules(signals = emptyMap(), rules = emptyList(), unusableRuleIds = emptyList())
+    }
+}
+
+/**
+ * 一条**已编译信号**。[PrecheckCompiler] 已把「是否吃入口约束」解析完：
+ * [channels] 为 null 就表示全入口生效（老口径，或载荷本就没约束）。
+ */
+data class PrecheckSignal(
+    val regex: Regex,
+    /** 非 null 时该信号**只在这些入口上成立**；不在表内 → 按 false 求值。 */
+    val channels: Set<String>? = null,
+) {
+    /**
+     * 当前入口下这条信号是否成立。
+     *
+     * ⚠️ **入口不匹配返回 false，而不是「整条规则直接 tier 0」**——这是最容易写错的地方：
+     * `precheck.bare_amount`（tier 2）不成立后，判据链必须**继续往下**按 `rules[]` 顺序匹配，
+     * 可能命中 `precheck.verb_only`（tier 3 放行）或 `precheck.no_signal`（tier 4 拦）。
+     * 直接判 tier 0 会把「只有交易动词」的真账全杀成噪声。
+     */
+    fun matches(input: String, channel: String): Boolean {
+        if (channels != null && channel !in channels) return false
+        return regex.containsMatchIn(input)
     }
 }
 
@@ -140,18 +188,30 @@ sealed interface PrecheckVerdict {
  * 只做一件事：按 [PrecheckRules.rules] 的顺序取**第一条命中**的 tier。
  * 末尾兜底（fallback）保证有信号/无信号都会被某条命中；万一载荷异常一条都不命中，
  * 返回 [PrecheckVerdict.Pass]（fail-open：宁可多发一次请求，不可静默丢账）。
+ *
+ * ## 为什么 [channel] 是必填参数
+ *
+ * 载荷可以给**单条信号**加入口约束（`signals.bare_amount.channels=['manual']`）。
+ * 客户端只有 nls/sms/a11y 三个入口，所以那条信号在客户端**永远不成立**——
+ * 但这**不等于**直接 tier 0：判据链要继续往下跑，可能命中 `verb_only`（tier 3 放行）
+ * 或 `no_signal`（tier 4 拦）。
+ *
+ * ⚠️ 所以这里**不提供「不传 channel = 不管入口」的默认值**：那会让漏传静默退化成
+ * 「约束失效」（继续放行），而不是在编译期/测试期就暴露。
  */
 object PrecheckJudge {
 
     /** 「应该调模型」的 tier 区间（契约 §3 `should_call_ai = tier in (1,2,3)`）。 */
     private val CALL_AI_TIERS = 1..3
 
-    fun evaluate(input: String, rules: PrecheckRules): PrecheckVerdict {
+    fun evaluate(input: String, rules: PrecheckRules, channel: SourceChannel): PrecheckVerdict {
         if (!rules.available) return PrecheckVerdict.NotAvailable
+        // 入口名口径与 ⑤ 上报 / 服务端 `classifyNotification(rawInput, channel)` 一致（小写 logTag）。
+        val channelName = PrefilterReport.channelName(channel)
         // bare_amount 的长度口径与契约逐字一致：input 原串 trim 后的 UTF-16 code unit 数。
         val trimmedLength = input.trim().length
         for (rule in rules.rules) {
-            if (rule.matches(input, trimmedLength, rules.signals)) {
+            if (rule.matches(input, trimmedLength, rules.signals, channelName)) {
                 return if (rule.tier in CALL_AI_TIERS) {
                     PrecheckVerdict.Pass
                 } else {
@@ -162,21 +222,31 @@ object PrecheckJudge {
         return PrecheckVerdict.Pass
     }
 
-    private fun PrecheckRule.matches(input: String, trimmedLength: Int, signals: Map<String, Regex>): Boolean =
+    private fun PrecheckRule.matches(
+        input: String,
+        trimmedLength: Int,
+        signals: Map<String, PrecheckSignal>,
+        channel: String,
+    ): Boolean =
         when (val m = matcher) {
             is PrecheckMatcher.Patterns -> m.regex.containsMatchIn(input)
             PrecheckMatcher.Always -> true
-            is PrecheckMatcher.Expr -> m.expr.matches(input, trimmedLength, signals)
+            is PrecheckMatcher.Expr -> m.expr.matches(input, trimmedLength, signals, channel)
         }
 
-    private fun PrecheckExpr.matches(input: String, trimmedLength: Int, signals: Map<String, Regex>): Boolean =
+    private fun PrecheckExpr.matches(
+        input: String,
+        trimmedLength: Int,
+        signals: Map<String, PrecheckSignal>,
+        channel: String,
+    ): Boolean =
         when (this) {
-            is PrecheckExpr.Signal -> signals.matches(name, input)
-            is PrecheckExpr.And -> signals.matches(left, input) && signals.matches(right, input)
-            is PrecheckExpr.LenLe -> trimmedLength <= maxLen && signals.matches(signal, input)
+            is PrecheckExpr.Signal -> signals.matches(name, input, channel)
+            is PrecheckExpr.And -> signals.matches(left, input, channel) && signals.matches(right, input, channel)
+            is PrecheckExpr.LenLe -> trimmedLength <= maxLen && signals.matches(signal, input, channel)
         }
 
     /** signal 名不存在（编译期已过滤，理论上不会发生）→ 视为不命中，而不是崩溃。 */
-    private fun Map<String, Regex>.matches(name: String, input: String): Boolean =
-        this[name]?.containsMatchIn(input) == true
+    private fun Map<String, PrecheckSignal>.matches(name: String, input: String, channel: String): Boolean =
+        this[name]?.matches(input, channel) == true
 }

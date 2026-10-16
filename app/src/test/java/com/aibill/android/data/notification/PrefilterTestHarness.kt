@@ -173,15 +173,23 @@ internal object PrefilterTestHarness {
         moneyFlags: String? = "gi",
         rules: List<PrecheckRuleSpec> = defaultPrecheckRules(),
         extraSignals: Map<String, PrecheckSignalSpec> = emptyMap(),
+        /** ⚠️ 缺省 true = 老口径（忽略 channels）；需要验证入口约束时显式传 false。 */
+        channelAgnostic: Boolean = true,
+        /** 逐条覆盖某个信号（含 channels）。 */
+        signalOverrides: Map<String, PrecheckSignalSpec> = emptyMap(),
     ): PrecheckSpec = PrecheckSpec(
         schema = schema,
         signals = linkedMapOf(
             "money" to PrecheckSignalSpec(MONEY_PATTERN, moneyFlags),
             "verb" to PrecheckSignalSpec(VERB_PATTERN, "i"),
             "bare_amount" to PrecheckSignalSpec(BARE_AMOUNT_PATTERN, "i"),
-        ).apply { putAll(extraSignals) },
+        ).apply {
+            putAll(extraSignals)
+            putAll(signalOverrides)
+        },
         bareAmountMaxLen = bareAmountMaxLen,
         rules = rules,
+        channelAgnostic = channelAgnostic,
     )
 
     /** 契约 §3 的 14 条判据里客户端真正会走到的顺序（简化为可断言的最小集）。 */

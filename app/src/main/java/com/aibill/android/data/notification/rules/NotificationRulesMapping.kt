@@ -109,6 +109,9 @@ internal object NotificationRulesMapping {
             schema = schema ?: 0,
             signals = signalSpecs,
             bareAmountMaxLen = signals?.bareAmountMaxLen ?: PrecheckSpec.DEFAULT_BARE_AMOUNT_MAX_LEN,
+            // ⚠️ 缺省 true（老口径）：老服务端不下发这个键，必须逐字保持原行为
+            //（继续在通知侧用 bare_amount 放行）——那是安全方向。
+            channelAgnostic = channelAgnostic ?: true,
             rules = rules.orEmpty().mapNotNull { r ->
                 val id = r.id ?: return@mapNotNull null
                 PrecheckRuleSpec(
@@ -156,5 +159,5 @@ internal object NotificationRulesMapping {
     )
 
     private fun PrecheckSignalDto.toSpec(): PrecheckSignalSpec =
-        PrecheckSignalSpec(pattern = pattern.orEmpty(), flags = flags)
+        PrecheckSignalSpec(pattern = pattern.orEmpty(), flags = flags, channels = channels)
 }

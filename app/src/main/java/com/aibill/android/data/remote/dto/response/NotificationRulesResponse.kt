@@ -45,6 +45,13 @@ data class PrecheckDto(
     @Json(name = "schema") val schema: Int?,
     @Json(name = "signals") val signals: PrecheckSignalsDto?,
     @Json(name = "rules") val rules: List<PrecheckRuleDto>?,
+    /**
+     * 「整条判据链是否吃 channel」。**缺省 true = 老口径**（忽略 `signals.*.channels`）。
+     *
+     * ⚠️ 可空是刻意的：老服务端不下发这个键，而**缺省必须退化成「不约束」**（继续放行），
+     * 不能退化成「约束为空 → 信号全失效」（那会误杀真账）。
+     */
+    @Json(name = "channel_agnostic") val channelAgnostic: Boolean? = null,
 )
 
 @JsonClass(generateAdapter = true)
@@ -60,6 +67,11 @@ data class PrecheckSignalsDto(
 data class PrecheckSignalDto(
     @Json(name = "pattern") val pattern: String?,
     @Json(name = "flags") val flags: String?,
+    /**
+     * 这条信号只在这些入口成立（新增字段）。null = 不约束。
+     * 只在 `channel_agnostic === false` 时被消费；`flags == null` 依旧表示「信号不可用」。
+     */
+    @Json(name = "channels") val channels: List<String>? = null,
 )
 
 /** `type` = regex（pattern+flags）/ predicate（expr）/ fallback（无字段）。 */

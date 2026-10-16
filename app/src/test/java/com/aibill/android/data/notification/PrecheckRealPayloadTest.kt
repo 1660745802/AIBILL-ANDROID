@@ -1,7 +1,9 @@
 package com.aibill.android.data.notification
 
 import com.aibill.android.domain.notification.PrecheckJudge
+import com.aibill.android.domain.notification.PrefilterReport
 import com.aibill.android.domain.notification.PrecheckVerdict
+import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.util.AppLogger
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -26,15 +28,15 @@ class PrecheckRealPayloadTest {
     private val logger = AppLogger(mockk(relaxed = true))
 
     @Test
-    @DisplayName("真载荷：整链可用（14 条规则、0 条不可用），且顺序语义来自服务端原序")
+    @DisplayName("真载荷：整链可用（15 条规则、0 条不可用），且顺序语义来自服务端原序")
     fun realPayloadCompilesIntoUsableChain() {
         val rules = PrecheckRealPayload.compileRules(logger)
 
         assertTrue(rules.available, "真载荷必须编译出一条可用的判据链（否则降级放行=降噪全丢）")
         assertTrue(rules.unusableRuleIds.isEmpty(), "真载荷不应有不可用规则：${rules.unusableRuleIds}")
-        assertEquals(14, rules.rules.size, "真载荷规则条数变了（服务端改判据需同步播报 content_hash）")
+        assertEquals(15, rules.rules.size, "真载荷规则条数变了（服务端改判据需同步播报 content_hash）")
 
-        // 顺序即判据顺序（契约 §3）：只钉首尾，不全文硬编码 14 条 id。
+        // 顺序即判据顺序（契约 §3）：只钉首尾，不全文硬编码 15 条 id。
         // ⚠️ 真实载荷的首条是 `precheck.social_redpacket`（tier0 强噪声链首），
         //    不是手写近似夹具 `PrefilterTestHarness` 里的 `precheck.strong_noise`。
         assertEquals("precheck.social_redpacket", rules.rules.first().id)
@@ -47,7 +49,7 @@ class PrecheckRealPayloadTest {
         // ⚠️ 服务端重导载荷会换 content_hash——本断言必须同步更新；
         //    否则「测试跑的仍是旧夹具」会静默通过（本次就是千分位自足那次重导）。
         assertEquals(
-            "6c8d510ad547b840e5f79c3be8c598c1b4df75b211b43961ba76a0c674711169",
+            "919a9d31d2ec1c982d3ee3a0e18d45f12da463b8f034e239fac6fc1066dea040",
             PrecheckRealPayload.contentHash(),
             "content_hash 变了：服务端重导了 precheck 载荷，请核对差异后更新此断言",
         )
@@ -61,7 +63,7 @@ class PrecheckRealPayloadTest {
     @Test
     @DisplayName("money pattern 自足千分位：1,000元 / 24,210.99元 / ¥1,000.50 命中；1,23元 / 2.555元 不命中")
     fun moneyPatternHandlesThousandsSeparators() {
-        val money = PrecheckRealPayload.compileRules(logger).signals.getValue("money")
+        val money = PrecheckRealPayload.compileRules(logger).signals.getValue("money").regex
 
         // 服务端改为「pattern 自足」：不再依赖分类前的隐式 stripThousands()
         listOf("1,000元", "24,210.99元", "¥1,000.50").forEach {
@@ -76,7 +78,7 @@ class PrecheckRealPayloadTest {
     @Test
     @DisplayName("money signal 认全角空格：¥　32.50 / 100　元 命中（服务端实测样例，替换 \\s 前两端会分叉）")
     fun moneyPatternHandlesFullWidthSpace() {
-        val money = PrecheckRealPayload.compileRules(logger).signals.getValue("money")
+        val money = PrecheckRealPayload.compileRules(logger).signals.getValue("money").regex
 
         // U+3000 全角空格：Java/Kotlin 默认的 `\s` 不含它，故服务端已换显式空白类。
         assertTrue(money.containsMatchIn("¥\u300032.50"), "¥ + 全角空格 + 金额必须命中")
@@ -94,15 +96,24 @@ class PrecheckRealPayloadTest {
         assertTrue("bare_amount" in rules.signals.keys, "bare_amount 的 flags 是空串，必须编译成功")
 
         // 不只是「键在」——还要「真的能用」：verb 认交易动词、bare_amount 认光杆数字。
-        assertTrue(rules.signals.getValue("verb").containsMatchIn("微信支付 已支付¥32.50"))
-        assertTrue(rules.signals.getValue("bare_amount").containsMatchIn("肯德基45"))
+        assertTrue(rules.signals.getValue("verb").regex.containsMatchIn("微信支付 已支付¥32.50"))
+
+        // bare_amount：正则本身仍然匹配「肯德基45」，但真载荷给它加了**入口约束**
+        // （`channels=['manual']`）——客户端只有 nls/sms/a11y，所以这个入口上它**不成立**。
+        // 两者都要钉：正则不能被改坏（服务端 manual 入口还靠它），入口约束也不能被忽略。
+        val bare = rules.signals.getValue("bare_amount")
+        assertTrue(bare.regex.containsMatchIn("肯德基45"), "bare_amount 正则本身仍须匹配光杆数字")
+        assertFalse(
+            bare.matches("肯德基45", PrefilterReport.channelName(SourceChannel.NLS)),
+            "裸信号在 nls 入口必须不成立（channels=['manual']）",
+        )
 
         // money 的 flags 是 "gi"：大小写不敏感必须保住（服务端曾因丢 'i' 出现两端相反）
-        assertTrue(rules.signals.getValue("money").containsMatchIn("rmb 100"))
+        assertTrue(rules.signals.getValue("money").regex.containsMatchIn("rmb 100"))
 
         // 正向信号链能真的走到「放行」：真交易不得被兜底 no_signal 接走。
         assertTrue(
-            PrecheckJudge.evaluate("微信支付 已支付¥32.50", rules) is PrecheckVerdict.Pass,
+            PrecheckJudge.evaluate("微信支付 已支付¥32.50", rules, SourceChannel.NLS) is PrecheckVerdict.Pass,
             "真载荷下真交易必须命中正向规则放行（这正是 flags 空串缺陷的表现面）",
         )
     }

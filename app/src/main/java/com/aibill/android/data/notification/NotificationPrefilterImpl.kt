@@ -287,7 +287,13 @@ class NotificationPrefilterImpl @Inject constructor(
             commaKeywords = rules.marketingCommaKeywords,
         )
         // 归表允许 `forward`：命中也不拦，继续（到这里已经没有后续判据 → 放行走 AI）。
-        val blocked = when (val verdict = PrecheckJudge.evaluate(precheckInput, rules.precheck)) {
+        // ⚠️ channel 必须传真实入口：载荷可给单条信号加入口约束
+        // （`signals.bare_amount.channels=['manual']`）——客户端只有 nls/sms/a11y 三个入口，
+        // 永远不吃那条信号，但**仍要继续往下匹配**（可能命中 verb_only 放行 / no_signal 拦），
+        // 而不是直接 tier 0。
+        val blocked = when (
+            val verdict = PrecheckJudge.evaluate(precheckInput, rules.precheck, capture.channel)
+        ) {
             is PrecheckVerdict.Blocked -> block(
                 capture,
                 BlockReason.PRECHECK,

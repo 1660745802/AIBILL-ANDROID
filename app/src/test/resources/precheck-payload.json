@@ -1,12 +1,12 @@
 {
-  "source": "GET /api/config/notification-rules → data.rules.precheck（原样）",
-  "content_hash": "6c8d510ad547b840e5f79c3be8c598c1b4df75b211b43961ba76a0c674711169",
+  "source": "GET /api/config/notification-rules → data.rules.precheck（原样；content_hash 与 notification-rules-payload.json 同源）",
+  "content_hash": "919a9d31d2ec1c982d3ee3a0e18d45f12da463b8f034e239fac6fc1066dea040",
   "version": 1,
   "corpus_hash": "025e7de0a94002cead2472031b250a570865231bc18bcf8a25a11cd1e152afe6",
   "precheck": {
     "schema": 1,
     "derived_from": "src/ai/verify.ts",
-    "channel_agnostic": true,
+    "channel_agnostic": false,
     "signals": {
       "money": {
         "pattern": "[¥￥][ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))(?!\\d)|(?:人民币|RMB|CNY)[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))(?!\\d)|(?<![\\d.,])((?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?))[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*(?:元|圆|块钱|块|人民币|RMB|CNY)(?!\\d)",
@@ -18,7 +18,10 @@
       },
       "bare_amount": {
         "pattern": "(?<![\\d.])\\d{2,}(?:\\.\\d{1,2})?(?![\\d.])",
-        "flags": ""
+        "flags": "",
+        "channels": [
+          "manual"
+        ]
       },
       "bare_amount_max_len": 30
     },
@@ -59,7 +62,7 @@
         "id": "precheck.order_state",
         "tier": 0,
         "type": "regex",
-        "pattern": "(?<![\\d.])(?:加入购物车|立即购买|去支付|确认订单|查看物流|再次购买|已签收|待发货|待收货|提交订单|交易已取消|申请售后)(?![\\d.])",
+        "pattern": "(?<![\\d.])(?:加入购物车|立即购买|去支付|确认订单|查看物流|再次购买|已签收|待发货|待收货|提交订单|交易已取消|申请售后|商家已接单|骑手已接单|骑士已接单|骑手已取货|骑士已取货|正在配送|配送中)(?![\\d.])|(?:订单|交易|购物车)[^，。！？]{0,24}(?:自动取消|超时未支付|超时关闭|自动关闭)|(?:订单|包裹|商品|外卖|快递|骑手|骑士)[^，。！？]{0,12}(?:已送达|已签收|配送中|即将送达|预计送达)",
         "flags": "",
         "desc": "强噪声（order_state）：命中即不调模型，即使文本里有金额"
       },
@@ -103,6 +106,14 @@
         "desc": "弱噪声（unrelated）：仅在没有 money+verb 正向信号时才拦"
       },
       {
+        "id": "precheck.traffic_meter",
+        "tier": 0,
+        "type": "regex",
+        "pattern": "\\d+(?:\\.\\d+)?[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*(?:[KMGTP]i?B|KB|MB|GB)[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*\\/[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*s|[↑↓]|进度[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*\\d+[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*%|正在下载|正在加速|加速中|剩余[ \\t\\n\\x0B\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*\\d+",
+        "flags": "i",
+        "desc": "弱噪声（traffic_meter）：仅在没有 money+verb 正向信号时才拦"
+      },
+      {
         "id": "precheck.money_only",
         "tier": 2,
         "type": "predicate",
@@ -114,7 +125,7 @@
         "tier": 2,
         "type": "predicate",
         "expr": "len<=30 && bare_amount",
-        "desc": "短句（≤30 字）光杆数字 → 调模型，出站需金额佐证"
+        "desc": "短句（≤30 字）光杆数字 → 调模型，出站需金额佐证（仅 manual 入口成立；通知入口不吃这条信号——线上 89 条通知侧噪声 vs 0 条真账）"
       },
       {
         "id": "precheck.verb_only",

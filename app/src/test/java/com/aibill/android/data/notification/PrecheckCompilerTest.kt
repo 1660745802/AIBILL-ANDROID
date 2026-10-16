@@ -5,6 +5,7 @@ import com.aibill.android.domain.notification.PrecheckRuleSpec
 import com.aibill.android.domain.notification.PrecheckRules
 import com.aibill.android.domain.notification.PrecheckSpec
 import com.aibill.android.domain.notification.PrecheckVerdict
+import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.util.AppLogger
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -57,18 +58,18 @@ class PrecheckCompilerTest {
         val withoutI = compile(PrefilterTestHarness.precheckSpec(moneyFlags = "g", rules = rules))
         assertTrue(withoutI.signals.containsKey("money"))
         assertTrue(
-            PrecheckJudge.evaluate("RMB 100", withoutI) is PrecheckVerdict.Blocked,
+            PrecheckJudge.evaluate("RMB 100", withoutI, SourceChannel.NLS) is PrecheckVerdict.Blocked,
             "丢 'i' 后 'RMB 100' 应被判无信号（正是服务端修过的那次两端相反）",
         )
 
         val withI = compile(PrefilterTestHarness.precheckSpec(moneyFlags = "gi", rules = rules))
-        val verdict = PrecheckJudge.evaluate("RMB 100", withI)
+        val verdict = PrecheckJudge.evaluate("RMB 100", withI, SourceChannel.NLS)
         assertTrue(
             verdict is PrecheckVerdict.Pass,
             "money.flags='gi' 时 'RMB 100' 应命中金额 → 放行去调模型，实际=$verdict",
         )
         assertTrue(
-            PrecheckJudge.evaluate("rmb 100", withI) is PrecheckVerdict.Pass,
+            PrecheckJudge.evaluate("rmb 100", withI, SourceChannel.NLS) is PrecheckVerdict.Pass,
             "'rmb 100' 也应命中",
         )
     }

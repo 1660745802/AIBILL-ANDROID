@@ -4,6 +4,7 @@ import com.aibill.android.domain.notification.MarketingSuffixCleaner
 import com.aibill.android.domain.notification.PrecheckJudge
 import com.aibill.android.domain.notification.PrecheckRules
 import com.aibill.android.domain.notification.PrecheckVerdict
+import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.util.AppLogger
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
@@ -59,7 +60,6 @@ class PrecheckCorpusReconTest {
         val clientRuleId: String?,
         val clientBlocked: Boolean,
     )
-
     private enum class Severity(val label: String) {
         P0_FALSE_KILL("误杀 P0（expect_txn=true 却被拦，丢真账）"),
         OVER_AGGRESSIVE("超判（服务端要放行，客户端拦）"),
@@ -72,15 +72,28 @@ class PrecheckCorpusReconTest {
     @DisplayName("21 条语料：客户端判决逐条对账服务端 dump（P0 不误杀 / 拦截 rule_id 逐字相符）")
     fun reconcileAgainstServerDump() {
         val rules = PrecheckRealPayload.compileRules(logger)
-        // 前置：真载荷可用且就是那 14 条（对账本身若跑在残缺链上会得到假结论）
+        // 前置：真载荷可用且就是那 15 条（对账本身若跑在残缺链上会得到假结论）
         assertTrue(rules.available, "真载荷必须编译出可用判据链")
-        assertEquals(14, rules.rules.size)
+        assertEquals(15, rules.rules.size)
 
         val cases = loadServerCases()
         assertEquals(21, cases.size, "服务端 dump 语料条数变了，请同步夹具与 hash")
 
-        val rows = cases.map { evaluate(it, rules) }
-        val reportFile = writeReport(renderReport(rows))
+        // ⚠️ `manual` 语料不属于客户端：预筛只在 nls/sms/a11y 三个入口跑，
+        // 客户端**不存在**「手打短句」这个入口（那是服务端 App 自己的来源）。
+        // 它们仍要保留计数并写进报告（不能静默消失），但不参与判决对账。
+        val manual = cases.filter { clientChannel(it) == null }
+        val rows = cases.mapNotNull { case ->
+            val channel = clientChannel(case) ?: return@mapNotNull null
+            evaluate(case, rules, channel)
+        }
+        assertEquals(
+            cases.size - manual.size,
+            rows.size,
+            "除 manual 外每条语料都必须能被某个客户端入口求值；不该有第三条路",
+        )
+
+        val reportFile = writeReport(renderReport(rows, manual))
 
         val classified = rows.map { it to classify(it) }
         val hard = classified.filter { (_, cats) -> cats.any { it in HARD } }
@@ -115,21 +128,34 @@ class PrecheckCorpusReconTest {
      * 所以这里把**同一条链的 tier 全改成 0** 再用生产 judge 跑一次：matcher / signals 不变，
      * 首命中必然以 `Blocked(ruleId)` 暴露出来。命中集合与真实链逐字一致，不复制任何匹配逻辑。
      */
-    private fun clientMatchedRuleId(input: String, rules: PrecheckRules): String? {
+    private fun clientMatchedRuleId(input: String, rules: PrecheckRules, channel: SourceChannel): String? {
         val probe = rules.copy(rules = rules.rules.map { it.copy(tier = 0) })
-        return (PrecheckJudge.evaluate(input, probe) as? PrecheckVerdict.Blocked)?.ruleId
+        return (PrecheckJudge.evaluate(input, probe, channel) as? PrecheckVerdict.Blocked)?.ruleId
     }
 
-    private fun evaluate(case: ServerCase, rules: PrecheckRules): Row {
+    private fun evaluate(case: ServerCase, rules: PrecheckRules, channel: SourceChannel): Row {
         // 与预筛链同口径：先过营销后缀清洗（空词表下 = 原文），再喂判据
         val input = MarketingSuffixCleaner.clean(case.text, suffixCutoffs = emptyList(), commaKeywords = emptyList())
-        val verdict = PrecheckJudge.evaluate(input, rules)
+        val verdict = PrecheckJudge.evaluate(input, rules, channel)
         return Row(
             case = case,
-            clientRuleId = clientMatchedRuleId(input, rules),
+            clientRuleId = clientMatchedRuleId(input, rules, channel),
             clientBlocked = verdict is PrecheckVerdict.Blocked,
         )
     }
+
+    /**
+     * 语料入口 → 客户端入口。**null = 客户端不跑这条**（目前只有 `manual`）。
+     *
+     * 与服务端 `classifyNotification(rawInput, channel)` 同一份入口名（小写）。
+     */
+    private fun clientChannel(case: ServerCase): SourceChannel? =
+        when (case.channel?.lowercase()) {
+            "nls" -> SourceChannel.NLS
+            "sms" -> SourceChannel.SMS
+            "a11y" -> SourceChannel.A11Y
+            else -> null
+        }
 
     private fun classify(row: Row): Set<Severity> = buildSet {
         if (row.case.shouldCallAi && row.clientBlocked) {
@@ -187,7 +213,7 @@ class PrecheckCorpusReconTest {
         return file
     }
 
-    private fun renderReport(rows: List<Row>): String {
+    private fun renderReport(rows: List<Row>, skippedManual: List<ServerCase>): String {
         val hard = rows.filter { classify(it).any { s -> s in HARD } }
         val soft = rows.filter { classify(it).isNotEmpty() && classify(it).none { s -> s in HARD } }
         val falseKills = hard.count { Severity.P0_FALSE_KILL in classify(it) }
@@ -219,6 +245,11 @@ class PrecheckCorpusReconTest {
             appendLine("- 硬差异（P0 误杀 / 超判 / 拦截 rule_id 不符）：**${hard.size}**")
             appendLine("- P0 误杀（`expect_txn=true` 却被拦）：**$falseKills**")
             appendLine("- 软差异（可接受）：**${soft.size}**（其中漏挡 $missed、放行 rule_id 口径差 $idQuota）")
+            appendLine("- **跳过（客户端无此入口）：${skippedManual.size}** —— ${skippedManual.joinToString { it.id }}")
+            appendLine(
+                "  > `manual`（手打短句）是服务端自己的来源，客户端预筛只跑 nls/sms/a11y，" +
+                    "因此不在客户端对账范围；服务端侧仍按同一判据链裁决。",
+            )
             if (hard.isEmpty() && soft.isEmpty()) {
                 appendLine("- ${rows.size} 条**全部一致**。")
             }
