@@ -34,4 +34,26 @@ interface CaptureDropHandler {
         anchors: List<String> = emptyList(),
         receivedAt: Long = System.currentTimeMillis(),
     )
+
+    /**
+     * 这个丢弃点**当前会不会被采样**——adapter 据此决定要不要为它付「遍历取原文」的代价。
+     *
+     * ## 为什么必须有这个问句
+     *
+     * A11Y 的早退分支存在的意义就是**不遍历节点树**（省成本）：`debounce` 三天 76667 次、
+     * 白名单外连规则表都不用查。无条件 `collectAllNodeTexts` 等于把「早退」变成
+     * 「全量扫描」——用最大的一类事件，去换最小的一类收益。
+     *
+     * 但**不采内容**有更硬的后果：`CaptureSampleImpl` 的 `content_hash` 是对
+     * `text` 取的，`text == null` 时恒为 `sha256("")`，窗口内同 `blocked_by` 的样本
+     * 会被去重压成 **1 条**。于是最可能藏真账的那类（`not_payment_activity`，三天 9235 次）
+     * 永远只能拿到「每窗口 1 条空样本」。
+     *
+     * 折中：**归表标了 `sample` 才遍历**，其余早退点保持零成本。当前 6 条 `sample` 策略里
+     * 只有 3 条落在早退分支（`not_whitelisted` / `not_payment_activity` / `no_success_keyword`）。
+     *
+     * 口径必须与 [onDrop] 内部那次查表**逐字一致**（同一 `CaptureDrop` → 同一上报键），
+     * 否则会出现「adapter 付了遍历的代价、采样侧却按 `block` 丢掉」的空转。
+     */
+    fun needsRawText(drop: CaptureDrop): Boolean
 }

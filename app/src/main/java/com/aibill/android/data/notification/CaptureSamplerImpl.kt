@@ -1,11 +1,19 @@
 package com.aibill.android.data.notification
 
+import com.aibill.android.data.local.dao.CaptureSampleDao
+import com.aibill.android.data.local.entity.CaptureSampleEntity
 import com.aibill.android.domain.a11y.A11yRecognition
 import com.aibill.android.domain.notification.CaptureKind
 import com.aibill.android.domain.notification.CaptureSample
 import com.aibill.android.domain.notification.CaptureSampleInput
 import com.aibill.android.domain.notification.CaptureSampler
+import com.aibill.android.domain.notification.PrefilterReport
 import com.aibill.android.util.AppLogger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.security.MessageDigest
 import java.time.Instant
 import java.time.ZoneId
@@ -40,11 +48,27 @@ import javax.inject.Singleton
  * 被四条路径并发调用（NLS/SMS/A11Y 主线程 + 预筛协程），全部状态在一个对象锁里改，
  * 且只做内存操作 —— 采样绝不能阻塞用户操作（best-effort 的底线）。
  * 队列**只在内存**（进程重启丢）：P1 样本是信息收集，不是账，不值得为它写磁盘。
+ *
+ * ## 但内容要留盘（可观测性，与上报并行）
+ *
+ * 上面那句「不值得为它写磁盘」针对的是**发送队列**，它确实不落盘；
+ * 可 2026-10 的线上事故恰恰吃了这个亏：用户报「有几笔账单面板里看不到」，
+ * 而 `not_payment_activity` / `no_success_keyword` / `root_mismatch` 三条规则
+ * **一个字的正文都没留下**（上报要去重、要限流，且随进程消失）→ 事后不可还原。
+ *
+ * 所以入队时**额外镜像**一份到 [CaptureSampleDao]（Room），与内存队列**并行、互不影响**：
+ * - 上报口径（去重/限流/发送/重发）**一个字都没改**；
+ * - 只有 `text != null` 的样本才落库（无内容的行对查漏账零信息量，只会挤占查询窗口）；
+ * - 写入在独立 [scope] 上做，**不拖慢热路径**；失败只 warn，绝不影响上报。
  */
 @Singleton
 class CaptureSamplerImpl @Inject constructor(
     private val appLogger: AppLogger,
+    private val captureSampleDao: CaptureSampleDao,
 ) : CaptureSampler {
+
+    /** 本地留存的写入/裁剪用；与上报队列彻底解耦，且不占用调用方线程。 */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** 待发样本（`drain` 取走）。 */
     private val pending = ArrayDeque<CaptureSample>()
@@ -76,8 +100,9 @@ class CaptureSamplerImpl @Inject constructor(
 
     override fun record(input: CaptureSampleInput) {
         val sample = build(input)
+        val dayChanged: Boolean
         synchronized(lock) {
-            rotateDayIfNeeded(dayKeyOf(sample.receivedAt))
+            dayChanged = rotateDayIfNeeded(dayKeyOf(sample.receivedAt))
             val dedupKey = "${sample.contentHash}|${sample.blockedBy}"
             if (!seenInWindow.add(dedupKey)) {
                 duplicates++
@@ -100,6 +125,58 @@ class CaptureSamplerImpl @Inject constructor(
             totalToday[day] = (totalToday[day] ?: 0) + 1
             perRuleToday[ruleKey] = (perRuleToday[ruleKey] ?: 0) + 1
         }
+        // 只有真有内容的样本才值得留：text==null 的行查不出任何东西，
+        // 只会把表撑满、将有内容的行挤出查询窗口。
+        if (sample.text != null) mirrorToArchive(sample)
+        // 跨天才裁剪：白天才有「昨天以前」这个概念，而且天然摊薄到每天一次。
+        if (dayChanged) pruneArchive()
+    }
+
+    /**
+     * 镜像一条样本到本地留存（Room）。
+     *
+     * 失败只 warn：留存是**旁路可观测性**，绝不能因为它把上报或记账带崩。
+     * [CancellationException] 原样传播（破坏它会让「进程回收」被当成落库失败）。
+     */
+    private fun mirrorToArchive(sample: CaptureSample) {
+        scope.launch {
+            try {
+                captureSampleDao.insert(
+                    CaptureSampleEntity(
+                        channel = PrefilterReport.channelName(sample.channel),
+                        packageName = sample.packageName,
+                        kind = sample.kind.wire,
+                        stage = sample.stage.wire,
+                        blockedBy = sample.blockedBy,
+                        receivedAt = sample.receivedAt,
+                        text = sample.text,
+                        textLen = sample.textLen,
+                        contentHash = sample.contentHash,
+                        tier = sample.tier,
+                        redacted = sample.redacted,
+                    )
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appLogger.warn("SAMPLER", "样本落库失败（不影响上报）: ${e.message}")
+            }
+        }
+    }
+
+    /** 30 天时间窗 + 条数兜底（与服务端 `client_capture_samples` 保留期一致，契约 §11.4）。 */
+    private fun pruneArchive() {
+        val before = System.currentTimeMillis() - ARCHIVE_RETENTION_MS
+        scope.launch {
+            try {
+                captureSampleDao.cleanBefore(before)
+                captureSampleDao.trimToKeep(ARCHIVE_MAX_ROWS)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appLogger.warn("SAMPLER", "样本留存裁剪失败: ${e.message}")
+            }
+        }
     }
 
     override fun drain(): List<CaptureSample> = synchronized(lock) {
@@ -113,12 +190,13 @@ class CaptureSamplerImpl @Inject constructor(
         Counters(duplicates = duplicates, droppedPerRule = droppedPerRule, droppedTotal = droppedTotal)
     }
 
-    /** 跨天时清掉计数（只留当天，防地图无界增长）。 */
-    private fun rotateDayIfNeeded(day: String) {
-        if (totalToday.keys.all { it == day }) return
+    /** 跨天时清掉计数（只留当天，防地图无界增长）。返回 true = 确实跨了天。 */
+    private fun rotateDayIfNeeded(day: String): Boolean {
+        if (totalToday.keys.all { it == day }) return false
         totalToday.keys.retainAll { it == day }
         perRuleToday.keys.retainAll { it.substringBefore('|') == day }
         warnedKeys.retainAll { it.contains(day) }
+        return true
     }
 
     private fun warnOnce(key: String, message: String) {
@@ -211,6 +289,15 @@ class CaptureSamplerImpl @Inject constructor(
         const val MAX_FRAGMENTS = 5
 
         const val FRAGMENT_SEPARATOR = " … "
+
+        /** 本地留存保留 30 天（与服务端 `client_capture_samples` 一致，契约 §11.4）。 */
+        const val ARCHIVE_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
+
+        /**
+         * 条数兜底：正常路径 30 天 ≤ 200×30 = 6000 条，根本触不到；
+         * 只防「某天限流被绕过」这类异常把表写爆。
+         */
+        const val ARCHIVE_MAX_ROWS = 8_000
 
         val BEIJING_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
 

@@ -33,7 +33,7 @@ class CaptureSamplerTest {
     private val t0: Long = ZonedDateTime.of(2026, 10, 14, 12, 0, 0, 0, ZoneId.of("Asia/Shanghai"))
         .toInstant().toEpochMilli()
 
-    private fun sampler() = CaptureSamplerImpl(logger)
+    private fun sampler() = CaptureSamplerImpl(logger, archiveDao())
 
     private fun notification(
         text: String?,

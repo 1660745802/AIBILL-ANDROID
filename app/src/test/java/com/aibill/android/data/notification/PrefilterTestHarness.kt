@@ -56,7 +56,7 @@ internal object PrefilterTestHarness {
         circuitBreaker: AiCircuitBreaker = mockk(relaxed = true),
         generation: Int = 0,
         stats: PrefilterStats = PrefilterStatsImpl(),
-        sampler: CaptureSampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true))),
+        sampler: CaptureSampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true)), archiveDao()),
     ): NotificationPrefilter = newPrefilterWithSource(
         source = InMemoryNotificationRuleSource(rules, generation),
         ownPackage = ownPackage,
@@ -73,7 +73,7 @@ internal object PrefilterTestHarness {
         dao: NotificationRecordDao = emptyDao(),
         circuitBreaker: AiCircuitBreaker = mockk(relaxed = true),
         stats: PrefilterStats = PrefilterStatsImpl(),
-        sampler: CaptureSampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true))),
+        sampler: CaptureSampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true)), archiveDao()),
     ): NotificationPrefilter {
         val context = mockk<Context>(relaxed = true)
         every { context.packageName } returns ownPackage

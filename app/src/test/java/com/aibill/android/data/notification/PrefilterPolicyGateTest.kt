@@ -36,7 +36,7 @@ class PrefilterPolicyGateTest {
         .toInstant().toEpochMilli()
 
     private val stats = PrefilterStatsImpl()
-    private val sampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true)))
+    private val sampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true)), archiveDao())
 
     private fun prefilter(policy: Map<String, String>): NotificationPrefilter =
         PrefilterTestHarness.newPrefilter(

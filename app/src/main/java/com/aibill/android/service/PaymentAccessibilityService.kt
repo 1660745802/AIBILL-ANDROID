@@ -148,8 +148,13 @@ class PaymentAccessibilityService : AccessibilityService() {
 
         refreshRulesIfNeeded()
         if (packageName !in paymentApps) {
-            // 白名单外不做树遍历（成本），因此没有内容可采：只归因（package + 规则）
-            captureDropHandler.onDrop(CaptureDrop.A11Y_NOT_WHITELISTED, packageName, receivedAt = clock.now().epochMillis)
+            // 白名单外默认不做树遍历（成本）；只有归表对这个丢弃点标了 sample 才付这个代价。
+            dropEarly(
+                drop = CaptureDrop.A11Y_NOT_WHITELISTED,
+                packageName = packageName,
+                samePkgRoot = rootInActiveWindow?.takeIf { it.packageName?.toString() == packageName },
+                receivedAt = clock.now().epochMillis,
+            )
             return
         }
 
@@ -184,16 +189,18 @@ class PaymentAccessibilityService : AccessibilityService() {
                     currentActivity[packageName] = it
                 }
                 ?: run {
-                    captureDropHandler.onDrop(CaptureDrop.A11Y_NO_ACTIVITY, packageName, receivedAt = clock.now().epochMillis)
+                    dropEarly(CaptureDrop.A11Y_NO_ACTIVITY, packageName, root, clock.now().epochMillis)
                     return
                 }
             if (!isPotentialPaymentActivity(activity, packageName)) {
-                captureDropHandler.onDrop(CaptureDrop.A11Y_NOT_PAYMENT_ACTIVITY, packageName, receivedAt = clock.now().epochMillis)
+                // 三天 9235 次、最可能藏真账的一类：这里以前完全不采内容，
+                // 导致 content_hash 恒为 sha256("")、窗口内被去重压成 1 条空样本。
+                dropEarly(CaptureDrop.A11Y_NOT_PAYMENT_ACTIVITY, packageName, root, clock.now().epochMillis)
                 return
             }
             val tokenStr = currentPageToken[packageName]
             if (tokenStr == null) {
-                captureDropHandler.onDrop(CaptureDrop.A11Y_NO_PAGE_TOKEN, packageName, receivedAt = clock.now().epochMillis)
+                dropEarly(CaptureDrop.A11Y_NO_PAGE_TOKEN, packageName, root, clock.now().epochMillis)
                 return
             }
             token = PageToken(tokenStr)
@@ -204,21 +211,73 @@ class PaymentAccessibilityService : AccessibilityService() {
         // ── phase 1：节流（返回 Throttled 则不遍历树） ──
         val now = clock.now()
         if (gate.beforeScan(token, kind, now) == ScanDecision.Throttled) {
-            captureDropHandler.onDrop(CaptureDrop.A11Y_DEBOUNCE, packageName, receivedAt = now.epochMillis)
+            // 三天 76667 次：归表没给它 sample，所以恒定零遍历（早退的意义就在这里）。
+            dropEarly(CaptureDrop.A11Y_DEBOUNCE, packageName, usableRoot, now.epochMillis)
             return
         }
 
         processSnapshot(usableRoot, packageName, activity, token, now)
     }
 
+    /**
+     * 早退分支的统一出口：**先问要不要内容，再决定要不要遍历**。
+     *
+     * ## 为什么不无条件 `collectAllNodeTexts`
+     *
+     * 早退分支存在的意义就是「不遍历树」（省成本）：`debounce` 三天 76667 次，
+     * 白名单外连规则表都不用查。无条件遍历会把「早退」变成「全量扫描」，
+     * 拿最大的一类事件去换最小的一类收益。
+     *
+     * ## 为什么不干脆不采
+     *
+     * `CaptureSamplerImpl` 的 `content_hash` 是对 `text` 取的；`text == null` 时恒为
+     * `sha256("")`，窗口内同 `blocked_by` 的样本会被去重压成 **1 条**。于是
+     * `not_payment_activity`（三天 9235 次、最可能藏真账的一类）永远只能拿到空样本。
+     *
+     * 所以折中在 [CaptureDropHandler.needsRawText]：归表标了 `sample` 才遍历。
+     *
+     * ## [samePkgRoot] 为什么必须同包
+     *
+     * `root_mismatch` 的 root 属于**另一个 App**。采它既会把别的 App 的文本错记到
+     * [packageName] 头上，也超出了「采集本 App 的通知」这条边界，故那处恒传 null。
+     *
+     * ## anchors 为什么留空
+     *
+     * 早退点**没跑过 gate**，本就没有「命中了哪个成功词/排除词」可言。
+     * 采样侧 [com.aibill.android.data.notification.CaptureSamplerImpl.fragment] 会退化为
+     * 「首个金额候选前后各 30 字」——而这些丢弃点绝大多数正是与金额/页型有关的。
+     */
+    private fun dropEarly(
+        drop: CaptureDrop,
+        packageName: String,
+        samePkgRoot: AccessibilityNodeInfo?,
+        receivedAt: Long,
+    ) {
+        if (samePkgRoot == null || !captureDropHandler.needsRawText(drop)) {
+            captureDropHandler.onDrop(drop, packageName, receivedAt = receivedAt)
+            return
+        }
+        val texts = mutableListOf<String>()
+        collectAllNodeTexts(samePkgRoot, texts)
+        captureDropHandler.onDrop(
+            drop = drop,
+            packageName = packageName,
+            rawText = texts.takeIf { it.isNotEmpty() }?.joinToString(PAGE_TEXT_SEPARATOR),
+            receivedAt = receivedAt,
+        )
+    }
+
     /** root 校验：null → NO_ROOT，跨包 → ROOT_MISMATCH。返回 false = 已记档并应早退。 */
     private fun checkRoot(root: AccessibilityNodeInfo?, packageName: String): Boolean {
+        // 两处都传 null：**没有同包根节点**。root_mismatch 的 root 属于另一个 App，
+        // 采它既会把别的 App 的文本错记到 packageName 头上，也超出了「采集本 App」的边界。
+        // 文本为 null 不影响其余流程（采样侧照常去重/限流，只是拿不到内容）。
         if (root == null) {
-            captureDropHandler.onDrop(CaptureDrop.A11Y_NO_ROOT, packageName)
+            dropEarly(CaptureDrop.A11Y_NO_ROOT, packageName, samePkgRoot = null, receivedAt = clock.now().epochMillis)
             return false
         }
         if (!A11yRecognition.isRootForEvent(root.packageName?.toString(), packageName)) {
-            captureDropHandler.onDrop(CaptureDrop.A11Y_ROOT_MISMATCH, packageName)
+            dropEarly(CaptureDrop.A11Y_ROOT_MISMATCH, packageName, samePkgRoot = null, receivedAt = clock.now().epochMillis)
             return false
         }
         return true

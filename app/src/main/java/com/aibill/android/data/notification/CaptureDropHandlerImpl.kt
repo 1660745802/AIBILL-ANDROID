@@ -38,6 +38,12 @@ class CaptureDropHandlerImpl @Inject constructor(
     /** 已经提示过「捕获层不支持 forward」的 rule_id（每进程每规则一次）。 */
     private val forwardWarned = ConcurrentHashMap.newKeySet<String>()
 
+    override fun needsRawText(drop: CaptureDrop): Boolean = actionOf(drop) == BlockAction.SAMPLE
+
+    /** 归表动作：上报键只有这一处算法，[onDrop] 与 [needsRawText] 必须共用。 */
+    private fun actionOf(drop: CaptureDrop): BlockAction =
+        ruleSource.snapshot().actionFor(CaptureFunnelStats.reportKey(CaptureFunnelStats.droppedStage(drop)))
+
     override fun onDrop(
         drop: CaptureDrop,
         packageName: String,
@@ -48,7 +54,7 @@ class CaptureDropHandlerImpl @Inject constructor(
         stats.recordDropped(drop)
 
         val ruleId = CaptureFunnelStats.reportKey(CaptureFunnelStats.droppedStage(drop))
-        when (ruleSource.snapshot().actionFor(ruleId)) {
+        when (actionOf(drop)) {
             BlockAction.BLOCK -> Unit
             BlockAction.FORWARD -> {
                 if (forwardWarned.add(ruleId)) {

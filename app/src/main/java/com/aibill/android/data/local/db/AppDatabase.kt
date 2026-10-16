@@ -4,12 +4,14 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import com.aibill.android.data.local.dao.AccountDao
 import com.aibill.android.data.local.dao.AppLogDao
+import com.aibill.android.data.local.dao.CaptureSampleDao
 import com.aibill.android.data.local.dao.CategoryDao
 import com.aibill.android.data.local.dao.CategoryRuleDao
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.dao.PendingTransactionDao
 import com.aibill.android.data.local.entity.AccountEntity
 import com.aibill.android.data.local.entity.AppLogEntity
+import com.aibill.android.data.local.entity.CaptureSampleEntity
 import com.aibill.android.data.local.entity.CategoryEntity
 import com.aibill.android.data.local.entity.CategoryRuleEntity
 import com.aibill.android.data.local.entity.NotificationRecordEntity
@@ -23,8 +25,9 @@ import com.aibill.android.data.local.entity.PendingTransactionEntity
         NotificationRecordEntity::class,
         CategoryRuleEntity::class,
         AppLogEntity::class,
+        CaptureSampleEntity::class,
     ],
-    version = 10, // v9 → v10: pending_transactions 加 parse_log_id（列保留；其消费方 parse-feedback 已下线）
+    version = 11, // v10 → v11: 新增 capture_samples（被拦内容本地留存，见 CaptureSampleEntity）
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -35,6 +38,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun notificationRecordDao(): NotificationRecordDao
     abstract fun categoryRuleDao(): CategoryRuleDao
     abstract fun appLogDao(): AppLogDao
+    abstract fun captureSampleDao(): CaptureSampleDao
 
     companion object {
         const val DATABASE_NAME = "aibill.db"

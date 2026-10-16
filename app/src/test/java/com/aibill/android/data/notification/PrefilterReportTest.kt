@@ -40,7 +40,7 @@ class PrefilterReportTest {
     private fun reporter(
         stats: PrefilterStatsImpl,
         captureFunnelStats: CaptureFunnelStatsImpl = CaptureFunnelStatsImpl(),
-        sampler: CaptureSampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true))),
+        sampler: CaptureSampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true)), archiveDao()),
         failWhen: () -> Boolean = { false },
         unknownIds: List<String>? = null,
     ): Pair<PrefilterReportImpl, MutableList<FilterReportRequest>> {

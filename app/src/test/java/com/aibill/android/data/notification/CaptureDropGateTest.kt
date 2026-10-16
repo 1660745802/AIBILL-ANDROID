@@ -9,6 +9,7 @@ import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.util.AppLogger
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -30,7 +31,7 @@ class CaptureDropGateTest {
         .toInstant().toEpochMilli()
 
     private val stats = CaptureFunnelStatsImpl()
-    private val sampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true)))
+    private val sampler = CaptureSamplerImpl(AppLogger(mockk(relaxed = true)), archiveDao())
 
     private fun handler(policy: Map<String, String>): CaptureDropHandler = CaptureDropHandlerImpl(
         stats = stats,
@@ -133,5 +134,57 @@ class CaptureDropGateTest {
         assertEquals(null, sample.text)
         assertEquals(0, sample.textLen)
         assertEquals(key, sample.blockedBy)
+    }
+
+    // ─────────────────── needsRawText：adapter 要不要付「遍历取原文」的代价 ───────────────────
+
+    @Test
+    @DisplayName("needsRawText：只有归表给了 sample 的丢弃点才返回 true")
+    fun `needsRawText 只认 sample`() {
+        val policy = mapOf(excludedKey to "sample")
+        val handler = handler(policy)
+
+        assertTrue(handler.needsRawText(CaptureDrop.A11Y_EXCLUDED), "sample → 要采内容")
+        // 其余早退点归表里没给 sample（或给了 block/forward）→ 不遍历，保住「早退」的成本优势。
+        assertFalse(handler.needsRawText(CaptureDrop.A11Y_DEBOUNCE), "三天 76667 次，绝不能为它遍历")
+        assertFalse(handler.needsRawText(CaptureDrop.A11Y_ROOT_MISMATCH))
+        assertFalse(handler.needsRawText(CaptureDrop.A11Y_NO_ROOT))
+    }
+
+    @Test
+    @DisplayName("needsRawText 与 onDrop 的查表口径必须一致（否则白付遍历代价）")
+    fun `needsRawText 与 onDrop 同源`() {
+        // 同一个 drop 上，两个问句必须给出一致的动作，否则会出现
+        // 「adapter 遍历了、采样侧却按 block 丢掉」的空转。
+        val key = CaptureFunnelStats.reportKey(
+            CaptureFunnelStats.droppedStage(CaptureDrop.A11Y_NOT_PAYMENT_ACTIVITY),
+        )
+        val h = handler(mapOf(key to "sample"))
+        assertTrue(h.needsRawText(CaptureDrop.A11Y_NOT_PAYMENT_ACTIVITY))
+        h.onDrop(
+            drop = CaptureDrop.A11Y_NOT_PAYMENT_ACTIVITY,
+            packageName = "com.tencent.mm",
+            rawText = "账单详情 ￥88.00",
+            receivedAt = t0,
+        )
+        assertEquals(1, sampler.drain().size, "说要采，就必须真采到")
+
+        // 反向：block 时两边都要说「不采」
+        val h2 = handler(mapOf(key to "block"))
+        assertFalse(h2.needsRawText(CaptureDrop.A11Y_NOT_PAYMENT_ACTIVITY))
+        h2.onDrop(
+            drop = CaptureDrop.A11Y_NOT_PAYMENT_ACTIVITY,
+            packageName = "com.tencent.mm",
+            rawText = "账单详情 ￥88.00",
+            receivedAt = t0,
+        )
+        assertTrue(sampler.drain().isEmpty(), "说 block 就不采")
+    }
+
+    @Test
+    @DisplayName("needsRawText：forward 在捕获层视作 block（与 onDrop 一致）→ 不采")
+    fun `needsRawText 对 forward 返回 false`() {
+        val h = handler(mapOf(excludedKey to "forward"))
+        assertFalse(h.needsRawText(CaptureDrop.A11Y_EXCLUDED), "forward 不采内容，否则白遍历")
     }
 }

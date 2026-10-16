@@ -3,6 +3,7 @@ package com.aibill.android.di
 import android.content.Context
 import androidx.room.Room
 import com.aibill.android.data.local.dao.AccountDao
+import com.aibill.android.data.local.dao.CaptureSampleDao
 import com.aibill.android.data.local.dao.CategoryDao
 import com.aibill.android.data.local.dao.CategoryRuleDao
 import com.aibill.android.data.local.dao.NotificationRecordDao
@@ -67,6 +68,37 @@ object DatabaseModule {
                 // 可空：手工/外部静默入账没有 AI 解析，服务端预筛挡下的形态也没有日志 id。
                 androidx.room.migration.Migration(9, 10) { db ->
                     db.execSQL("ALTER TABLE pending_transactions ADD COLUMN parse_log_id INTEGER")
+                },
+                // v10 → v11：被拦内容的**本地留存**（可观测性，不是上报队列）。
+                // 新增表而非复用 app_logs：日志表 2 天就清、且 5000 条上限对 a11y 密度不够——
+                // 2026-10 查「漏账」失败正是因为三条 a11y 丢弃规则没落过任何正文。
+                // ⚠️ 列名/类型/可空性/索引名必须与 CaptureSampleEntity 的 @Entity 严格一致，
+                // 否则 Room 迁移后的 schema 校验会抛 IllegalStateException。
+                androidx.room.migration.Migration(10, 11) { db ->
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `capture_samples` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`channel` TEXT NOT NULL, " +
+                            "`package_name` TEXT NOT NULL, " +
+                            "`kind` TEXT NOT NULL, " +
+                            "`stage` TEXT NOT NULL, " +
+                            "`blocked_by` TEXT NOT NULL, " +
+                            "`received_at` INTEGER NOT NULL, " +
+                            "`text` TEXT, " +
+                            "`text_len` INTEGER NOT NULL, " +
+                            "`content_hash` TEXT NOT NULL, " +
+                            "`tier` INTEGER, " +
+                            "`redacted` INTEGER NOT NULL, " +
+                            "`created_at` INTEGER NOT NULL)"
+                    )
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_capture_samples_package_name_blocked_by` " +
+                            "ON `capture_samples` (`package_name`, `blocked_by`)"
+                    )
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_capture_samples_received_at` " +
+                            "ON `capture_samples` (`received_at`)"
+                    )
                 }
             )
             // 迁移链从 5→6 起：前提「v5 是项目首个发布 schema」写在 AppDatabase.companion 注释里。
@@ -104,4 +136,8 @@ object DatabaseModule {
     @Singleton
     fun provideAppLogDao(db: AppDatabase): com.aibill.android.data.local.dao.AppLogDao =
         db.appLogDao()
+
+    @Provides
+    @Singleton
+    fun provideCaptureSampleDao(db: AppDatabase): CaptureSampleDao = db.captureSampleDao()
 }
