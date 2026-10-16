@@ -13,7 +13,7 @@ import androidx.room.PrimaryKey
  * 必须有复合索引，否则全表扫描会随使用时长线性变慢：
  * - DB 1s 去重：`package_name + content + received_at`（[com.aibill.android.data.local.dao.NotificationRecordDao.findDuplicate]）
  * - 跨渠道判重：`parsed_amount + status + received_at`
- *   （[com.aibill.android.data.local.dao.NotificationRecordDao.findRecentConfirmedFromOtherChannel]）
+ *   （[com.aibill.android.data.local.dao.NotificationRecordDao.findRecentSameAmount]）
  *
  * ⚠️ 索引与 `Migration(8, 9)` 必须严格一致（Room 迁移后会做 schema 校验），
  * 名字由 Room 约定生成：`index_<表名>_<列1>_<列2>...`。

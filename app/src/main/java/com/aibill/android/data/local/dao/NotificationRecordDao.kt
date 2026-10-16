@@ -58,10 +58,17 @@ interface NotificationRecordDao {
     suspend fun findDuplicate(packageName: String, content: String, since: Long): NotificationRecordEntity?
 
     /**
-     * 跨包名去重：查 60s 内不同包名已处理（confirmed 或 parsed）的同金额记录。
+     * 同额去重（跨进程兜底）：查 [dedupWindowSeconds] 内已处理（confirmed 或 parsed）的同金额记录。
+     *
+     * ⚠️ **不分包名**（旧版叫 `findRecentConfirmedFromOtherChannel`、带 `package_name !=` 排除）：
+     * 口径已随「短时同额当作一个账单」对齐——同一家、同一笔消费的多个通知视图
+     * （线上：支付宝 `支付成功 ￥65.06…完成` 与 32s 后的 `…付款方式`）必须被当成同一笔。
+     *
+     * 这一层是内存层失效时唯一的兜底，而**进程被杀正是这个 App 的常态**
+     * （无障碍/NLS 服务被 ROM 杀后重连），所以它不能只覆盖跨包名。
      */
-    @Query("SELECT * FROM notification_records WHERE parsed_amount = :amount AND status IN ('confirmed', 'parsed') AND received_at > :since AND package_name != :excludePackageName LIMIT 1")
-    suspend fun findRecentConfirmedFromOtherChannel(amount: Int, since: Long, excludePackageName: String): NotificationRecordEntity?
+    @Query("SELECT * FROM notification_records WHERE parsed_amount = :amount AND status IN ('confirmed', 'parsed') AND received_at > :since LIMIT 1")
+    suspend fun findRecentSameAmount(amount: Int, since: Long): NotificationRecordEntity?
 
     @Query("DELETE FROM notification_records")
     suspend fun deleteAll()

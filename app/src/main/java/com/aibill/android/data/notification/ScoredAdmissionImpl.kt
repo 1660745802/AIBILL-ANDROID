@@ -3,7 +3,6 @@ package com.aibill.android.data.notification
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.domain.notification.ParsedTransaction
 import com.aibill.android.domain.notification.ScoredAdmission
-import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.notification.NotificationRuleSource
 import com.aibill.android.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
@@ -77,17 +76,15 @@ class ScoredAdmissionImpl @Inject constructor(
         CoroutineScope(SupervisorJob() + (testDispatcher ?: kotlinx.coroutines.Dispatchers.IO))
     }
 
-    /** 内存级已认领记录（用于跨渠道去重，比 DB 查询更快更准） */
+    /** 内存级已认领记录（用于同额去重，比 DB 查询更快；DB 层在进程重启后仍能兜底）。 */
     private data class ProcessedEntry(
         val amount: Int,
-        val channel: SourceChannel,
-        val packageName: String,
         val time: Long,
     )
     private val recentProcessed = ConcurrentLinkedDeque<ProcessedEntry>()
 
     override fun submit(candidate: ParsedTransaction, onAdmitted: suspend (ParsedTransaction) -> Unit) {
-        // 判定段（读窗口 → 同源 flush / 跨渠道择优 / 开新窗口）必须原子：
+        // 判定段（读窗口 → 同额择优 / 开新窗口）必须原子：
         // submit 从 NLS/SMS/A11Y 三条协程并发进来，并发的同金额两条会各自看到
         // 「池子为空」而互相覆盖窗口，先到那笔被静默丢掉。
         synchronized(this) {
@@ -97,40 +94,29 @@ class ScoredAdmissionImpl @Inject constructor(
             if (existing != null &&
                 (candidate.capture.receivedAt - existing.candidate.capture.receivedAt) <= scoreWindowMs
             ) {
-                val sameSource = existing.candidate.capture.channel == candidate.capture.channel &&
-                    existing.candidate.capture.packageName == candidate.capture.packageName
-                if (sameSource) {
-                    // 同渠道同包名同金额 = 两笔真实交易（如 10s 内两杯 ¥15 咖啡）。
-                    // 评分窗口的本意是合并「同一笔交易的跨渠道多视图」，不能把
-                    // 同来源的两笔合并丢一笔：立即提交前一笔，为新交易开新窗口。
-                    // （同一交易的重复通知更早会被预筛的内存 hash 去重 / DB 1s 去重拦掉）
-                    appLogger.debug(
-                        "NLS",
-                        "同来源同金额，视为两笔交易: amount=$key pkg=${candidate.capture.packageName}"
-                    )
-                    // 窗口到期任务在产出前会先按身份摘掉自己的 job 映射，因此这里
-                    // remove 到 null = 产出已在进行/已完成：不能再次 flush 同一候选
-                    // （否则同一候选会以两个 clientId 各入一笔 = 重复账）。
-                    windowJobs.remove(key)?.cancel()
-                    val stale = windows.remove(key)
-                    if (stale != null) {
-                        scope.launch {
-                            try {
-                                admitNow(stale)
-                            } catch (e: kotlinx.coroutines.CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                // flush 路径异常兜底：未捕获异常会崩掉进程，必须与窗口路径同级兜底
-                                appLogger.error("NLS", "同源立即提交异常: amount=$key err=${e.message}")
-                                Timber.e(e, "ScoredAdmission same-source flush failed: amount=$key")
-                            }
-                        }
-                    }
-                    openWindow(Window(candidate, onAdmitted))
-                    return
-                }
-                // 跨渠道同金额：同一笔交易的两个视图，比较 score 保留更好的。
-                // 注意定时任务不重启：窗口锚点是先到那条的到达时刻。
+                // **短时同额 = 同一笔**，不分来源、不分包名。
+                //
+                // 【为什么改了口径】改动前这里是「同渠道同包名同金额 = 两笔真实交易」
+                // （如 10s 内两杯 ¥15 咖啡），只有跨渠道才择优合并。它的前提写在原注释里：
+                // 「同一交易的重复通知更早会被预筛的内存 hash 去重 / DB 1s 去重拦掉」。
+                //
+                // **但那个前提不成立**：内容去重键是 `包名 + fullText.hashCode()`
+                // （NotificationPrefilterImpl.contentKeyOf），而 NLS 的 fullText 把
+                // **标题拼在正文最前面**（NotificationMonitorService.buildFullText）。
+                // 同一条银行通知被重发时标题一变（例：「招商银行」→「信用卡通知」），
+                // fullText 就变了 → 5s 内存去重与 5min AI_MEMORY 双双失效 →
+                // 于是这条本来用来「保护真交易」的规则，反过来把**同一条通知的两个视图**
+                // 判成两笔、各自提交一份账单。
+                //
+                // 线上实证（2026-10-16）：¥1.50 一笔真实消费弹出 2 份待审、
+                // ¥65.06 产生 2 条账（客户端日志：同来源同金额，视为两笔交易: amount=150 pkg=cmb.pb）。
+                //
+                // 【代价，明确接受】短时间内**真实**发生的两笔同额交易会被合并成一笔
+                // （两杯同价咖啡）。这是产品口径的选择而非疏漏：宁可少记一笔，
+                // 也不要同一笔弹出很多份——后者会让用户直接不信这个 App。
+                //
+                // 择优规则不变：分数高的留下；注意定时任务不重启，
+                // 窗口锚点是先到那条的到达时刻。
                 if (candidate.score > existing.candidate.score) {
                     windows[key] = Window(candidate, onAdmitted)
                     appLogger.debug(
@@ -140,7 +126,8 @@ class ScoredAdmissionImpl @Inject constructor(
                 } else {
                     appLogger.debug(
                         "NLS",
-                        "评分丢弃: amount=$key score=${candidate.score} ≤ existing=${existing.candidate.score}"
+                        "短时同额合并为一笔: amount=$key score=${candidate.score} ≤ " +
+                            "existing=${existing.candidate.score} pkg=${candidate.capture.packageName}"
                     )
                 }
             } else {
@@ -200,33 +187,21 @@ class ScoredAdmissionImpl @Inject constructor(
         )
 
         val admitted = admitMutex.withLock {
-            // 跨渠道去重（内存）
-            if (isDuplicateAcrossChannels(
-                    candidate.amount,
-                    candidate.capture.channel,
-                    candidate.capture.packageName,
-                    candidate.capture.receivedAt,
-                )
-            ) {
-                appLogger.debug("NLS", "去重(内存): channel=${candidate.capture.channel} amount=${candidate.amount}")
+            // 同额去重（内存，60s）
+            if (isRecentSameAmount(candidate.amount, candidate.capture.receivedAt)) {
+                appLogger.debug("NLS", "去重(内存): amount=${candidate.amount} pkg=${candidate.capture.packageName}")
                 return@withLock false
             }
-            // 跨渠道去重（DB 兜底）
-            val dbDuplicate = notificationRecordDao.findRecentConfirmedFromOtherChannel(
+            // 同额去重（DB 兜底：进程被杀后内存层失效，这一层兼跨进程）
+            val dbDuplicate = notificationRecordDao.findRecentSameAmount(
                 candidate.amount,
                 candidate.capture.receivedAt - dedupWindowMs,
-                candidate.capture.packageName,
             )
             if (dbDuplicate != null) {
                 appLogger.debug("NLS", "去重(DB): amount=${candidate.amount}")
                 return@withLock false
             }
-            markProcessed(
-                candidate.amount,
-                candidate.capture.channel,
-                candidate.capture.packageName,
-                candidate.capture.receivedAt,
-            )
+            markProcessed(candidate.amount, candidate.capture.receivedAt)
             true
         }
         if (!admitted) return
@@ -235,34 +210,40 @@ class ScoredAdmissionImpl @Inject constructor(
     }
 
     /**
-     * 跨渠道去重判断（内存级）：
-     * - 不同 channel 或 不同包名 + 同金额 + 60s 内 → 重复
-     * - 同 channel 同包名 → 不去重（视为真实两笔交易）
+     * 同额去重判断（内存级）：**同金额 + [dedupWindowSeconds] 内 = 同一笔**，不分渠道、不分包名。
+     *
+     * ## 口径变更（与「短时同额当作一个账单」对齐）
+     *
+     * 改动前这里带一个**排除条件**（`不同渠道 或 不同包名`），即同包名的同额一律放过。
+     * 它放过了什么——线上实证（2026-10-16 ¥65.06，同一家、同一笔消费的两个通知视图）：
+     * `Alipay 08:19:28 支付成功 ￥65.06…完成` 与 `Alipay 08:20:00 支付成功 ￥65.06…付款方式`，
+     * 相隔 33s，两条账都入了。
+     *
+     * ## 为什么改这一层，而不去拉长评分窗口（`scoring_window_seconds`）
+     *
+     * 评分窗口是「**合并后再产出**」——拉长它等于每一笔账都晚 50s 出现在待审里；
+     * 这一层是「**先产出、后判重**」——60s 窗口本来就在（`dedup_window_seconds`），
+     * 这里只是把原本漏掉的同包名情况纳进来，**零延迟代价**。
+     *
+     * ## 代价（与评分窗口那处一致，已明确接受）
+     *
+     * 60s 内**真实**发生的两笔同额会被合并成一笔。
+     *
+     * 用绝对时间差：重放候选的 receivedAt 可能早于已登记条目，单边差值为负
+     * 会误判成「窗口内」而把历史交易当重复丢掉。
      */
-    private fun isDuplicateAcrossChannels(
-        amount: Int,
-        channel: SourceChannel,
-        packageName: String,
-        now: Long,
-    ): Boolean {
+    private fun isRecentSameAmount(amount: Int, now: Long): Boolean {
         // 过期清理用 wall clock：entries 与查询锚点都以 receivedAt 为时间轴，
         // 401 重放进来的是历史 receivedAt——若用它当清理基准会把尚在窗口内的
         // 新鲜条目整批删掉，之后的判重全部失效。
         val cutoff = System.currentTimeMillis() - dedupWindowMs
         recentProcessed.removeIf { it.time < cutoff }
-        // 查重：不同渠道 或 不同包名（同金额N秒内）。
-        // 用绝对时间差：重放候选的 receivedAt 可能早于已登记条目，单边差值为负
-        // 会误判成「60s 内」而把历史交易当重复丢掉。
-        return recentProcessed.any {
-            it.amount == amount &&
-                (it.channel != channel || it.packageName != packageName) &&
-                abs(now - it.time) <= dedupWindowMs
-        }
+        return recentProcessed.any { it.amount == amount && abs(now - it.time) <= dedupWindowMs }
     }
 
-    private fun markProcessed(amount: Int, channel: SourceChannel, packageName: String, receivedAt: Long) {
+    private fun markProcessed(amount: Int, receivedAt: Long) {
         // 时间轴统一用 receivedAt（与查询侧同源）：wall clock 与捕获时刻混用
         // 会让重放（历史 receivedAt）的判定结果不可预测。
-        recentProcessed.addLast(ProcessedEntry(amount, channel, packageName, receivedAt))
+        recentProcessed.addLast(ProcessedEntry(amount = amount, time = receivedAt))
     }
 }

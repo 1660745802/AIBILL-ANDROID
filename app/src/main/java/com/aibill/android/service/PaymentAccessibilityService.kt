@@ -140,6 +140,12 @@ class PaymentAccessibilityService : AccessibilityService() {
         rulesManager = entryPoint.rulesManager()
         ruleSource = entryPoint.ruleSource()
         captureFunnelStats = entryPoint.captureFunnelStats()
+        // ⚠️ 680307b 加 CaptureDropHandler 时漏了这一行（EntryPoint 声明了却没赋值）。
+        //    a11y **丢弃**路径上的 onDrop 因此抛 UninitializedPropertyAccessException：
+        //    1.6.2 无 try/catch → 异常逃出事件回调 → 进程崩溃 → 无障碍服务解绑
+        //    （即「无障碍反复失效、需手动重开」的真正成因）；
+        //    1.6.3+ 有兜底 → 不崩，但漏斗计数与采样全丢（onDrop 根本没进去）。
+        captureDropHandler = entryPoint.captureDropHandler()
         gate = entryPoint.a11yAdmissionGate()
         clock = entryPoint.a11yClock()
 

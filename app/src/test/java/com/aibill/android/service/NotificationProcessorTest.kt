@@ -116,7 +116,7 @@ class NotificationProcessorTest {
                 processor = ProcessorRules(10, 60, listOf("点击领取"), listOf("红包", "领", "优惠"), 10_000_000, 1),
             )
         )
-        coEvery { notificationRecordDao.findRecentConfirmedFromOtherChannel(any(), any(), any()) } returns null
+        coEvery { notificationRecordDao.findRecentSameAmount(any(), any()) } returns null
         inserted = mutableListOf()
         coEvery { notificationRecordDao.insert(capture(inserted)) } returns 1L
 
@@ -325,8 +325,8 @@ class NotificationProcessorTest {
     }
 
     @Test
-    @DisplayName("同渠道同包名同金额 10s 内 = 两笔：前一笔立即提交，两笔都入账")
-    fun `同来源同金额两笔都入账`() = runTest(testDispatcher) {
+    @DisplayName("短时同额 = 一笔：同渠道同包名同金额 10s 内只入一条")
+    fun `同来源同额合并只入一条`() = runTest(testDispatcher) {
         coEvery { aiApi.parse(any()) } returns aiOk(makeAiItem(amount = 1500, description = "咖啡"))
         setupValidatorValid()
 
@@ -335,12 +335,13 @@ class NotificationProcessorTest {
         processor.process(captureOf(text = "支付成功 ¥15.00 咖啡", receivedAt = baseTime + 2_000))
         runCurrent()
 
-        // 前一笔已在第二条到来时被立即提交
-        coVerify(atLeast = 1) { pendingTransactionDao.insert(any()) }
+        // 改动前：第二条一到就把第一条立即提交 → 两条都入账（同一笔弹出两份）。
+        // 现在：与跳渠道一样择优合并，窗口到期只产出一条。
+        assertTrue(inserted.isEmpty(), "窗口未到期前不应入账，实际=$inserted")
 
         advanceTimeBy(11_000)
         runCurrent()
-        coVerify(exactly = 2) { pendingTransactionDao.insert(any()) }
+        assertEquals(1, inserted.size, "短时同额只入一条，实际=$inserted")
     }
 
     // ═══════════════════════════════════════════════════════════════

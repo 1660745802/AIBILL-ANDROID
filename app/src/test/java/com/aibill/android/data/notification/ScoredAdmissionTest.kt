@@ -34,7 +34,7 @@ import org.junit.jupiter.api.Test
  * [ScoredAdmission] 的接口级测试：**虚拟时间**下直接驱动 [ScoredAdmission.submit]，
  * 以产出回调观察窗口边界与判重结果。
  *
- * 覆盖：10s 窗口的到期、跨渠道择优（含窗口锚点不后移）、同来源同金额视为两笔、
+ * 覆盖：10s 窗口的到期、跨渠道择优（含窗口锚点不后移）、短时同额合并为一笔、
  * 60s 跨渠道判重（内存 + DB 兜底）、以及「写库在锁外」——一条产出卡在网络上时，
  * 另一笔的产出不被阻塞。
  */
@@ -52,7 +52,7 @@ class ScoredAdmissionTest {
     @BeforeEach
     fun setUp() {
         ruleSource = InMemoryNotificationRuleSource(rules(scoringSeconds = 10, dedupSeconds = 60))
-        coEvery { dao.findRecentConfirmedFromOtherChannel(any(), any(), any()) } returns null
+        coEvery { dao.findRecentSameAmount(any(), any()) } returns null
         admission = ScoredAdmissionImpl(dao, ruleSource, AppLogger(mockk(relaxed = true)))
         admission.testDispatcher = testDispatcher
     }
@@ -179,24 +179,76 @@ class ScoredAdmissionTest {
     }
 
     @Test
-    @DisplayName("同渠道同包名同金额 10s 内 = 两笔真交易：前一笔立即产出，新交易开新窗口")
-    fun `同来源同金额视为两笔`() = runTest(testDispatcher) {
+    @DisplayName("短时同额 = 一笔：同渠道同包名同金额 10s 内不再拆成两笔")
+    fun `同来源同金额合并为一笔`() = runTest(testDispatcher) {
         val admitted = mutableListOf<ParsedTransaction>()
         admission.submit(candidate(1500, score = 5, description = "咖啡1")) { admitted += it }
         runCurrent()
 
         advanceTimeBy(2_000)
         runCurrent()
+        // 同渠道、同包名、同金额 —— 改动前会被当成「两笔真实交易」立即提交前一条。
+        // 现在与跳渠道一样：择优保留，窗口到期只产出一笔。
         admission.submit(candidate(1500, score = 5, receivedAt = baseTime + 2_000, description = "咖啡2")) { admitted += it }
         runCurrent()
 
-        assertEquals(1, admitted.size, "前一笔应在第二条到来时被立即提交，而不是被合并丢掉")
-        assertEquals("咖啡1", admitted.single().description)
+        assertTrue(admitted.isEmpty(), "窗口未到期前不得产出（改动前会立即产出一份）")
 
         advanceTimeBy(10_100)
         runCurrent()
-        assertEquals(2, admitted.size, "新交易走完自己的窗口后产出")
-        assertEquals("咖啡2", admitted.last().description)
+        assertEquals(1, admitted.size, "同额两条在窗口内只产出一笔")
+        assertEquals("咖啡1", admitted.single().description, "分数打平时保留先到的那条")
+    }
+
+    @Test
+    @DisplayName("短时同额：分数高的胜出（无论是否同来源）")
+    fun `同额择优保留高分`() = runTest(testDispatcher) {
+        val admitted = mutableListOf<ParsedTransaction>()
+        admission.submit(candidate(1500, score = 3, description = "低分")) { admitted += it }
+        runCurrent()
+
+        advanceTimeBy(2_000)
+        runCurrent()
+        admission.submit(
+            candidate(1500, score = 7, receivedAt = baseTime + 2_000, description = "高分")
+        ) { admitted += it }
+        runCurrent()
+
+        advanceTimeBy(10_100)
+        runCurrent()
+        assertEquals(1, admitted.size)
+        assertEquals("高分", admitted.single().description, "高分候选应替换窗口内那条")
+    }
+
+    @Test
+    @DisplayName("回归·线上现场：同包名同额相隔 33s（超评分窗口）只入一笔")
+    fun `同包名超窗同额只入一笔`() = runTest(testDispatcher) {
+        val admitted = mutableListOf<ParsedTransaction>()
+        // 2026-10-16 ¥65.06 实录：Alipay 同一笔消费的两个通知视图
+        //   08:19:28 支付成功 ￥65.06 … 回首页 家家悦回龙观店 完成
+        //   08:20:00 支付成功 ￥65.06 … 65.06 家家悦回龙观店 付款方式
+        // 相隔 33s > 评分窗口 10s → 走不到窗口合并；但它们在 60s 去重窗内，
+        // 且**同包名** —— 改动前这一条被 `package_name !=` 放过去，两条账都入了。
+        val alipay = "com.eg.android.AlipayGphone"
+
+        admission.submit(candidate(6506, score = 5, packageName = alipay)) { admitted += it }
+        runCurrent()
+        advanceTimeBy(10_100)
+        runCurrent()   // 第一笔已走完窗口并产出
+        assertEquals(1, admitted.size, "第一笔应正常入账")
+
+        admission.submit(
+            candidate(6506, score = 5, packageName = alipay, receivedAt = baseTime + 33_000)
+        ) { admitted += it }
+        runCurrent()
+        advanceTimeBy(10_100)
+        runCurrent()
+
+        assertEquals(
+            1,
+            admitted.size,
+            "同包名相隔 33s 的同额必须被 60s 去重层拦下（否则同一笔又出两条账）",
+        )
     }
 
     @Test
@@ -249,7 +301,7 @@ class ScoredAdmissionTest {
         assertEquals(1, admitted.size, "跨渠道同一笔只应入一笔")
         // 关联键：DB 兜底查重必须用「金额 + receivedAt-60s + 包名」，用 channel 或 wall clock 都错
         coVerify(exactly = 1) {
-            dao.findRecentConfirmedFromOtherChannel(8800, baseTime - 60_000, "com.tencent.mm")
+            dao.findRecentSameAmount(8800, baseTime - 60_000)
         }
     }
 
@@ -273,7 +325,7 @@ class ScoredAdmissionTest {
     @Test
     @DisplayName("内存判重漏网时 DB 兜底仍拦住跨渠道重复")
     fun `DB兜底判重`() = runTest(testDispatcher) {
-        coEvery { dao.findRecentConfirmedFromOtherChannel(any(), any(), any()) } returns
+        coEvery { dao.findRecentSameAmount(any(), any()) } returns
             NotificationRecordEntity(
                 id = 1L,
                 packageName = "cmb.pb",
@@ -290,7 +342,7 @@ class ScoredAdmissionTest {
 
         assertTrue(admitted.isEmpty(), "DB 里已有同金额的其他渠道记录 → 不产出")
         coVerify(exactly = 1) {
-            dao.findRecentConfirmedFromOtherChannel(300, baseTime - 60_000, "com.tencent.mm")
+            dao.findRecentSameAmount(300, baseTime - 60_000)
         }
     }
 
