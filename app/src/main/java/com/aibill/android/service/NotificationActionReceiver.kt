@@ -94,7 +94,11 @@ class NotificationActionReceiver : BroadcastReceiver() {
     }
 
     private suspend fun handleConfirm(context: Context, recordId: Long) {
-        val record = notificationRecordDao.findById(recordId) ?: return
+        val record = notificationRecordDao.findById(recordId)
+        if (record == null) {
+            reportMissingRecord(context)
+            return
+        }
 
         // 弹窗直接确认：learn = false。带备注确认见 handleConfirmWithNote（learn = true）。
         // 两者「一个学一个不学」是历史差异，收口只搬运不统一。
@@ -122,7 +126,11 @@ class NotificationActionReceiver : BroadcastReceiver() {
      * 流程与 handleConfirm 相同，但用用户输入的 note 覆盖 parsedDescription。
      */
     private suspend fun handleConfirmWithNote(context: Context, recordId: Long, note: String?) {
-        val record = notificationRecordDao.findById(recordId) ?: return
+        val record = notificationRecordDao.findById(recordId)
+        if (record == null) {
+            reportMissingRecord(context)
+            return
+        }
 
         val description = note?.takeIf { it.isNotBlank() } ?: record.parsedDescription
 
@@ -137,6 +145,17 @@ class NotificationActionReceiver : BroadcastReceiver() {
             )
         )
         reportFailure(context, outcome.failure)
+    }
+
+    /**
+     * 审计行不存在时**必须让用户听见**：换号/换服务器会清空 `notification_records`，
+     * 而通知栏的按钮仍可点 —— 此刻通知已被撤掉，静默 return 就是「通知凭空消失、
+     * 账没记上、用户以为记上了」（PRODUCT §五.2：失败绝不静默）。
+     */
+    private suspend fun reportMissingRecord(context: Context) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "这笔记录已不存在，没记上", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /**
