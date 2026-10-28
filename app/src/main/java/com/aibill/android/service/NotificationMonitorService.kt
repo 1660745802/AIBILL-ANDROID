@@ -74,6 +74,8 @@ class NotificationMonitorService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         isConnected = true
+        // 恢复即撤：残留的「已断开」通知断言的是一个已不成立的状态（PRODUCT §五.4）。
+        NotificationHelper.cancelNlsDisconnectedNotification(this)
         appLogger.info("NLS", "通知监听服务已连接")
     }
 

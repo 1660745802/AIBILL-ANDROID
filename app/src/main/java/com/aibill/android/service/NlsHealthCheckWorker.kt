@@ -67,6 +67,7 @@ class NlsHealthCheckWorker(
 
         if (NotificationMonitorService.isConnected) {
             Timber.d("NLS 心跳: 已连接")
+            markHealthy()
             return Result.success()
         }
 
@@ -83,6 +84,7 @@ class NlsHealthCheckWorker(
             delay(3_000)
             if (NotificationMonitorService.isConnected) {
                 Timber.d("NLS 心跳: requestRebind 后已恢复，跳过通知")
+                markHealthy()
                 return Result.success()
             }
         } catch (e: Exception) {
@@ -91,6 +93,14 @@ class NlsHealthCheckWorker(
         // 恢复失败的话发通知提醒用户手动操作
         NotificationHelper.showNlsDisconnectedNotification(applicationContext)
         return Result.success()
+    }
+
+    /**
+     * 判定健康：撤掉可能残留的「已断开」提醒（服务已恢复，旧通知
+     * 断言的是假状态，PRODUCT §五.4）。
+     */
+    private fun markHealthy() {
+        NotificationHelper.cancelNlsDisconnectedNotification(applicationContext)
     }
 
     /**
