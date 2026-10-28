@@ -26,6 +26,17 @@ object NotificationHelper {
     private const val CHANNEL_ID = "aibill_auto_record"
     private const val CHANNEL_NAME = "自动记账"
 
+    /** 「无障碍已断开」提醒的固定通知 id（与 NLS 断连提醒的 -1 区分）。 */
+    private const val A11Y_DISCONNECTED_NOTIFICATION_ID = -2
+
+    /**
+     * 「NLS 已断开」提醒的固定通知 id。
+     * ⚠️ 与两个 ActionReceiver 里 `getIntExtra(EXTRA_NOTIFICATION_ID, -1)` 的
+     * 「无效 id」哨兵同值，是个隐患（见 PRODUCT §六.2 #13）；当前两套 id
+     * 实际不相交（那边只有 recordId 截断值），先不动语义。
+     */
+    private const val NLS_DISCONNECTED_NOTIFICATION_ID = -1
+
     /**
      * 创建通知渠道（Android O+）
      * IMPORTANCE_HIGH 确保 Heads-up 弹出
@@ -260,7 +271,17 @@ object NotificationHelper {
             .build()
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(-1, notification)
+        manager.notify(NLS_DISCONNECTED_NOTIFICATION_ID, notification)
+    }
+
+    /**
+     * 撤销「NLS 已断开」提醒。
+     * 监听服务恢复连接后调用（PRODUCT §五.4：不主张不确定的状态——
+     * 服务已恢复，残留的「已断开」通知就是在断言一个假状态）。
+     */
+    fun cancelNlsDisconnectedNotification(context: Context) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(NLS_DISCONNECTED_NOTIFICATION_ID)
     }
 
     /**
@@ -292,7 +313,16 @@ object NotificationHelper {
             .build()
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(-2, notification)
+        manager.notify(A11Y_DISCONNECTED_NOTIFICATION_ID, notification)
+    }
+
+    /**
+     * 撤销「无障碍已断开」提醒。
+     * 服务恢复连接后调用，避免残留的「已断开」通知继续误导用户去设置里重连。
+     */
+    fun cancelA11yDisconnectedNotification(context: Context) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(A11Y_DISCONNECTED_NOTIFICATION_ID)
     }
 
     /**
@@ -300,11 +330,13 @@ object NotificationHelper {
      *
      * - 标题："已记账 · {来源}"
      * - 内容："¥{金额} · {分类} · {描述}"
-     * - 30 秒后自动消失
+     * - **不自动消失**（c85d48d 决策：自动消失会在用户看到前蒸发，
+     *   一律保留至用户划掉或点击处理）
      * - 点击通知本体 = 查看流水
      *
      * @param clientId     交易的 clientId，用于撤销时定位记录
-     * @param autoDismissMs 非 null 时覆盖默认 30s 自动消失时间（主要用于 NotificationActionReceiver 的轻反馈场景）
+     * @param autoDismissMs 非 null **且无 Action** 时，指定毫秒数后自动收起
+     *   （轻反馈场景用）；带 Action 的通知始终保留，撤销窗口不缩水
      */
     fun showAutoRecordedNotification(
         context: Context,

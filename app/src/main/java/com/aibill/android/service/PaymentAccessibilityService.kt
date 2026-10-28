@@ -27,6 +27,7 @@ import com.aibill.android.domain.notification.A11yProfileResolver
 import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.CaptureIngress
 import com.aibill.android.domain.notification.NotificationRuleSource
+import com.aibill.android.util.NotificationHelper
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -159,6 +160,11 @@ class PaymentAccessibilityService : AccessibilityService() {
         // 而此时每个事件都会崩 → 静默永久失效，只有手动 toggle 能救。
         // 现在初始化失败就保持 false，让心跳如实报「开关开着但服务没连上」。
         isServiceConnected = true
+
+        // 服务恢复：撤掉心跳可能残留的「已断开」提醒，并清告警节流，
+        // 让下一次真故障能立刻提醒（见 A11yAlertThrottle / A11yHealthCheckWorker）。
+        NotificationHelper.cancelA11yDisconnectedNotification(this)
+        A11yAlertThrottle.clear(this)
     }
 
     private fun refreshRulesIfNeeded(force: Boolean = false) {
