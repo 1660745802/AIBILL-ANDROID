@@ -73,13 +73,18 @@ class NotificationFilterRegressionTest {
         productionRules.nls.defaultExcludeContent + productionRules.sms.spamKeywords
 
     /** 生产判据的结论：true = 放行去调 AI。 */
-    private suspend fun passes(text: String): Boolean {
+    private suspend fun passes(text: String): Boolean = passes("com.example.notifier", "", text)
+
+    private suspend fun passes(packageName: String, title: String, body: String): Boolean =
+        passes(SourceChannel.NLS, packageName, title, body)
+
+    private suspend fun passes(channel: SourceChannel, packageName: String, title: String, body: String): Boolean {
         val verdict = prefilter.evaluate(
             Capture(
-                channel = SourceChannel.NLS,
-                packageName = "com.example.notifier",
-                title = "",
-                fullText = text,
+                channel = channel,
+                packageName = packageName,
+                title = title,
+                fullText = if (title.isBlank()) body else "$title $body",
                 receivedAt = 1_000_000L,
             )
         )
@@ -109,6 +114,48 @@ class NotificationFilterRegressionTest {
         )
         for (t in real) {
             assertTrue(passes(t), "真实交易被误杀：$t")
+        }
+    }
+
+    @Test
+    @DisplayName("已知营销/群聊/状态通知在客户端预筛被拦，不进 AI")
+    fun `营销与群聊通知被预筛拦截`() = runTest {
+        val ads = listOf(
+            Triple("com.taobao.taobao", "淘宝", "红包金额高至18.88元 红包点击签收开奖"),
+            Triple("com.greenpoint.android.mc10086.activity", "卡券到账提醒", "您有一张话费券已到账，秋日福利惊喜上线"),
+            Triple("cn.damai", "大麦", "观演季 北京国际戏剧展演季剧目至高立减299元"),
+            Triple("com.xiaomi.shop", "小米商城", "众测上线 1元众测 点击报名赢好礼"),
+            Triple("com.tencent.weread", "微信读书", "周一开通会员立省30元，参与活动百分百中奖"),
+            Triple("com.phoenix.read", "到账提醒", "您的账户新入账1000金币红包，当天24点前有效"),
+            Triple("com.tencent.mobileqq", "工作群", "3条新消息 请大家查看"),
+            Triple("com.tencent.mm", "富人区", "3条新消息 董晓东: 你这加起来亏了300块"),
+            Triple("com.eg.android.AlipayGphone", "卡券到账提醒", "您有一张话费券已到账，秋日福利惊喜上线"),
+            Triple("com.sdu.didi.psnger", "滴滴数科", "请于18:00前查收 入账¥12,000.00预估额度，避免失效"),
+            Triple("com.shenzhen.vanke.vankeyi", "泊寓", "您的账单已支付，请点击对本账单进行评价"),
+        )
+        for ((pkg, title, body) in ads) {
+            assertFalse(passes(pkg, title, body), "营销/状态通知未被拦截：$pkg / $title")
+        }
+        assertFalse(
+            passes(SourceChannel.SMS, "com.android.mms", "", "【五里店街道医保提醒】城乡居民医保集中缴费已启动"),
+            "医保营销短信未被拦截",
+        )
+    }
+
+    @Test
+    @DisplayName("新增包级排除词不误杀真实支付")
+    fun `包级排除词不误杀真实支付`() = runTest {
+        val real = listOf(
+            Triple("com.taobao.taobao", "淘宝", "订单支付成功 ¥99.00"),
+            Triple("com.greenpoint.android.mc10086.activity", "中国移动", "话费账单提醒 本期消费总额82.00元"),
+            Triple("cn.damai", "大麦", "演出票支付成功 ¥280.00"),
+            Triple("com.xiaomi.shop", "小米商城", "订单支付成功 ¥199.00"),
+            Triple("com.tencent.mobileqq", "QQ钱包", "支付成功 ¥10.00"),
+            Triple("com.tencent.mm", "微信支付", "已支付¥32.50"),
+            Triple("com.eg.android.AlipayGphone", "交易提醒", "你有一笔20.00元的支出"),
+        )
+        for ((pkg, title, body) in real) {
+            assertTrue(passes(pkg, title, body), "真实支付被误杀：$pkg / $title")
         }
     }
 
