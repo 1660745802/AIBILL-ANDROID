@@ -24,10 +24,7 @@ enum class SessionEndReason(val storedValue: String) {
      */
     TOKEN_EXPIRED("token_expired"),
 
-    /**
-     * 本来就没有会话可结束：用户主动退出登录，或本次请求未携带凭证就被拒
-     * （登录密码错误、首次安装未登录等）。属于**预期内**，不应打扰用户。
-     */
+    /** 用户主动退出登录。无凭证的 401 不结束会话，也不改写结束原因。 */
     SIGNED_OUT("signed_out"),
 }
 
@@ -60,7 +57,36 @@ class TokenManager internal constructor(
     @Inject
     constructor(@ApplicationContext context: Context) : this(createEncryptedPrefs(context))
 
+    // 进程内请求的会话代际；即使服务端同秒签发了相同 JWT，重新登录也必须换代。
+    // 所有会话读写与 compare-and-write 共用 this 监视器，不能拆成先比较、后清理。
+    private var generation = 0L
+
+    data class SessionSnapshot(val token: String?, val generation: Long)
+
+    @Synchronized
+    fun sessionGeneration(): Long = generation
+
+    @Synchronized
+    fun sessionSnapshot(): SessionSnapshot = SessionSnapshot(getToken(), generation)
+
+    @Synchronized
     fun getToken(): String? = prefs.getString(KEY_TOKEN, null)
+
+    @Synchronized
+    fun endSessionIfCurrent(expectedGeneration: Long, reason: SessionEndReason): Boolean {
+        if (generation != expectedGeneration || !hasToken()) return false
+        endSession(reason)
+        return true
+    }
+
+    /** 仅轮换当前会话的 token，保留身份、缓存归属与其它 session 信息。 */
+    @Synchronized
+    fun updateToken(token: String, expectedGeneration: Long): Boolean {
+        if (generation != expectedGeneration || !hasToken() || token.isBlank()) return false
+        if (!prefs.edit().putString(KEY_TOKEN, token).commit()) return false
+        generation++
+        return true
+    }
 
     /**
      * **最近一次成功登录过的用户 ID**，与当前 session 解耦。
@@ -78,6 +104,7 @@ class TokenManager internal constructor(
      * 与 [endSession] 的区别：本字段**任何**会话结束路径都不清除（401 不清、显式登出也不清），
      * 它不是 session 的一部分，而是**本地缓存的归属判据**。
      */
+    @Synchronized
     fun getLastKnownUserId(): Int? =
         if (prefs.contains(KEY_LAST_USER_ID)) prefs.getInt(KEY_LAST_USER_ID, -1).takeIf { it >= 0 } else null
 
@@ -89,6 +116,7 @@ class TokenManager internal constructor(
      * 同时清除 [KEY_SESSION_END_REASON]：登录成功意味着上一次会话结束已被处理完，
      * 若不清理，下次冷启动会拿旧标记误报「登录已过期」。
      */
+    @Synchronized
     fun saveSession(
         token: String,
         userId: Int,
@@ -103,6 +131,7 @@ class TokenManager internal constructor(
             .putInt(KEY_LAST_USER_ID, userId)
             .remove(KEY_SESSION_END_REASON)
             .commit()
+        generation++
     }
 
     /**
@@ -111,8 +140,7 @@ class TokenManager internal constructor(
      *
      * 两种调用方，清理动作相同、语义不同：
      * - [SessionEndReason.TOKEN_EXPIRED]：`AuthInterceptor` 收到**带凭证**的 401
-     * - [SessionEndReason.SIGNED_OUT]：用户主动退出登录（`AuthRepositoryImpl.logout`），
-     *   或本次请求本就未携带凭证却被拒（登录密码错误、首次安装等）
+     * - [SessionEndReason.SIGNED_OUT]：用户主动退出登录（`AuthRepositoryImpl.logout`）
      *
      * ⚠️ **一律保留 [KEY_LAST_USER_ID]**，显式登出也不能删。
      * 删了它，用户登出再登回**同一账号**时本地数据归属 module 会因
@@ -122,6 +150,7 @@ class TokenManager internal constructor(
      * 「本地数据不会丢失」。跨账号防护靠的是
      * `accountId != incomingUserId` 的比较，不靠 `accountId != null`。
      */
+    @Synchronized
     fun endSession(reason: SessionEndReason) {
         prefs.edit()
             .remove(KEY_TOKEN)
@@ -130,18 +159,21 @@ class TokenManager internal constructor(
             .remove(KEY_NICKNAME)
             .putString(KEY_SESSION_END_REASON, reason.storedValue)
             .commit()
+        generation++
     }
 
     /**
      * 上一次会话是怎么结束的；`null` = 无已知的会话结束（首次安装 / 登录成功后被清除）。
      * 供冷启动区分「被后台 401 踢掉」与「用户自己退出的」。
      */
+    @Synchronized
     fun getSessionEndReason(): SessionEndReason? {
         val stored = prefs.getString(KEY_SESSION_END_REASON, null) ?: return null
         return SessionEndReason.entries.firstOrNull { it.storedValue == stored }
     }
 
-    fun hasToken(): Boolean = getToken() != null
+    @Synchronized
+    fun hasToken(): Boolean = !getToken().isNullOrBlank()
 
     companion object {
         private const val KEY_TOKEN = "jwt_token"

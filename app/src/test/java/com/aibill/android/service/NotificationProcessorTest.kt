@@ -35,6 +35,7 @@ import com.aibill.android.domain.notification.CaptureArchive
 import com.aibill.android.domain.notification.CaptureFunnelStats
 import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.record.RecordIntake
+import com.aibill.android.domain.record.autoClientId
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.util.AiResultValidator
 import com.aibill.android.util.AppLogger
@@ -88,6 +89,7 @@ class NotificationProcessorTest {
     private lateinit var ruleSource: NotificationRuleSource
     private val streakTracker: com.aibill.android.domain.usecase.StreakTracker = mockk(relaxed = true)
     private val captureFunnelStats = CaptureFunnelStatsImpl()
+    private lateinit var captureSession: com.aibill.android.data.ownership.CaptureSession
     private lateinit var transactionApi: TransactionApi
 
     private lateinit var processor: NotificationProcessor
@@ -97,6 +99,7 @@ class NotificationProcessorTest {
 
     @BeforeEach
     fun setUp() {
+        captureSession = com.aibill.android.data.ownership.CaptureSession()
         io.mockk.mockkObject(com.aibill.android.service.WidgetDataUpdater)
         every { com.aibill.android.service.WidgetDataUpdater.notifyTransactionAdded(any(), any(), any(), any()) } returns Unit
         io.mockk.mockkObject(com.aibill.android.util.NotificationHelper)
@@ -116,7 +119,7 @@ class NotificationProcessorTest {
                 processor = ProcessorRules(10, 60, listOf("点击领取"), listOf("红包", "领", "优惠"), 10_000_000, 1),
             )
         )
-        coEvery { notificationRecordDao.findRecentSameAmount(any(), any()) } returns null
+        coEvery { notificationRecordDao.findRecentSameAmount(any(), any(), any()) } returns null
         inserted = mutableListOf()
         coEvery { notificationRecordDao.insert(capture(inserted)) } returns 1L
 
@@ -144,6 +147,7 @@ class NotificationProcessorTest {
             appLogger = appLogger,
             ruleSource = ruleSource,
             captureFunnelStats = captureFunnelStats,
+            captureSession = captureSession,
         )
     }
 
@@ -165,6 +169,9 @@ class NotificationProcessorTest {
             categoryLearningEngine = categoryLearningEngine,
             streakTracker = streakTracker,
             ruleSource = ruleSource,
+            notificationRecordDao = notificationRecordDao,
+            accountRepository = mockk(relaxed = true),
+            captureSession = captureSession,
         )
     }
 
@@ -317,6 +324,11 @@ class NotificationProcessorTest {
 
         coVerify(exactly = 0) { pendingTransactionDao.insert(any()) }
         assertEquals(1, rowsWithStatus("parsed").size)
+        assertEquals(
+            autoClientId("com.tencent.mm", "支付成功 ¥32.00", baseTime, 3200),
+            rowsWithStatus("parsed").single().linkedClientId,
+            "待审记录必须预置自动入账的幂等键，响应丢失后确认不能重复入账",
+        )
         io.mockk.verify(exactly = 0) {
             com.aibill.android.util.NotificationHelper.showAutoRecordedNotification(
                 any(), any(), any(), any(), any(), any(), any(), any(),

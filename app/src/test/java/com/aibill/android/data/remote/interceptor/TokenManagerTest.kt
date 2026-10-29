@@ -196,4 +196,85 @@ class TokenManagerTest {
         assertNull(empty.getToken())
         assertFalse(empty.hasToken())
     }
+
+    @Test
+    fun `session snapshot is invalidated by relogin even with identical credentials`() {
+        tokenManager.saveSession("same-jwt", 7, "alice", "Alice")
+        val old = tokenManager.sessionSnapshot()
+        assertEquals("same-jwt", old.token)
+        assertEquals(tokenManager.sessionGeneration(), old.generation)
+        tokenManager.saveSession("same-jwt", 7, "alice", "Alice")
+        assertTrue(tokenManager.sessionGeneration() > old.generation)
+        assertFalse(tokenManager.endSessionIfCurrent(old.generation, SessionEndReason.TOKEN_EXPIRED))
+        assertFalse(tokenManager.updateToken("late-password-token", old.generation))
+        assertEquals("same-jwt", tokenManager.getToken())
+        assertNull(tokenManager.getSessionEndReason())
+    }
+
+    @Test
+    fun `token update preserves every other stored field and advances generation`() {
+        tokenManager.saveSession("old", 7, "alice", "Alice")
+        prefs.edit().putString("device_setting", "keep").commit()
+        val before = prefs.all.filterKeys { it != "jwt_token" }
+        val generation = tokenManager.sessionGeneration()
+        assertTrue(tokenManager.updateToken("new", generation))
+        assertEquals("new", tokenManager.getToken())
+        assertEquals(before, prefs.all.filterKeys { it != "jwt_token" })
+        assertTrue(tokenManager.sessionGeneration() > generation)
+        assertFalse(tokenManager.endSessionIfCurrent(generation, SessionEndReason.TOKEN_EXPIRED))
+        assertFalse(tokenManager.updateToken("stale", generation))
+    }
+
+    @Test
+    fun `ended or empty session cannot be resurrected by password response`() {
+        tokenManager.saveSession("old", 7, "alice", null)
+        val generation = tokenManager.sessionGeneration()
+        assertFalse(tokenManager.updateToken(" ", generation))
+        assertEquals("old", tokenManager.getToken())
+        tokenManager.endSession(SessionEndReason.SIGNED_OUT)
+        assertTrue(tokenManager.sessionGeneration() > generation)
+        assertFalse(tokenManager.updateToken("late", generation))
+        assertFalse(tokenManager.updateToken("late", tokenManager.sessionGeneration()))
+        assertFalse(tokenManager.endSessionIfCurrent(tokenManager.sessionGeneration(), SessionEndReason.TOKEN_EXPIRED))
+        assertNull(tokenManager.getToken())
+        assertEquals(SessionEndReason.SIGNED_OUT, tokenManager.getSessionEndReason())
+    }
+
+    @Test
+    fun `failed token persist keeps generation and current token`() {
+        val failing = io.mockk.mockk<SharedPreferences>()
+        val editor = io.mockk.mockk<SharedPreferences.Editor>(relaxed = true)
+        io.mockk.every { failing.getString("jwt_token", null) } returns "old"
+        io.mockk.every { failing.edit() } returns editor
+        io.mockk.every { editor.putString(any(), any()) } returns editor
+        io.mockk.every { editor.commit() } returns false
+        val manager = TokenManager(failing)
+        val generation = manager.sessionGeneration()
+
+        assertFalse(manager.updateToken("new", generation))
+        assertEquals(generation, manager.sessionGeneration())
+        assertEquals("old", manager.getToken())
+    }
+
+    @Test
+    fun `concurrent compare-and-end has exactly one winner`() {
+        tokenManager.saveSession("old", 7, "alice", null)
+        val generation = tokenManager.sessionGeneration()
+        val start = java.util.concurrent.CountDownLatch(1)
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(4)
+        try {
+            val results = (1..8).map {
+                executor.submit<Boolean> {
+                    start.await()
+                    tokenManager.endSessionIfCurrent(generation, SessionEndReason.TOKEN_EXPIRED)
+                }
+            }
+            start.countDown()
+            assertEquals(1, results.count { it.get(5, java.util.concurrent.TimeUnit.SECONDS) })
+            assertEquals(7, tokenManager.getLastKnownUserId())
+            assertNull(tokenManager.getToken())
+        } finally {
+            executor.shutdownNow()
+        }
+    }
 }

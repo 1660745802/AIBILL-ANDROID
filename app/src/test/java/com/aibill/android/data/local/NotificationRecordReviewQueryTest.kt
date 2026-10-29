@@ -7,6 +7,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.Dispatchers
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -49,6 +53,54 @@ class NotificationRecordReviewQueryTest {
                 receivedAt = receivedAt,
             )
         )
+    }
+
+    @Test
+    fun `confirmation claim atomically retains one key while status remains parsed`() = runBlocking {
+        val dao = db.notificationRecordDao()
+        val id = insert("parsed", now)
+        val rows = (1..8).map { index ->
+            async(Dispatchers.Default) { dao.claimForConfirmation(id, "client-$index")!! }
+        }.awaitAll()
+        assertEquals(1, rows.map { it.linkedClientId }.distinct().size)
+        assertEquals(setOf("parsed"), rows.map { it.status }.toSet())
+        val key = rows.first().linkedClientId
+        assertEquals(key, dao.claimForConfirmation(id, "retry")!!.linkedClientId)
+        dao.updateStatus(id, "ignored")
+        dao.updateStatus(id, "parsed")
+        assertEquals(key, dao.claimForConfirmation(id, "restored")!!.linkedClientId)
+        dao.updateStatus(id, "confirmed", key)
+        dao.updateStatus(id, "ignored")
+        dao.updateStatus(id, "parsed")
+        assertEquals("confirmed", dao.findById(id)!!.status)
+        assertEquals(key, dao.claimForConfirmation(id, "later")!!.linkedClientId)
+        val ignored = insert("ignored", now)
+        assertNull(dao.claimForConfirmation(ignored, "unused")!!.linkedClientId)
+        assertNull(dao.claimForConfirmation(-1L, "missing"))
+    }
+
+    @Test
+    fun `same amount query is bounded by candidate time in both directions`() = runBlocking {
+        val dao = db.notificationRecordDao()
+        for ((index, offset) in listOf(-60_001L, -60_000L, 0L, 60_000L, 60_001L).withIndex()) {
+            val amount = index + 100
+            val id = dao.insert(NotificationRecordEntity(
+                packageName = "cmb.pb", content = "payment", status = "parsed",
+                parsedAmount = amount, receivedAt = now + offset,
+            ))
+            val match = dao.findRecentSameAmount(amount, now - 60_000, now + 60_000)
+            assertEquals(if (offset in -60_000L..60_000L) id else null, match?.id)
+        }
+        dao.insert(NotificationRecordEntity(
+            packageName = "cmb.pb", content = "old", status = "confirmed",
+            parsedAmount = 999, receivedAt = now,
+        ))
+        assertNull(dao.findRecentSameAmount(999, now - 3_660_000, now - 3_540_000))
+        dao.insert(NotificationRecordEntity(
+            packageName = "cmb.pb", content = "ignored", status = "ignored",
+            parsedAmount = 998, receivedAt = now,
+        ))
+        assertNull(dao.findRecentSameAmount(998, now - 60_000, now + 60_000))
     }
 
     @Test

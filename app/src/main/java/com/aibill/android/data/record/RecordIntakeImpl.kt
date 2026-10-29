@@ -1,18 +1,25 @@
 package com.aibill.android.data.record
 
 import android.content.Context
+import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.entity.NotificationRecordEntity
+import com.aibill.android.data.ownership.CaptureSession
+import com.aibill.android.domain.repository.AccountRepository
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.remote.api.TransactionApi
 import com.aibill.android.data.remote.dto.request.CreateTransactionRequest
 import com.aibill.android.data.remote.dto.request.TransactionItemRequest
+import com.aibill.android.data.remote.dto.response.TransactionDto
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.model.TransactionType
 import com.aibill.android.domain.record.RecordFailure
 import com.aibill.android.domain.record.RecordIntent
 import com.aibill.android.domain.record.RecordIntake
 import com.aibill.android.domain.record.RecordOutcome
+import com.aibill.android.domain.record.autoClientId
 import com.aibill.android.domain.usecase.CategoryLearningEngine
 import com.aibill.android.domain.usecase.StreakTracker
 import com.aibill.android.domain.notification.NotificationRuleSource
@@ -39,13 +46,13 @@ import javax.inject.Singleton
  *
  * [confirmAndCache] 是唯一的落库出口：它先 `POST /transactions` 按 `client_id`
  * 拿服务端 id，拿到才把行（`sync_status='synced'` + `server_transaction_id`）与审计行
- * 写进 Room；拿不到就**什么都不写**，把 [RecordFailure] 原样带回去。
+ * 写进 Room；拿不到只保留人工确认的审计幂等键，把 [RecordFailure] 原样带回去。
  * 因此「写进本地缓存」这件事本身就是「服务端已确认」的证据，
  * `pending_transactions` 里不会有第三种状态（见 `docs/ARCHITECTURE.md` §6.1）。
  *
  * ## 失败绝不静默，也绝不自己兜底
  *
- * 服务端没确认时，本类**不**写库、**不**发回执、**不**刷 widget/streak、**不**学分类，
+ * 服务端没确认时，本类不写交易缓存、不改确认状态、不发回执、不刷 widget/streak、不学分类，
  * 只把失败原因回传。把它变成用户看得见的反馈是调用方的事
  * （手工 → Snackbar、通知自动 → 降级待审池、确认 → Toast）。
  * 这样「已记录」类回执在结构上就不可能先于服务端确认发出去。
@@ -60,21 +67,67 @@ class RecordIntakeImpl @Inject constructor(
     private val categoryLearningEngine: CategoryLearningEngine,
     private val streakTracker: StreakTracker,
     private val ruleSource: NotificationRuleSource,
+    private val notificationRecordDao: NotificationRecordDao,
+    private val accountRepository: AccountRepository,
+    private val captureSession: CaptureSession,
 ) : RecordIntake {
 
-    override suspend fun intake(intent: RecordIntent): RecordOutcome = when (intent) {
-        is RecordIntent.NotificationAuto -> intakeNotificationAuto(intent)
-        is RecordIntent.NotificationConfirm -> intakeNotificationConfirm(intent)
-        is RecordIntent.NotificationCenterConfirm -> intakeNotificationCenterConfirm(intent)
-        is RecordIntent.ExternalQuickRecord -> intakeExternalQuickRecord(intent)
+    // 固定分片避免锁表随审计记录无限增长；同一 recordId 的所有确认入口共用一把锁。
+    private val confirmationLocks = Array(64) { Mutex() }
+
+    override suspend fun intake(intent: RecordIntent): RecordOutcome = captureSession.run {
+        when (intent) {
+            is RecordIntent.NotificationAuto -> intakeNotificationAuto(intent)
+            is RecordIntent.NotificationConfirm -> confirmRecord(intent.recordId) { record, clientId ->
+                intakeNotificationConfirm(intent, record, clientId)
+            }
+            is RecordIntent.NotificationCenterConfirm -> confirmRecord(intent.recordId) { record, clientId ->
+                intakeNotificationCenterConfirm(intent, record, clientId)
+            }
+            is RecordIntent.ExternalQuickRecord -> intakeExternalQuickRecord(intent)
+        }
     }
+
+    private suspend fun confirmRecord(
+        recordId: Long,
+        confirm: suspend (NotificationRecordEntity, String) -> RecordOutcome,
+    ): RecordOutcome = confirmationLocks[(recordId.hashCode() and Int.MAX_VALUE) % confirmationLocks.size].withLock {
+        var clientId = ""
+        try {
+            val record = notificationRecordDao.claimForConfirmation(recordId, newClientId())
+                ?: return@withLock rejected("这笔记录已不存在")
+            clientId = record.linkedClientId.orEmpty()
+            when {
+                record.status == STATUS_CONFIRMED && clientId.isNotBlank() ->
+                    RecordOutcome(clientId = clientId, alreadyRecorded = true)
+                record.status != "parsed" || clientId.isBlank() ->
+                    rejected("该记录不可确认，请在通知中心检查", clientId)
+                else -> confirm(record, clientId)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.e(e, "Notification confirmation failed: recordId=%s", recordId)
+            rejected("确认失败，请重试", clientId)
+        }
+    }
+
+    private fun rejected(reason: String, clientId: String = "") = RecordOutcome(
+        clientId = clientId,
+        failure = RecordFailure.Rejected(Result.ERROR_UNKNOWN, reason),
+    )
 
     // ═══════════════════════════════════════════════════════════════
     // AI 自动入账（原 NotificationProcessor.directInsert）
     // ═══════════════════════════════════════════════════════════════
 
     private suspend fun intakeNotificationAuto(intent: RecordIntent.NotificationAuto): RecordOutcome {
-        val clientId = newClientId()
+        val clientId = autoClientId(
+            packageName = intent.captured.packageName,
+            content = intent.captured.content,
+            receivedAt = intent.captured.receivedAt,
+            amountCents = intent.amount,
+        )
         // ⚠️ 日期取**通知到达时刻**，不是解析/入账时刻：通知 23:40 到、服务端 00:05 才解析完时，
         // 这笔属于 23:40 那天。服务端已按 `received_at` 锚定「今天」，这里必须用同一个锚点，
         // 否则跨午夜迟发仍会记错一天（服务端复核 R-24）。401 重放同理 → 落回原始交易日期。
@@ -153,11 +206,15 @@ class RecordIntakeImpl @Inject constructor(
     // 弹窗确认 / 弹窗带备注确认（原 NotificationActionReceiver 两条路径）
     // ═══════════════════════════════════════════════════════════════
 
-    private suspend fun intakeNotificationConfirm(intent: RecordIntent.NotificationConfirm): RecordOutcome {
-        val clientId = newClientId()
-        val moment = recordClock.now()
-        // 弹窗确认读**硬编码**来源名映射（不带云控）——与 AI 自动路径的历史差异，保留。
-        val sourceDetail = NotificationSourceMapping.friendlyName(intent.packageName)
+    private suspend fun intakeNotificationConfirm(
+        intent: RecordIntent.NotificationConfirm,
+        record: NotificationRecordEntity,
+        clientId: String,
+    ): RecordOutcome {
+        if (intent.type == "transfer") return rejected("转账请在通知中心编辑，选择不同的有效转出和转入账户", clientId)
+        val moment = recordClock.at(record.receivedAt)
+        // 时间和来源取审计行，不信任调用方快照。
+        val sourceDetail = NotificationSourceMapping.friendlyName(record.packageName)
 
         // 自动填分类：用描述作为关键词尝试匹配学习过的分类
         val predictedCategoryId = if (!intent.description.isNullOrBlank()) {
@@ -182,17 +239,18 @@ class RecordIntakeImpl @Inject constructor(
 
         val cached = confirmAndCache(pending = pending, confirmRecordId = intent.recordId)
         if (cached.failure != null) return RecordOutcome(clientId = clientId, failure = cached.failure)
+        val booked = requireNotNull(cached.pending)
 
         WidgetDataUpdater.notifyTransactionAdded(
             context = context,
-            type = intent.type.toTransactionType(),
-            amountCents = intent.amount,
-            date = pending.date,
+            type = booked.type.toTransactionType(),
+            amountCents = booked.amount,
+            date = booked.date,
         )
 
         // 学习放在刷 widget 之后、回执之前，与原 handleConfirmWithNote 同序。
         // learn=false 是弹窗直接确认的历史行为（handleConfirm），保留不学习。
-        if (intent.learn && predictedCategoryId != null && !intent.description.isNullOrBlank()) {
+        if (!cached.duplicate && intent.learn && predictedCategoryId != null && !intent.description.isNullOrBlank()) {
             categoryLearningEngine.learnFromCorrection(intent.description.trim(), predictedCategoryId)
         }
 
@@ -201,12 +259,12 @@ class RecordIntakeImpl @Inject constructor(
             context = context,
             // 使用不同 id 避免与原确认通知冲突
             recordId = intent.recordId + CONFIRM_RECEIPT_ID_OFFSET,
-            amount = intent.amount,
-            description = intent.description,
+            amount = booked.amount,
+            description = booked.description,
             source = sourceDetail,
             privacyMode = false,
         )
-        return RecordOutcome(clientId = clientId)
+        return RecordOutcome(clientId = clientId, alreadyRecorded = cached.duplicate)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -215,10 +273,20 @@ class RecordIntakeImpl @Inject constructor(
 
     private suspend fun intakeNotificationCenterConfirm(
         intent: RecordIntent.NotificationCenterConfirm,
+        record: NotificationRecordEntity,
+        clientId: String,
     ): RecordOutcome {
-        val clientId = newClientId()
-        val moment = recordClock.now()
-        val sourceDetail = NotificationSourceMapping.friendlyName(intent.packageName)
+        val accountIds = if (intent.accountId != null || intent.targetAccountId != null || intent.type == "transfer") {
+            accountRepository.observeAccounts().first().map { it.id }.toSet()
+        } else emptySet()
+        if (intent.type == "transfer" && invalidTransferAccounts(intent, accountIds)) {
+            return rejected("请编辑转账，选择不同的有效转出和转入账户", clientId)
+        }
+        if (referencesMissingAccount(intent, accountIds)) {
+            return rejected("账户已不存在，请编辑后重试", clientId)
+        }
+        val moment = recordClock.at(record.receivedAt)
+        val sourceDetail = NotificationSourceMapping.friendlyName(record.packageName)
 
         val pending = PendingTransactionEntity(
             clientId = clientId,
@@ -231,6 +299,8 @@ class RecordIntakeImpl @Inject constructor(
             date = moment.date,
             time = moment.time,
             tags = if (intent.tags.isNotEmpty()) intent.tags.joinToString(",") else null,
+            accountId = intent.accountId,
+            targetAccountId = intent.targetAccountId,
             source = SOURCE_APP_NOTIFICATION,
             sourceDetail = sourceDetail,
             clientCreatedAt = moment.instant.toString(),
@@ -238,15 +308,16 @@ class RecordIntakeImpl @Inject constructor(
 
         val cached = confirmAndCache(pending = pending, confirmRecordId = intent.recordId)
         if (cached.failure != null) return RecordOutcome(clientId = clientId, failure = cached.failure)
+        val booked = requireNotNull(cached.pending)
 
         WidgetDataUpdater.notifyTransactionAdded(
             context = context,
-            type = intent.type.toTransactionType(),
-            amountCents = intent.amount,
-            date = pending.date,
+            type = booked.type.toTransactionType(),
+            amountCents = booked.amount,
+            date = booked.date,
         )
         // 不预测分类、不学习：学习在 confirmWithEdit 里显式做（用户主动改了分类才学）
-        return RecordOutcome(clientId = clientId)
+        return RecordOutcome(clientId = clientId, alreadyRecorded = cached.duplicate)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -276,6 +347,19 @@ class RecordIntakeImpl @Inject constructor(
         // 不刷 widget：原实现就没有刷，保留。
         return RecordOutcome(clientId = clientId)
     }
+
+    private fun invalidTransferAccounts(
+        intent: RecordIntent.NotificationCenterConfirm,
+        accountIds: Set<Int>,
+    ): Boolean = intent.accountId == null || intent.targetAccountId == null ||
+        intent.accountId == intent.targetAccountId ||
+        intent.accountId !in accountIds || intent.targetAccountId !in accountIds
+
+    private fun referencesMissingAccount(
+        intent: RecordIntent.NotificationCenterConfirm,
+        accountIds: Set<Int>,
+    ): Boolean = (intent.accountId != null && intent.accountId !in accountIds) ||
+        (intent.targetAccountId != null && intent.targetAccountId !in accountIds)
 
     // ═══════════════════════════════════════════════════════════════
     // 公共
@@ -308,22 +392,33 @@ class RecordIntakeImpl @Inject constructor(
         newRecord: NotificationRecordEntity? = null,
         confirmRecordId: Long? = null,
     ): CacheResult {
-        val serverId = when (val confirmation = submit(pending)) {
-            is Submit.Confirmed -> confirmation.serverId
-            is Submit.Failed -> return CacheResult(recordId = null, failure = confirmation.failure)
+        val confirmation = when (val result = submit(pending)) {
+            is Submit.Confirmed -> result
+            is Submit.Failed -> return CacheResult(recordId = null, failure = result.failure)
         }
-
+        val server = confirmation.transaction
+        // 响应丢失后用户可能改过表单；duplicates 必须复用服务端原账，而不是本次请求内容。
+        val confirmedPending = (if (confirmation.duplicate) pending.copy(
+            type = server.type,
+            amount = server.amount,
+            categoryId = server.categoryId,
+            categoryName = server.categoryName,
+            categoryIcon = server.categoryIcon,
+            accountId = server.accountId,
+            targetAccountId = server.targetAccountId,
+            description = server.description,
+            date = server.date,
+            time = server.time,
+            tags = server.tagsList().takeIf { it.isNotEmpty() }?.joinToString(","),
+        ) else pending).copy(syncStatus = SYNC_STATUS_SYNCED, serverTransactionId = server.id)
         val recordId = recordWriter.write(
             RecordWrite(
-                pending = pending.copy(
-                    syncStatus = SYNC_STATUS_SYNCED,
-                    serverTransactionId = serverId,
-                ),
+                pending = confirmedPending,
                 newRecord = newRecord,
                 confirmRecordId = confirmRecordId,
             ),
         )
-        return CacheResult(recordId = recordId, failure = null)
+        return CacheResult(recordId, null, confirmedPending, confirmation.duplicate)
     }
 
     /**
@@ -344,8 +439,8 @@ class RecordIntakeImpl @Inject constructor(
             CreateTransactionRequest(items = listOf(entity.toItemRequest())),
         )
         val data = response.data
-        val matched = (data?.created?.firstOrNull { it.clientId == entity.clientId }
-            ?: data?.duplicates?.firstOrNull { it.clientId == entity.clientId })?.id
+        val created = data?.created?.firstOrNull { it.clientId == entity.clientId }
+        val matched = created ?: data?.duplicates?.firstOrNull { it.clientId == entity.clientId }
         when {
             response.code != 0 ->
                 Submit.Failed(RecordFailure.Rejected(response.code, response.message))
@@ -356,7 +451,7 @@ class RecordIntakeImpl @Inject constructor(
                         reason = "服务端未确认这笔记录",
                     ),
                 )
-            else -> Submit.Confirmed(matched)
+            else -> Submit.Confirmed(matched, duplicate = created == null)
         }
     } catch (e: HttpException) {
         Submit.Failed(RecordFailure.Rejected(e.code(), "服务器错误: ${e.code()}"))
@@ -392,12 +487,17 @@ class RecordIntakeImpl @Inject constructor(
 
     /** 服务端确认的结果。 */
     private sealed interface Submit {
-        data class Confirmed(val serverId: Int) : Submit
+        data class Confirmed(val transaction: TransactionDto, val duplicate: Boolean) : Submit
         data class Failed(val failure: RecordFailure) : Submit
     }
 
     /** [confirmAndCache] 的结果：写了（带新建审计行 id）或没写（带失败原因）。 */
-    private data class CacheResult(val recordId: Long?, val failure: RecordFailure?)
+    private data class CacheResult(
+        val recordId: Long?,
+        val failure: RecordFailure?,
+        val pending: PendingTransactionEntity? = null,
+        val duplicate: Boolean = false,
+    )
 
     /** clientId = UUID v4（幂等与撤销的唯一凭据，架构决策 #6） */
     private fun newClientId(): String = UUID.randomUUID().toString()

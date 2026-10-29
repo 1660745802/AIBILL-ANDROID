@@ -21,6 +21,9 @@ config:
 # ============ 复杂度 ============
 # Compose Composable 函数天然较长，放宽阈值
 complexity:
+  # 全局 build.excludes 对部分规则不生效；测试夹具类天然较长，按原意在此排除。
+  LargeClass:
+    excludes: ['**/test/**', '**/androidTest/**']
   LongMethod:
     threshold: 300  # 复杂 Compose Screen（带 TopAppBar + Section + Dialog）
   LongParameterList:

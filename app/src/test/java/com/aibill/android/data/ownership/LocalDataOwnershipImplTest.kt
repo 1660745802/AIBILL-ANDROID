@@ -103,6 +103,8 @@ class LocalDataOwnershipImplTest {
             categoryDao = categoryDao,
             accountDao = accountDao,
             notificationRecordDao = notificationDao,
+            captureSession = CaptureSession(),
+            scoredAdmission = mockk(relaxed = true),
         )
     }
 

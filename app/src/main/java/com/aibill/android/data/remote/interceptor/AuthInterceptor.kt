@@ -43,29 +43,22 @@ class AuthInterceptor @Inject constructor(
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
 
-        // 附加 Token
-        val token = tokenManager.getToken()
+        // 凭证和代际必须在同一临界区读取；相同 JWT 字符串不代表相同会话。
+        val session = tokenManager.sessionSnapshot()
+        val token = session.token?.takeIf { it.isNotBlank() }
         val request = token?.let {
             originalRequest.newBuilder()
-                .addHeader("Authorization", "Bearer $it")
+                .header("Authorization", "Bearer $it")
                 .build()
         } ?: originalRequest
 
         val response = chain.proceed(request)
 
-        // 401 全局处理：清当前会话（token + userId/username/nickname）。
-        // 保留 last_known_user_id 不变 —— 它是本地缓存的归属判据，见 TokenManager.endSession。
-        if (response.code == 401) {
-            // **只有携带了凭证的 401 才是「会话过期」**。
-            // 未携带凭证也被拒（登录密码错误、首次安装未登录）属于预期内，
-            // 若也标成 TOKEN_EXPIRED，用户下次冷启动会被误告知「登录已过期」。
-            val reason = if (token != null) {
-                SessionEndReason.TOKEN_EXPIRED
-            } else {
-                SessionEndReason.SIGNED_OUT
-            }
-            appLogger.error("AUTH", "401 会话结束(${reason.storedValue}), 触发跳转登录: url=${originalRequest.url}")
-            tokenManager.endSession(reason)
+        // 无凭证/旧请求的 401 不得清掉请求发出后建立的新会话，也不发送过期事件。
+        if (response.code == 401 && token != null &&
+            tokenManager.endSessionIfCurrent(session.generation, SessionEndReason.TOKEN_EXPIRED)
+        ) {
+            appLogger.error("AUTH", "401 当前会话已过期，触发跳转登录: url=${originalRequest.url}")
             authEventBus.emit(AuthEvent.TokenExpired)
         }
 

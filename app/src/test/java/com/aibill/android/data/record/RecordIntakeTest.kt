@@ -1,7 +1,14 @@
 package com.aibill.android.data.record
 
 import android.content.Context
+import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.datastore.UserPreferences
+import com.aibill.android.domain.repository.AccountRepository
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import io.mockk.verify
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import com.aibill.android.data.local.entity.PendingTransactionEntity
 import com.aibill.android.data.remote.api.TransactionApi
@@ -76,6 +83,9 @@ class RecordIntakeTest {
     private val streakTracker: StreakTracker = mockk(relaxed = true)
     private lateinit var ruleSource: NotificationRuleSource
     private val transactionApi: TransactionApi = mockk()
+    private val notificationDao: NotificationRecordDao = mockk()
+    private val accountRepository: AccountRepository = mockk()
+    private val auditRows = mutableMapOf<Long, NotificationRecordEntity>()
 
     /** 送服务端 → 跨表写入 → 刷 widget → 回执 的调用顺序；每个 hook 都往里记一笔 */
     private val calls = mutableListOf<String>()
@@ -93,6 +103,20 @@ class RecordIntakeTest {
         calls.clear()
         insertedRows.clear()
         insertedRecords.clear()
+        auditRows.clear()
+        every { accountRepository.observeAccounts() } returns flowOf(emptyList())
+        coEvery { notificationDao.claimForConfirmation(any(), any()) } answers {
+            val id = firstArg<Long>()
+            val row = auditRows.getOrPut(id) {
+                NotificationRecordEntity(
+                    id = id, packageName = "com.tencent.mm", content = "支付成功",
+                    status = "parsed", receivedAt = fixedInstant.toEpochMilli(),
+                )
+            }
+            if (row.status == "parsed" && row.linkedClientId == null) {
+                row.copy(linkedClientId = secondArg()).also { auditRows[id] = it }
+            } else row
+        }
 
         mockkObject(WidgetDataUpdater)
         mockkObject(NotificationHelper)
@@ -126,6 +150,11 @@ class RecordIntakeTest {
                 insertedRows += write.pending
                 // 第三步（回填既有审计行）由 DirectRecordWriterTest 断言，这里只记顺序
                 if (write.confirmRecordId != null || newId != null) calls += "confirm-record"
+                write.confirmRecordId?.let { id ->
+                    auditRows[id] = auditRows.getValue(id).copy(
+                        status = "confirmed", linkedClientId = write.pending.clientId,
+                    )
+                }
                 return newId
             }
         }
@@ -150,6 +179,9 @@ class RecordIntakeTest {
             categoryLearningEngine = learningEngine,
             streakTracker = streakTracker,
             ruleSource = ruleSource,
+            notificationRecordDao = notificationDao,
+            accountRepository = accountRepository,
+            captureSession = com.aibill.android.data.ownership.CaptureSession(),
         )
     }
 
@@ -495,7 +527,7 @@ class RecordIntakeTest {
                 message = "ok",
             )
         }
-        val missed = intake.intake(confirmIntent())
+        val missed = intake.intake(confirmIntent(recordId = 43L))
         assertTrue(missed.failure is RecordFailure.Rejected, "匹配必须按 client_id，不能只看 duplicates 非空")
         assertWroteNothing()
     }
@@ -655,6 +687,7 @@ class RecordIntakeTest {
             Locale("ar", "EG") to "٢٠٢٦", // 阿拉伯数字
         ).forEach { (locale, localizedYear) ->
             insertedRows.clear()
+            auditRows.clear()
             withDefaultLocale(locale) {
                 intake.intake(confirmIntent())
             }
@@ -669,6 +702,148 @@ class RecordIntakeTest {
             // 服务端按 ISO YYYY-MM-DD 解析
             assertEquals(2026, java.time.LocalDate.parse(date).year)
         }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `confirm note and center serialize the same record and reuse its result`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        coEvery { transactionApi.createTransactions(any()) } coAnswers {
+            calls += "submit"
+            gate.await()
+            confirmed(firstArg())
+        }
+        val first = async { intake.intake(confirmIntent()) }
+        runCurrent()
+        val note = async { intake.intake(confirmIntent(learn = true)) }
+        val centerResult = async { intake.intake(center(recordId = 42L)) }
+        runCurrent()
+        assertEquals(1, calls.count { it == "submit" })
+        gate.complete(Unit)
+        val outcomes = listOf(first.await(), note.await(), centerResult.await())
+        assertTrue(outcomes.all { it.recorded })
+        assertEquals(1, outcomes.map { it.clientId }.distinct().size)
+        assertEquals(2, outcomes.count { it.alreadyRecorded })
+        assertEquals(1, calls.count { it == "write" })
+        assertEquals(1, calls.count { it == "widget" })
+        assertEquals(1, calls.count { it == "receipt" })
+        coVerify(exactly = 0) { learningEngine.learnFromCorrection(any(), any()) }
+    }
+
+    @Test
+    fun `lost response retry after intake recreation keeps persisted key without early confirmation`() = runTest {
+        var lostKey: String? = null
+        lateinit var lostRequest: CreateTransactionRequest
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            lostRequest = firstArg()
+            lostKey = lostRequest.items.single().clientId
+            assertEquals(lostKey, auditRows.getValue(42L).linkedClientId)
+            assertEquals("parsed", auditRows.getValue(42L).status)
+            throw java.io.IOException("response lost")
+        }
+        val failed = intake.intake(confirmIntent())
+        assertFalse(failed.recorded)
+        assertWroteNothing()
+        assertEquals("parsed", auditRows.getValue(42L).status)
+        coEvery { transactionApi.createTransactions(any()) } answers {
+            assertEquals(lostKey, firstArg<CreateTransactionRequest>().items.single().clientId)
+            duplicatesApiResponse(lostRequest)
+        }
+        val retried = buildIntake(writer).intake(center(recordId = 42L))
+        assertTrue(retried.recorded)
+        assertEquals(failed.clientId, retried.clientId)
+        assertEquals(2500, onlyRow().amount)
+        verify(exactly = 1) { WidgetDataUpdater.notifyTransactionAdded(any(), any(), 2500, any()) }
+        assertEquals("confirmed", auditRows.getValue(42L).status)
+    }
+
+    @Test
+    fun `cancelled confirmation releases lock but keeps its retry key`() = runTest {
+        coEvery { transactionApi.createTransactions(any()) } throws CancellationException("cancelled")
+        var cancelled = false
+        try {
+            intake.intake(confirmIntent())
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+        assertTrue(cancelled)
+        val reserved = auditRows.getValue(42L)
+        assertEquals("parsed", reserved.status)
+        assertNotNull(reserved.linkedClientId)
+        coEvery { transactionApi.createTransactions(any()) } answers { confirmed(firstArg()) }
+        val retried = intake.intake(center(recordId = 42L))
+        assertTrue(retried.recorded)
+        assertEquals(reserved.linkedClientId, retried.clientId)
+    }
+
+    @Test
+    fun `confirmed record survives intake recreation without post widget or receipt`() = runTest {
+        val recorded = intake.intake(center(recordId = 42L))
+        calls.clear()
+        val repeated = buildIntake(writer).intake(confirmIntent(learn = true))
+        assertTrue(repeated.alreadyRecorded)
+        assertEquals(recorded.clientId, repeated.clientId)
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test
+    fun `missing ignored and raw audit records never submit`() = runTest {
+        coEvery { notificationDao.claimForConfirmation(42L, any()) } returns null
+        assertFalse(intake.intake(confirmIntent()).recorded)
+        for (status in listOf("ignored", "raw", "auth_pending")) {
+            auditRows[9L] = NotificationRecordEntity(
+                id = 9L, packageName = "com.tencent.mm", content = "x", status = status,
+            )
+            assertFalse(intake.intake(center()).recorded)
+        }
+        coVerify(exactly = 0) { transactionApi.createTransactions(any()) }
+    }
+
+    @Test
+    fun `manual notification confirmations use audit receivedAt not current time`() = runTest {
+        val received = Instant.parse("2026-07-09T15:40:00Z")
+        for (id in listOf(42L, 9L)) {
+            auditRows[id] = NotificationRecordEntity(
+                id = id, packageName = "com.tencent.mm", content = "x", status = "parsed",
+                receivedAt = received.toEpochMilli(),
+            )
+        }
+        intake.intake(confirmIntent())
+        intake.intake(center())
+        assertEquals(2, insertedRows.size)
+        insertedRows.forEach {
+            assertEquals("2026-07-09", it.date)
+            assertEquals("23:40", it.time)
+            assertEquals(received.toString(), it.clientCreatedAt)
+        }
+    }
+
+    @Test
+    fun `center carries source and target accounts through request and cache`() = runTest {
+        every { accountRepository.observeAccounts() } returns flowOf(listOf(
+            com.aibill.android.domain.model.Account(id = 1, name = "银行卡", type = "bank", icon = "bank"),
+            com.aibill.android.domain.model.Account(id = 2, name = "现金", type = "cash", icon = "cash"),
+        ))
+        val body = slot<CreateTransactionRequest>()
+        coEvery { transactionApi.createTransactions(capture(body)) } answers { confirmed(firstArg()) }
+        val result = intake.intake(center().copy(type = "transfer", accountId = 1, targetAccountId = 2))
+        assertTrue(result.recorded)
+        assertEquals(1, onlyRow().accountId)
+        assertEquals(2, onlyRow().targetAccountId)
+        assertEquals(1, body.captured.items.single().accountId)
+        assertEquals(2, body.captured.items.single().targetAccountId)
+    }
+
+    @Test
+    fun `invalid transfer accounts require editing without posting`() = runTest {
+        for ((source, target) in listOf(null to null, 1 to 1, 1 to 999)) {
+            val outcome = intake.intake(center().copy(type = "transfer", accountId = source, targetAccountId = target))
+            assertFalse(outcome.recorded)
+            assertTrue(outcome.failure!!.userMessage.contains("编辑"))
+        }
+        assertFalse(intake.intake(confirmIntent().copy(type = "transfer")).recorded)
+        coVerify(exactly = 0) { transactionApi.createTransactions(any()) }
+        verify(exactly = 0) { WidgetDataUpdater.notifyTransactionAdded(any(), any(), any(), any()) }
     }
 
     private companion object {

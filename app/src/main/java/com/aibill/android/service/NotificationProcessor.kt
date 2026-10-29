@@ -6,6 +6,7 @@ import android.content.Context
 import com.aibill.android.data.local.dao.NotificationRecordDao
 import com.aibill.android.data.local.datastore.UserPreferences
 import com.aibill.android.data.local.entity.NotificationRecordEntity
+import com.aibill.android.data.ownership.CaptureSession
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.CaptureArchive
 import com.aibill.android.domain.notification.CaptureFunnelStats
@@ -17,6 +18,7 @@ import com.aibill.android.domain.notification.SourceChannel
 import com.aibill.android.domain.record.CapturedNotification
 import com.aibill.android.domain.record.RecordIntent
 import com.aibill.android.domain.record.RecordIntake
+import com.aibill.android.domain.record.autoClientId
 import com.aibill.android.util.AppLogger
 import com.aibill.android.util.NotificationHelper
 import com.aibill.android.util.NotificationSourceMapping
@@ -63,6 +65,7 @@ class NotificationProcessor @Inject constructor(
     private val appLogger: AppLogger,
     private val ruleSource: NotificationRuleSource,
     private val captureFunnelStats: CaptureFunnelStats,
+    private val captureSession: CaptureSession,
 ) : NotificationSink {
 
     /**
@@ -71,6 +74,11 @@ class NotificationProcessor @Inject constructor(
      * suspend 不等窗口：评分窗口内部异步产出，本方法只登记后返回。
      */
     override suspend fun process(capture: Capture) {
+        val owner = captureSession.snapshot()
+        captureSession.run(owner) { processCaptured(capture, owner) }
+    }
+
+    private suspend fun processCaptured(capture: Capture, owner: kotlinx.coroutines.Job) {
         when (val outcome = interpreter.read(capture)) {
             is ParseOutcome.Disabled, is ParseOutcome.NotATransaction -> Unit
             // 解析失败 = **不确定**（区别于「AI 判定不是账」）：既不是「是账」也不是「不是账」。
@@ -97,7 +105,9 @@ class NotificationProcessor @Inject constructor(
                     "AI 入参被拒，丢弃（不留待审）: reason=${outcome.reason} pkg=${capture.packageName}"
                 )
             }
-            is ParseOutcome.Parsed -> scoredAdmission.submit(outcome.transaction) { commit(it) }
+            is ParseOutcome.Parsed -> scoredAdmission.submit(outcome.transaction) { candidate ->
+                captureSession.run(owner) { commit(candidate) }
+            }
         }
     }
 
@@ -112,7 +122,7 @@ class NotificationProcessor @Inject constructor(
      * 逐条重新走 [process]，解析成功会正常入库并转 confirmed/parsed；解析失败不再留痕。
      * 终态标记与「不再无限重试」由 [CaptureArchive.replay] 处理。
      */
-    suspend fun replayAuthPending() {
+    suspend fun replayAuthPending() = captureSession.run {
         captureArchive.replay { pending ->
             process(
                 Capture(
@@ -124,6 +134,12 @@ class NotificationProcessor @Inject constructor(
                 )
             )
         }
+    }
+
+    /** 显式登出：停止在途识别并清空评分窗口，登录成功后由 AuthRepository 恢复。 */
+    suspend fun stopCapture() {
+        captureSession.pause()
+        scoredAdmission.reset()
     }
 
     /**
@@ -196,6 +212,13 @@ class NotificationProcessor @Inject constructor(
                 parsedType = candidate.type.takeIf { it in setOf("expense", "income", "transfer") },
                 parsedDescription = candidate.description ?: candidate.categoryName,
                 status = STATUS_PARSED,
+                // 自动提交可能已到达服务端但响应丢失；确认时复用同一个幂等键。
+                linkedClientId = autoClientId(
+                    packageName = candidate.capture.packageName,
+                    content = candidate.capture.fullText,
+                    receivedAt = candidate.capture.receivedAt,
+                    amountCents = candidate.amount,
+                ),
                 receivedAt = candidate.capture.receivedAt,
             )
         )

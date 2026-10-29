@@ -81,6 +81,7 @@ class AuthRepositoryImplTest {
         userPreferences = userPreferences,
         localDataOwnership = ownership,
         notificationProcessor = notificationProcessor,
+        captureSession = com.aibill.android.data.ownership.CaptureSession(),
     )
 
     /**
@@ -262,6 +263,8 @@ class AuthRepositoryImplTest {
         // 只结束会话：token / userId / username / nickname 清掉，
         // last_known_user_id 保留（它是本地缓存的归属判据）——由 TokenManager.endSession 保证。
         coVerify(exactly = 1) { tokenManager.endSession(SessionEndReason.SIGNED_OUT) }
+        // 登出必须停止后台通知识别，避免无 token 仍持续采集/写 auth_pending。
+        coVerify(exactly = 1) { notificationProcessor.stopCapture() }
         // 用户偏好只清身份三项，**不**清 serverUrl / 主题 / 通知隐私等设备设置
         coVerify(exactly = 1) { userPreferences.clearUserInfo() }
         // 登出**不**处置本地数据（那句承诺「本地未同步的数据不会丢失」靠的就是这里）
@@ -335,5 +338,6 @@ class AuthRepositoryImplTest {
         newRepo().logout() // 不得抛异常
 
         coVerify(exactly = 1) { tokenManager.endSession(SessionEndReason.SIGNED_OUT) }
+        coVerify(exactly = 1) { notificationProcessor.stopCapture() }
     }
 }

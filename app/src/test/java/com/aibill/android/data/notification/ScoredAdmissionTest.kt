@@ -52,7 +52,7 @@ class ScoredAdmissionTest {
     @BeforeEach
     fun setUp() {
         ruleSource = InMemoryNotificationRuleSource(rules(scoringSeconds = 10, dedupSeconds = 60))
-        coEvery { dao.findRecentSameAmount(any(), any()) } returns null
+        coEvery { dao.findRecentSameAmount(any(), any(), any()) } returns null
         admission = ScoredAdmissionImpl(dao, ruleSource, AppLogger(mockk(relaxed = true)))
         admission.testDispatcher = testDispatcher
     }
@@ -89,6 +89,20 @@ class ScoredAdmissionTest {
 
     @Test
     @DisplayName("候选在 10s 评分窗口到期前不产出，到期后产出一次")
+    fun `切换账号清除旧窗口与已认领金额`() = runTest(testDispatcher) {
+        val admitted = mutableListOf<ParsedTransaction>()
+        admission.submit(candidate(3200, score = 5)) { admitted += it }
+        admission.reset()
+        admission.submit(candidate(3200, score = 5, description = "新账号")) { admitted += it }
+        advanceUntilIdle()
+        assertEquals(listOf("新账号"), admitted.map { it.description })
+        admission.reset()
+        admission.submit(candidate(3200, score = 5, description = "另一个账号")) { admitted += it }
+        advanceUntilIdle()
+        assertEquals(2, admitted.size)
+    }
+
+    @Test
     fun `窗口未到期不产出，到期产出`() = runTest(testDispatcher) {
         val admitted = mutableListOf<ParsedTransaction>()
         admission.submit(candidate(3200, score = 5)) { admitted += it }
@@ -301,7 +315,7 @@ class ScoredAdmissionTest {
         assertEquals(1, admitted.size, "跨渠道同一笔只应入一笔")
         // 关联键：DB 兜底查重必须用「金额 + receivedAt-60s + 包名」，用 channel 或 wall clock 都错
         coVerify(exactly = 1) {
-            dao.findRecentSameAmount(8800, baseTime - 60_000)
+            dao.findRecentSameAmount(8800, baseTime - 60_000, baseTime + 60_000)
         }
     }
 
@@ -325,7 +339,7 @@ class ScoredAdmissionTest {
     @Test
     @DisplayName("内存判重漏网时 DB 兜底仍拦住跨渠道重复")
     fun `DB兜底判重`() = runTest(testDispatcher) {
-        coEvery { dao.findRecentSameAmount(any(), any()) } returns
+        coEvery { dao.findRecentSameAmount(any(), any(), any()) } returns
             NotificationRecordEntity(
                 id = 1L,
                 packageName = "cmb.pb",
@@ -342,8 +356,79 @@ class ScoredAdmissionTest {
 
         assertTrue(admitted.isEmpty(), "DB 里已有同金额的其他渠道记录 → 不产出")
         coVerify(exactly = 1) {
-            dao.findRecentSameAmount(300, baseTime - 60_000)
+            dao.findRecentSameAmount(300, baseTime - 60_000, baseTime + 60_000)
         }
+    }
+
+    @Test
+    fun `historical windows arriving in either order all produce independently`() = runTest(testDispatcher) {
+        for (times in listOf(listOf(-3_600_000L, 0L), listOf(0L, -3_600_000L))) {
+            val admitted = mutableListOf<ParsedTransaction>()
+            val instance = ScoredAdmissionImpl(dao, ruleSource, AppLogger(mockk(relaxed = true)))
+                .also { it.testDispatcher = testDispatcher }
+            times.forEach { offset ->
+                instance.submit(candidate(5000, score = 5, receivedAt = baseTime + offset)) { admitted += it }
+            }
+            advanceUntilIdle()
+            assertEquals(times.map { baseTime + it }.toSet(), admitted.map { it.capture.receivedAt }.toSet())
+            assertEquals(2, admitted.size)
+        }
+    }
+
+    @Test
+    fun `higher score does not move the original receivedAt anchor`() = runTest(testDispatcher) {
+        ruleSource = InMemoryNotificationRuleSource(rules(scoringSeconds = 10, dedupSeconds = 0))
+        admission = ScoredAdmissionImpl(dao, ruleSource, AppLogger(mockk(relaxed = true)))
+            .also { it.testDispatcher = testDispatcher }
+        val admitted = mutableListOf<ParsedTransaction>()
+        admission.submit(candidate(300, 1, receivedAt = baseTime)) { admitted += it }
+        admission.submit(candidate(300, 2, receivedAt = baseTime + 9_000)) { admitted += it }
+        admission.submit(candidate(300, 3, receivedAt = baseTime + 18_000)) { admitted += it }
+        advanceUntilIdle()
+        assertEquals(listOf(2, 3), admitted.map { it.score })
+    }
+
+    @Test
+    fun `old timer and failing callback cannot consume a later same amount window`() = runTest(testDispatcher) {
+        val gate = CompletableDeferred<Unit>()
+        val admitted = mutableListOf<Long>()
+        admission.submit(candidate(500, 1)) {
+            admitted += it.capture.receivedAt
+            gate.await()
+            error("old callback failed")
+        }
+        runCurrent()
+        advanceTimeBy(1_000)
+        admission.submit(candidate(500, 2, receivedAt = baseTime + 120_000)) {
+            admitted += it.capture.receivedAt
+        }
+        runCurrent()
+        advanceTimeBy(9_000)
+        runCurrent()
+        assertEquals(listOf(baseTime), admitted)
+        gate.complete(Unit)
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(listOf(baseTime, baseTime + 120_000), admitted)
+    }
+
+    @Test
+    fun `historical same amount claims survive while callback is suspended`() = runTest(testDispatcher) {
+        val gate = CompletableDeferred<Unit>()
+        val admitted = mutableListOf<ParsedTransaction>()
+        admission.submit(candidate(600, 1, receivedAt = baseTime - 3_600_000)) {
+            admitted += it
+            gate.await()
+        }
+        advanceTimeBy(10_100)
+        runCurrent()
+        admission.submit(candidate(600, 2, receivedAt = baseTime - 3_570_000)) { admitted += it }
+        advanceTimeBy(10_100)
+        runCurrent()
+        assertEquals(1, admitted.size)
+        gate.complete(Unit)
+        advanceUntilIdle()
     }
 
     // ── 写库在锁外 ──

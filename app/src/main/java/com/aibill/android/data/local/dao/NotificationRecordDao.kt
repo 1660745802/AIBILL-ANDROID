@@ -3,6 +3,7 @@ package com.aibill.android.data.local.dao
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Transaction
 import com.aibill.android.data.local.entity.NotificationRecordEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -48,11 +49,22 @@ interface NotificationRecordDao {
     @Query("SELECT COUNT(*) FROM notification_records WHERE status = 'parsed'")
     fun observePendingCount(): Flow<Int>
 
-    @Query("UPDATE notification_records SET status = :status, linked_client_id = :clientId WHERE id = :id")
+    // 忽略/恢复不能清掉重试键，迟到的操作也不能把已确认记录退回待审。
+    @Query("UPDATE notification_records SET status = :status, linked_client_id = COALESCE(:clientId, linked_client_id) WHERE id = :id AND (status != 'confirmed' OR :status = 'confirmed')")
     suspend fun updateStatus(id: Long, status: String, clientId: String? = null)
 
     @Query("SELECT * FROM notification_records WHERE id = :id LIMIT 1")
     suspend fun findById(id: Long): NotificationRecordEntity?
+
+    // 只预留幂等键；服务端确认之前不改变待审状态。
+    @Query("UPDATE notification_records SET linked_client_id = :clientId WHERE id = :id AND status = 'parsed' AND linked_client_id IS NULL")
+    suspend fun reserveConfirmationClientId(id: Long, clientId: String): Int
+
+    @Transaction
+    suspend fun claimForConfirmation(id: Long, clientId: String): NotificationRecordEntity? {
+        reserveConfirmationClientId(id, clientId)
+        return findById(id)
+    }
 
     @Query("SELECT * FROM notification_records WHERE package_name = :packageName AND content = :content AND received_at > :since LIMIT 1")
     suspend fun findDuplicate(packageName: String, content: String, since: Long): NotificationRecordEntity?
@@ -67,8 +79,8 @@ interface NotificationRecordDao {
      * 这一层是内存层失效时唯一的兜底，而**进程被杀正是这个 App 的常态**
      * （无障碍/NLS 服务被 ROM 杀后重连），所以它不能只覆盖跨包名。
      */
-    @Query("SELECT * FROM notification_records WHERE parsed_amount = :amount AND status IN ('confirmed', 'parsed') AND received_at > :since LIMIT 1")
-    suspend fun findRecentSameAmount(amount: Int, since: Long): NotificationRecordEntity?
+    @Query("SELECT * FROM notification_records WHERE parsed_amount = :amount AND status IN ('confirmed', 'parsed') AND received_at >= :since AND received_at <= :until LIMIT 1")
+    suspend fun findRecentSameAmount(amount: Int, since: Long, until: Long): NotificationRecordEntity?
 
     @Query("DELETE FROM notification_records")
     suspend fun deleteAll()

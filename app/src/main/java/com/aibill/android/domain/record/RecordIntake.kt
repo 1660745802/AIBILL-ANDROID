@@ -41,8 +41,8 @@ interface RecordIntake {
      * ## 成功判据：服务端回执（`created[]` 或 `duplicates[]`）里按 `client_id` 匹配到 id
      *
      * 顺序**不可调换**：先送服务端 → 拿到服务端 id → 才写本地缓存与审计行
-     * → 才刷 widget / streak / 回执 / 学分类。服务端没确认的那一笔**什么都不能发生**：
-     * 不写库、不发回执、不学习、不刷统计。
+     * → 才刷 widget / streak / 回执 / 学分类。人工确认可先在审计行预留幂等键，
+     * 但服务端确认前不写交易缓存、不改变待审状态、不发回执、不学习、不刷统计。
      *
      * 失败一律通过 [RecordOutcome.failure] 如实返回，**绝不静默**：
      * 调用方必须把它变成用户看得见的反馈（见各调用点的处置，`docs/ARCHITECTURE.md` §2.3）。
@@ -57,13 +57,15 @@ interface RecordIntake {
  * @property recordId 本笔新建的通知审计记录 id。**仅** [RecordIntent.NotificationAuto]
  *   非 null（它是唯一会新建审计行的意图）：它同时是 AUTO 回执的通知 id 与「撤销」的定位键。
  *   其余意图改的是早已存在的审计行，没有 id 可回传。
- * @property failure 非 null = 服务端没确认这一笔。此时本地什么都没写，
- *   审计行仍停在待审池，[recordId] 恒为 null。
+ * @property failure 非 null = 未完成确认；可持久保留人工确认的幂等键，
+ *   但不将审计行标为已确认，[recordId] 恒为 null。
  */
 data class RecordOutcome(
     val clientId: String,
     val recordId: Long? = null,
     val failure: RecordFailure? = null,
+    /** 复用已确认结果，调用方不得重复学习或累加统计。 */
+    val alreadyRecorded: Boolean = false,
 ) {
     /** 服务端确认这一笔了吗。`true` 才允许对用户说「已记录」。 */
     val recorded: Boolean get() = failure == null
@@ -128,6 +130,19 @@ data class CapturedNotification(
     val content: String,
     val receivedAt: Long,
 )
+
+/**
+ * 自动入账与随后的人工确认共用同一个幂等键：
+ * 服务端已提交但响应丢失时，用户从待审池确认不会生成第二笔。
+ */
+fun autoClientId(
+    packageName: String,
+    content: String,
+    receivedAt: Long,
+    amountCents: Int,
+): String = java.util.UUID.nameUUIDFromBytes(
+    "$packageName\u0000$receivedAt\u0000$amountCents\u0000$content".toByteArray(Charsets.UTF_8),
+).toString()
 
 /**
  * 入账意图。**一个 subtype = 一条历史写入路径的全部差异**。
@@ -199,6 +214,7 @@ sealed interface RecordIntent {
      */
     data class NotificationConfirm(
         val recordId: Long,
+        // 兼容调用方快照；入账时间和来源以 recordId 对应的审计行为准。
         val packageName: String,
         val amount: Int,
         val type: String,
@@ -221,6 +237,7 @@ sealed interface RecordIntent {
      */
     data class NotificationCenterConfirm(
         val recordId: Long,
+        // 兼容调用方快照；入账时间和来源以 recordId 对应的审计行为准。
         val packageName: String,
         val amount: Int,
         val type: String,
@@ -229,6 +246,8 @@ sealed interface RecordIntent {
         val categoryName: String? = null,
         val categoryIcon: String? = null,
         val tags: List<String> = emptyList(),
+        val accountId: Int? = null,
+        val targetAccountId: Int? = null,
     ) : RecordIntent {
         override val receipt: ReceiptPolicy get() = ReceiptPolicy.NONE
     }

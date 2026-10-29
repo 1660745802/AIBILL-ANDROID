@@ -15,6 +15,11 @@ data class MeResponse(
 )
 
 @JsonClass(generateAdapter = true)
+data class ChangePasswordResponse(
+    @Json(name = "token") val token: String,
+)
+
+@JsonClass(generateAdapter = true)
 data class UserDto(
     @Json(name = "id") val id: Int,
     @Json(name = "username") val username: String,

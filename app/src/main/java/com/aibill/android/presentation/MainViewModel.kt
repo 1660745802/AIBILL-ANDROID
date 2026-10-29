@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -29,14 +30,43 @@ class MainViewModel @Inject constructor(
     private val _startupState = MutableStateFlow(StartupState())
     val startupState: StateFlow<StartupState> = _startupState.asStateFlow()
 
-    /**
-     * PR 修复 AppLock 冷启动竞态：appLockEnabled 提升为 StateFlow，
-     * 初始值 Eagerly 同步消费默认值 false，后续 DataStore 变化即时同步。
-     * MainActivity onCreate 可同步读 `.value` 避免异步 race。
-     */
-    val appLockEnabled: StateFlow<Boolean> = userPreferences.appLockEnabled.stateIn(
-        viewModelScope, SharingStarted.Eagerly, false,
-    )
+    /** null 表示 DataStore 尚未加载；未知不是「未启用」，不能展示账本。 */
+    private val _appLockEnabled = MutableStateFlow<Boolean?>(null)
+    val appLockEnabled: StateFlow<Boolean?> = _appLockEnabled.asStateFlow()
+
+    // 解锁状态独立于偏好：重新订阅/重组/重复偏好发射都不能撤销本次解锁。
+    private val _isLocked = MutableStateFlow<Boolean?>(null)
+    val isLocked: StateFlow<Boolean?> = _isLocked.asStateFlow()
+
+    // 读取失败按“已启用”处理（fail-closed），不能把损坏的偏好当成“未上锁”或无限 Loading。
+    private val lockPreference: kotlinx.coroutines.flow.Flow<Boolean> =
+        userPreferences.appLockEnabled.catch {
+            _appLockEnabled.value = true
+            _isLocked.value = true
+            emit(true)
+        }
+
+    // 后台标记放在 ViewModel：配置变更重建 Activity 时仍能识别“从后台返回”。
+    private var hostStopped = false
+
+    fun onUnlocked() {
+        if (_isLocked.value == true) _isLocked.value = false
+    }
+
+    fun onAppForegrounded() {
+        _isLocked.value = _appLockEnabled.value
+    }
+
+    fun onHostStopped(changingConfigurations: Boolean) {
+        if (!changingConfigurations) hostStopped = true
+    }
+
+    fun onHostStarted() {
+        if (hostStopped) {
+            hostStopped = false
+            onAppForegrounded()
+        }
+    }
 
     /** 主题模式：system / light / dark */
     val themeMode: StateFlow<String> = userPreferences.themeMode.stateIn(
@@ -61,6 +91,13 @@ class MainViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            lockPreference.collect { enabled ->
+                _appLockEnabled.value = enabled
+                if (_isLocked.value == null) _isLocked.value = enabled
+            }
+        }
+        viewModelScope.launch {
+            lockPreference.first()
             val hasToken = tokenManager.hasToken()
             val hasServer = userPreferences.serverUrl.first()?.isNotBlank() == true
             val route = when {

@@ -1,6 +1,7 @@
 package com.aibill.android.data.notification
 
 import com.aibill.android.di.ApplicationScope
+import com.aibill.android.data.ownership.CaptureSession
 import com.aibill.android.domain.notification.Capture
 import com.aibill.android.domain.notification.CaptureIngress
 import com.aibill.android.domain.notification.NotificationPrefilter
@@ -31,21 +32,26 @@ class CaptureIngressImpl @Inject constructor(
     private val sink: NotificationSink,
     private val appLogger: AppLogger,
     @ApplicationScope private val scope: CoroutineScope,
+    private val captureSession: CaptureSession,
 ) : CaptureIngress {
 
-    override fun admit(capture: Capture): Job = scope.launch {
-        val tag = capture.channel.logTag
-        try {
-            when (val verdict = prefilter.evaluate(capture)) {
-                is Verdict.Block ->
-                    appLogger.debug(tag, "预筛拦截(${verdict.reason}): pkg=${capture.packageName}")
-                is Verdict.Pass -> sink.process(verdict.capture)
+    override fun admit(capture: Capture): Job {
+        val owner = captureSession.snapshot()
+        return scope.launch {
+            val tag = capture.channel.logTag
+            try {
+                captureSession.run(owner) {
+                    when (val verdict = prefilter.evaluate(capture)) {
+                        is Verdict.Block ->
+                            appLogger.debug(tag, "预筛拦截(${verdict.reason}): pkg=${capture.packageName}")
+                        is Verdict.Pass -> sink.process(verdict.capture)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appLogger.error(tag, "处理异常: pkg=${capture.packageName} err=${e.message}")
             }
-        } catch (e: CancellationException) {
-            // 取消不是处理失败：吞掉会让调用方在已取消的协程里继续跑。
-            throw e
-        } catch (e: Exception) {
-            appLogger.error(tag, "处理异常: pkg=${capture.packageName} err=${e.message}")
         }
     }
 }

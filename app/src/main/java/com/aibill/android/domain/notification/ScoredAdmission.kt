@@ -34,4 +34,6 @@ interface ScoredAdmission {
      * 非 suspend：本方法只登记状态，真正的等待与提交在 module 自己的协程里。
      */
     fun submit(candidate: ParsedTransaction, onAdmitted: suspend (ParsedTransaction) -> Unit)
+
+    suspend fun reset()
 }

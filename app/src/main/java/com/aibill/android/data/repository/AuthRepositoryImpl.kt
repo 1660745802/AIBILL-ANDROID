@@ -1,6 +1,7 @@
 package com.aibill.android.data.repository
 
 import com.aibill.android.data.local.datastore.UserPreferences
+import com.aibill.android.data.ownership.CaptureSession
 import com.aibill.android.data.remote.api.AuthApi
 import com.aibill.android.data.remote.dto.request.LoginRequest
 import com.aibill.android.data.remote.dto.request.RegisterRequest
@@ -34,6 +35,7 @@ class AuthRepositoryImpl @Inject constructor(
     private val userPreferences: UserPreferences,
     private val localDataOwnership: LocalDataOwnership,
     private val notificationProcessor: NotificationProcessor,
+    private val captureSession: CaptureSession,
 ) : AuthRepository {
 
     override suspend fun login(username: String, password: String): Result<User> {
@@ -64,6 +66,7 @@ class AuthRepositoryImpl @Inject constructor(
                     username = data.user.username,
                     nickname = data.user.nickname,
                 )
+                captureSession.resume()
                 // DataStore 仍同步一份供 Flow 订阅（失败只降级，见下方 helper）
                 syncUserInfoToDataStore(data.user.id, data.user.username, data.user.nickname)
                 // B2：同账号重登 → 重放因 401 未解析的通知。
@@ -100,6 +103,7 @@ class AuthRepositoryImpl @Inject constructor(
                     username = data.user.username,
                     nickname = data.user.nickname,
                 )
+                captureSession.resume()
                 syncUserInfoToDataStore(data.user.id, data.user.username, data.user.nickname)
                 Result.Success(data.user.toDomain())
             }
@@ -121,6 +125,13 @@ class AuthRepositoryImpl @Inject constructor(
      */
     override suspend fun logout() {
         tokenManager.endSession(SessionEndReason.SIGNED_OUT)
+        try {
+            notificationProcessor.stopCapture()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "登出停止通知处理失败（已降级：会话已结束）")
+        }
         try {
             userPreferences.clearUserInfo()
         } catch (e: CancellationException) {
@@ -159,10 +170,23 @@ class AuthRepositoryImpl @Inject constructor(
     )
 
     override suspend fun changePassword(oldPassword: String, newPassword: String): Result<Unit> {
-        return safeApiCall<Unit> {
+        val generation = tokenManager.sessionGeneration()
+        val result = safeApiCall {
             authApi.changePassword(
                 mapOf("old_password" to oldPassword, "new_password" to newPassword),
             )
+        }
+        return when (result) {
+            is Result.Success -> {
+                // 改密会轮换 JWT；只更新发起请求的会话，迟到响应不能覆盖新账号。
+                if (tokenManager.updateToken(result.data.token, generation)) {
+                    Result.Success(Unit)
+                } else {
+                    Result.Error(Result.ERROR_UNKNOWN, "会话已变化或凭证保存失败，请重新登录")
+                }
+            }
+            is Result.Error -> result
+            is Result.Loading -> result
         }
     }
 }

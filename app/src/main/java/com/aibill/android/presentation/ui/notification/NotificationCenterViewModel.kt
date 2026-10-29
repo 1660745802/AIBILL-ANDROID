@@ -3,7 +3,9 @@ package com.aibill.android.presentation.ui.notification
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aibill.android.domain.model.Account
 import com.aibill.android.domain.model.Category
+import com.aibill.android.domain.repository.AccountRepository
 import com.aibill.android.domain.model.NotificationRecord
 import com.aibill.android.domain.model.Result
 import com.aibill.android.domain.notification.ReviewQueue
@@ -37,6 +39,7 @@ class NotificationCenterViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
     private val categoryLearningEngine: CategoryLearningEngine,
+    private val accountRepository: AccountRepository,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
 
@@ -59,6 +62,9 @@ class NotificationCenterViewModel @Inject constructor(
     private val _availableTags = MutableStateFlow<List<String>>(emptyList())
     val availableTags: StateFlow<List<String>> = _availableTags.asStateFlow()
 
+    val accounts: StateFlow<List<Account>> = accountRepository.observeAccounts()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     private val _nlsConnected = MutableStateFlow(false)
     val nlsConnected: StateFlow<Boolean> = _nlsConnected.asStateFlow()
 
@@ -66,6 +72,7 @@ class NotificationCenterViewModel @Inject constructor(
         observeCategories()
         checkNlsStatus()
         loadAvailableTags()
+        viewModelScope.launch { accountRepository.syncAccounts() }
     }
 
     private fun loadAvailableTags() {
@@ -115,6 +122,10 @@ class NotificationCenterViewModel @Inject constructor(
                 _uiEvent.send(UiEvent.ShowToast("该笔已确认，请勿重复操作"))
                 return@launch
             }
+            if (record.parsedType == "transfer") {
+                _uiEvent.send(UiEvent.ShowToast("转账请先编辑，选择不同的有效转出和转入账户"))
+                return@launch
+            }
             val outcome = insertTransaction(
                 recordId = id,
                 type = record.parsedType ?: "expense",
@@ -138,6 +149,8 @@ class NotificationCenterViewModel @Inject constructor(
         description: String,
         categoryId: Int?,
         tags: List<String> = emptyList(),
+        accountId: Int? = null,
+        targetAccountId: Int? = null,
     ) {
         viewModelScope.launch {
             if (amountCents <= 0) {
@@ -149,6 +162,10 @@ class NotificationCenterViewModel @Inject constructor(
                 _uiEvent.send(UiEvent.ShowToast("该笔已确认，请勿重复操作"))
                 return@launch
             }
+            if (type == "transfer" && !validTransferAccounts(accountId, targetAccountId)) {
+                _uiEvent.send(UiEvent.ShowToast("请编辑转账，选择不同的有效转出和转入账户"))
+                return@launch
+            }
             val outcome = insertTransaction(
                 recordId = id,
                 type = type,
@@ -157,6 +174,8 @@ class NotificationCenterViewModel @Inject constructor(
                 packageName = record.packageName,
                 categoryId = categoryId,
                 tags = tags,
+                accountId = accountId,
+                targetAccountId = targetAccountId,
             )
             val failure = outcome.failure
             if (failure != null) {
@@ -166,12 +185,16 @@ class NotificationCenterViewModel @Inject constructor(
                 return@launch
             }
             val learnDesc = description.ifBlank { record.parsedDescription }
-            if (categoryId != null && !learnDesc.isNullOrBlank()) {
+            if (!outcome.alreadyRecorded && categoryId != null && !learnDesc.isNullOrBlank()) {
                 categoryLearningEngine.learnFromCorrection(learnDesc.trim(), categoryId)
             }
-            _uiEvent.send(UiEvent.ShowToast("已记账 ✓"))
+            _uiEvent.send(UiEvent.ShowToast(if (outcome.alreadyRecorded) "该笔已确认，本次未重复记账" else "已记账 ✓"))
         }
     }
+
+    private fun validTransferAccounts(accountId: Int?, targetAccountId: Int?): Boolean =
+        accountId != null && targetAccountId != null && accountId != targetAccountId &&
+            accounts.value.any { it.id == accountId } && accounts.value.any { it.id == targetAccountId }
 
     /**
      * 把一条通知翻译成入账意图。送服务端确认、落缓存、刷 widget 都在入账 module 里。
@@ -186,6 +209,8 @@ class NotificationCenterViewModel @Inject constructor(
         packageName: String,
         categoryId: Int? = null,
         tags: List<String> = emptyList(),
+        accountId: Int? = null,
+        targetAccountId: Int? = null,
     ): RecordOutcome {
         val typeKey = if (type == "income") "income" else "expense"
         val category = categoryId?.let { id ->
@@ -203,6 +228,8 @@ class NotificationCenterViewModel @Inject constructor(
                 categoryName = category?.name,
                 categoryIcon = category?.icon,
                 tags = tags,
+                accountId = accountId,
+                targetAccountId = targetAccountId,
             )
         )
     }

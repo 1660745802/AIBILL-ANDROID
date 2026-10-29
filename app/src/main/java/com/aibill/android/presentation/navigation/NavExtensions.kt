@@ -91,8 +91,16 @@ fun NavHostController.navigateToHomeAfterRegister() {
     }
 }
 
+private fun NavHostController.clearSavedTabs() {
+    clearBackStack<Route.Home>()
+    clearBackStack<Route.Transactions>()
+    clearBackStack<Route.Statistics>()
+    clearBackStack<Route.Profile>()
+}
+
 /** 退出登录：清栈跳登录 */
 fun NavHostController.navigateToLoginAfterLogout() {
+    clearSavedTabs()
     navigate(Route.Login) {
         popUpTo(Route.Home) { inclusive = true }
         launchSingleTop = true
@@ -101,6 +109,7 @@ fun NavHostController.navigateToLoginAfterLogout() {
 
 /** 401 全局处理：清空所有栈跳登录 */
 fun NavHostController.navigateToLoginForce() {
+    clearSavedTabs()
     navigate(Route.Login) {
         popUpTo(0) { inclusive = true }
         launchSingleTop = true

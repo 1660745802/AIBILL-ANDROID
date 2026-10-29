@@ -110,12 +110,9 @@ fun ServerConfigScreen(
 
             PrimaryButton(
                 text = "继续",
-                onClick = {
-                    viewModel.onSave(clearLocalCache = true)
-                    onConfigured()
-                },
+                onClick = { viewModel.onSave(clearLocalCache = true, onSaved = onConfigured) },
                 modifier = Modifier.weight(1f),
-                enabled = uiState.isConnected,
+                enabled = uiState.isConnected && !uiState.isSaving,
                 icon = if (uiState.isConnected) Icons.Default.Check else null,
             )
         }

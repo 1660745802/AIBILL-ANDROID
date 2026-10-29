@@ -21,6 +21,7 @@ import javax.inject.Inject
 data class ServerConfigUiState(
     val serverUrl: String = "",
     val isTesting: Boolean = false,
+    val isSaving: Boolean = false,
     val isConnected: Boolean = false,
     val error: String? = null,
 )
@@ -101,13 +102,33 @@ class ServerConfigViewModel @Inject constructor(
      * **设备侧**捕获的审计数据，不带服务器归属，按「换服务器 = 换命名空间」处理。
      * `ServerConfig` 仅从登录页可达，故不存在「用户在线时被误清」。
      */
-    fun onSave(clearLocalCache: Boolean = true) {
+    fun onSave(clearLocalCache: Boolean = true, onSaved: () -> Unit = {}) {
+        if (_uiState.value.isSaving) return
+        val url = normalizeUrl(_uiState.value.serverUrl)
+        _uiState.update { it.copy(isSaving = true, error = null) }
         viewModelScope.launch {
-            val url = normalizeUrl(_uiState.value.serverUrl)
-            if (clearLocalCache) {
-                localDataOwnership.dispose(DisposalIntent.SwitchingServer)
+            try {
+                val previousUrl = userPreferences.serverUrl.first()
+                // 先落 URL：写失败时绝不能再清本地数据。
+                userPreferences.setServerUrl(url)
+                if (clearLocalCache) {
+                    try {
+                        localDataOwnership.dispose(DisposalIntent.SwitchingServer)
+                    } catch (e: Exception) {
+                        // 清理失败则回滚地址，避免旧服务器缓存被新服务器会话读取。
+                        runCatching { userPreferences.setServerUrl(previousUrl ?: "") }
+                        throw e
+                    }
+                }
+                onSaved()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(e, "服务器配置保存失败")
+                _uiState.update { it.copy(error = "保存失败，请重试") }
+            } finally {
+                _uiState.update { it.copy(isSaving = false) }
             }
-            userPreferences.setServerUrl(url)
         }
     }
 

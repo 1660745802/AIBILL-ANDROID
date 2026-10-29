@@ -9,6 +9,7 @@ import com.aibill.android.domain.ownership.DisposalIntent
 import com.aibill.android.domain.ownership.DisposalOutcome
 import com.aibill.android.domain.ownership.LocalDataOwnership
 import com.aibill.android.domain.ownership.LocalOwnership
+import com.aibill.android.domain.notification.ScoredAdmission
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -53,6 +54,8 @@ class LocalDataOwnershipImpl @Inject constructor(
     private val categoryDao: CategoryDao,
     private val accountDao: AccountDao,
     private val notificationRecordDao: NotificationRecordDao,
+    private val captureSession: CaptureSession,
+    private val scoredAdmission: ScoredAdmission,
 ) : LocalDataOwnership {
 
     override fun currentOwnership(): LocalOwnership =
@@ -85,10 +88,18 @@ class LocalDataOwnershipImpl @Inject constructor(
      * 顺序本身不承载不变量（4 张表互不引用），但「新表加在末尾」比「插在中间」好读。
      */
     private suspend fun clearOwnedTables(intent: DisposalIntent): DisposalOutcome.Cleared {
-        pendingTransactionDao.deleteAll()
-        categoryDao.deleteAll()
-        accountDao.deleteAll()
-        notificationRecordDao.deleteAll()
+        captureSession.pause()
+        try {
+            scoredAdmission.reset()
+            pendingTransactionDao.deleteAll()
+            categoryDao.deleteAll()
+            accountDao.deleteAll()
+            notificationRecordDao.deleteAll()
+        } catch (e: Exception) {
+            // 清理失败时恢复采集，避免应用永久停在「通知不处理」状态。
+            captureSession.resume()
+            throw e
+        }
         Timber.i("Ownership: 已清空本地数据（$intent，4 张表）")
         return DisposalOutcome.Cleared
     }

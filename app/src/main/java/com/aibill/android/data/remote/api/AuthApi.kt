@@ -4,6 +4,7 @@ import com.aibill.android.data.remote.dto.request.LoginRequest
 import com.aibill.android.data.remote.dto.request.RegisterRequest
 import com.aibill.android.data.remote.dto.response.ApiResponse
 import com.aibill.android.data.remote.dto.response.AuthResponse
+import com.aibill.android.data.remote.dto.response.ChangePasswordResponse
 import com.aibill.android.data.remote.dto.response.MeResponse
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -22,5 +23,5 @@ interface AuthApi {
     suspend fun getCurrentUser(): ApiResponse<MeResponse>
 
     @PUT("auth/password")
-    suspend fun changePassword(@Body request: Map<String, String>): ApiResponse<Unit>
+    suspend fun changePassword(@Body request: Map<String, String>): ApiResponse<ChangePasswordResponse>
 }

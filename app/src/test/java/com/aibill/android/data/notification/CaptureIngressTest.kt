@@ -49,7 +49,7 @@ class CaptureIngressTest {
     )
 
     private fun ingress(prefilter: NotificationPrefilter, scope: CoroutineScope) =
-        CaptureIngressImpl(prefilter, sink, appLogger, scope)
+        CaptureIngressImpl(prefilter, sink, appLogger, scope, com.aibill.android.data.ownership.CaptureSession())
 
     @Test
     fun `Pass 路由到 sink`() = runTest {

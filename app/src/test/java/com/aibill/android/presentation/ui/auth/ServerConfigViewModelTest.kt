@@ -130,6 +130,39 @@ class ServerConfigViewModelTest {
             coVerify(exactly = 1) { userPreferences.setServerUrl(SERVER_URL) }
         }
 
+    @Test
+    fun `url persist failure does not clear local data`() = runTest {
+        coEvery { userPreferences.setServerUrl(any()) } throws java.io.IOException("disk full")
+        val viewModel = buildViewModel()
+
+        viewModel.onSave(clearLocalCache = true)
+        testScheduler.advanceUntilIdle()
+
+        coVerify(exactly = 0) { ownership.dispose(any()) }
+        assertEquals("保存失败，请重试", viewModel.uiState.value.error)
+        assertEquals(false, viewModel.uiState.value.isSaving)
+    }
+
+    @Test
+    fun `navigation waits for disposal and saved URL`() = runTest {
+        val finish = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { ownership.dispose(any()) } coAnswers {
+            finish.await()
+            DisposalOutcome.Cleared
+        }
+        val viewModel = buildViewModel()
+        var navigated = false
+        viewModel.onSave { navigated = true }
+        assertEquals(false, navigated)
+        assertEquals(true, viewModel.uiState.value.isSaving)
+        // URL 先落盘；导航仍必须等待清库完成。
+        coVerify(exactly = 1) { userPreferences.setServerUrl(SERVER_URL) }
+        finish.complete(Unit)
+        testScheduler.advanceUntilIdle()
+        assertEquals(true, navigated)
+        coVerify(exactly = 1) { userPreferences.setServerUrl(SERVER_URL) }
+    }
+
     private companion object {
         const val SERVER_URL = "http://a.example/api"
     }

@@ -39,10 +39,6 @@ class MainActivity : FragmentActivity() {
 
     private val mainViewModel: MainViewModel by viewModels()
 
-    // ★ PR 修复：isLocked 不再依赖异步 DataStore 读取，
-    // 从 MainViewModel.appLockEnabled 同步消费 .value，避免冷启动+立即切后台的竞态绕过。
-    private var isLocked by mutableStateOf(false)
-    private var wasInBackground = false
     private var navigateTo by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,15 +49,15 @@ class MainActivity : FragmentActivity() {
         notifyIfSessionExpiredInBackground()
         appLogger.autoCleanOldLogs(this)
 
-        // ★ 同步初始化锁定态（解决 PR #41 覆盖不到的冷启动 race）
-        isLocked = mainViewModel.appLockEnabled.value
-
         setContent {
             val themeMode by mainViewModel.themeMode.collectAsStateWithLifecycle()
             val dynamicColor by mainViewModel.dynamicColorEnabled.collectAsStateWithLifecycle()
+            val isLocked by mainViewModel.isLocked.collectAsStateWithLifecycle()
             AiBillTheme(themeMode = themeMode, dynamicColor = dynamicColor) {
-                if (isLocked) {
-                    AppLockScreen(onUnlocked = { isLocked = false })
+                if (isLocked == null) {
+                    com.aibill.android.presentation.components.LoadingState()
+                } else if (isLocked == true) {
+                    AppLockScreen(onUnlocked = mainViewModel::onUnlocked)
                 } else {
                     val startupState by mainViewModel.startupState.collectAsStateWithLifecycle()
                     if (startupState.isReady) {
@@ -103,18 +99,13 @@ class MainActivity : FragmentActivity() {
 
     override fun onStop() {
         super.onStop()
-        wasInBackground = true
+        mainViewModel.onHostStopped(isChangingConfigurations)
     }
 
     override fun onStart() {
         super.onStart()
-        // ★ PR 修复：去掉 `appLockCheckedThisProcess` 标志，
-        // 改用同步状态：只要 enabled=true 且刚切回前台，就锁定。
-        // 首次 onCreate 已同步锁定，不需要额外守卫。
-        if (wasInBackground && !isLocked && mainViewModel.appLockEnabled.value) {
-            isLocked = true
-        }
-        wasInBackground = false
+        // 配置变更不重锁；真实后台返回由 ViewModel 的后台标记识别。
+        mainViewModel.onHostStarted()
     }
 
     private fun applyHideFromRecents(hide: Boolean) {

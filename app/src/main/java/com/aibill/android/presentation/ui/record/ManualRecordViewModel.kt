@@ -52,23 +52,28 @@ class ManualRecordViewModel @Inject constructor(
 
     sealed class UiEvent {
         data class ShowToast(val message: String) : UiEvent()
-        /**
-         * 保存成功。自带展示文案，让 UI 层不必再靠关键字匹配去分辨成功/失败
-         * （原先 UI 还要额外弹一个 Toast，形成双重反馈）。
-         */
+        /** 成功事件与错误文案分离，UI 不靠关键词判定结果。 */
         data class SaveSuccess(val message: String) : UiEvent()
     }
 
     private val _uiState = MutableStateFlow(RecordUiState())
     val uiState: StateFlow<RecordUiState> = _uiState.asStateFlow()
 
+    // 未确认草稿在此 ViewModel 生命周期内复用整份请求（含 ID/时间）。
+    // 任何实际表单编辑都废弃旧 ID，即使随后改回原值；相同值回调、元数据刷新不换 ID。
+    private var pendingTransaction: Transaction? = null
+
+    private fun editForm(transform: (RecordUiState) -> RecordUiState) {
+        val current = _uiState.value
+        val edited = transform(current)
+        if (edited != current) pendingTransaction = null
+        _uiState.value = edited
+    }
+
     private val _uiEvent = Channel<UiEvent>(Channel.BUFFERED)
     val uiEvent = _uiEvent.receiveAsFlow()
 
-    /**
-     * 当前 type 对应的分类订阅 Job，PR #36：切类型时取消旧 Job，
-     * 避免 collect 协程叠加浪费 Room 订阅。
-     */
+    /** 切类型时取消旧分类订阅，避免 collect 协程叠加。 */
     private var categoriesJob: kotlinx.coroutines.Job? = null
 
     init {
@@ -88,9 +93,7 @@ class ManualRecordViewModel @Inject constructor(
     private fun loadAvailableTags() {
         viewModelScope.launch {
             when (val result = transactionRepository.getTags()) {
-                is Result.Success -> {
-                    _uiState.update { it.copy(availableTags = result.data) }
-                }
+                is Result.Success -> _uiState.update { it.copy(availableTags = result.data) }
                 else -> Unit // 静默失败，标签建议非核心功能
             }
         }
@@ -101,49 +104,26 @@ class ManualRecordViewModel @Inject constructor(
         if (trimmed.isBlank()) return
         val current = _uiState.value.tags
         if (trimmed in current) return
-        _uiState.update { it.copy(tags = current + trimmed) }
+        editForm { it.copy(tags = current + trimmed) }
     }
 
-    fun onTagRemoved(tag: String) {
-        _uiState.update { it.copy(tags = it.tags - tag) }
-    }
+    fun onTagRemoved(tag: String) = editForm { it.copy(tags = it.tags - tag) }
 
-    fun onAccountSelected(id: Int) {
-        _uiState.update { it.copy(accountId = id) }
-    }
+    fun onAccountSelected(id: Int) = editForm { it.copy(accountId = id) }
 
-    fun onTargetAccountSelected(id: Int) {
-        _uiState.update { it.copy(targetAccountId = id) }
-    }
+    fun onTargetAccountSelected(id: Int) = editForm { it.copy(targetAccountId = id) }
 
     fun onTypeChanged(type: String) {
-        _uiState.update { it.copy(type = type, selectedCategoryId = null) }
+        if (type == _uiState.value.type) return
+        editForm { it.copy(type = type, selectedCategoryId = null) }
         loadCategories(type)
     }
 
-    /**
-     * 直接设置金额文本（用于系统键盘输入场景）。
-     *
-     * 历史 bug：直接 `Math.round(text.toDouble() * 100).toInt()` 有两个问题——
-     * 1. `.toInt()` 对超范围值**静默截断**（Long.toInt 不抛异常），
-     *    用户输入一串长数字会得到一个完全错误的金额并写进账单；
-     * 2. 本路径**没有**长度限制（onAmountInput 有限制，两条路径不一致）。
-     * 现在统一走 [AmountUtils.parseExpression]（内部 try/catch + 上限拦截，返回 null），
-     * 并复用 [MAX_AMOUNT_TEXT_LENGTH] 与 [AmountUtils.MAX_AMOUNT_FEN] 两个上限。
-     *
-     * @param text 已经过格式校验的纯数字+小数点字符串
-     */
+    /** 系统键盘与计算器共用长度/金额上限；编辑中保留不完整表达式，旧金额仅供预览。 */
     fun onAmountTextChanged(text: String) {
         val truncated = text.take(MAX_AMOUNT_TEXT_LENGTH)
         val fen = AmountUtils.parseExpression(truncated)
-        _uiState.update {
-            if (fen == null) {
-                // 非法 / 溢出：保留用户输入的文本（方便看到并手动修），金额保持上一次有效值
-                it.copy(amountText = truncated)
-            } else {
-                it.copy(amountText = truncated, amountFen = fen)
-            }
-        }
+        editForm { it.copy(amountText = truncated, amountFen = fen ?: it.amountFen) }
     }
 
     fun onAmountInput(char: String) {
@@ -166,9 +146,7 @@ class ManualRecordViewModel @Inject constructor(
             if (dotIndex >= 0 && lastSegment.length - dotIndex > 2) return
         }
 
-        val newText = current + char
-        val parsed = AmountUtils.parseExpression(newText)
-        _uiState.update { it.copy(amountText = newText, amountFen = parsed ?: it.amountFen) }
+        onAmountTextChanged(current + char)
     }
 
     fun onAmountDelete() {
@@ -176,20 +154,18 @@ class ManualRecordViewModel @Inject constructor(
         if (current.isEmpty()) return
         val newText = current.dropLast(1)
         val parsed = if (newText.isEmpty()) 0 else AmountUtils.parseExpression(newText) ?: _uiState.value.amountFen
-        _uiState.update { it.copy(amountText = newText, amountFen = parsed) }
+        editForm { it.copy(amountText = newText, amountFen = parsed) }
     }
 
     fun onCategorySelected(id: Int) {
-        _uiState.update { it.copy(selectedCategoryId = id) }
+        editForm { it.copy(selectedCategoryId = id) }
     }
 
     fun onAiInputChanged(text: String) {
         _uiState.update { it.copy(aiInputText = text) }
     }
 
-    /**
-     * AI 快捷填充：输入自然语言后调用 AI 解析，自动填充金额/分类/备注。
-     */
+    /** AI 快捷填充金额/分类/备注。 */
     fun onAiParse() {
         val input = _uiState.value.aiInputText.trim()
         if (input.isBlank()) return
@@ -201,24 +177,10 @@ class ManualRecordViewModel @Inject constructor(
                     val items = result.data
                     if (items.isNotEmpty()) {
                         val first = items.first()
-                        // 填充金额（显示走 AmountUtils，不在 UI 层做 Double 换算）
-                        if (first.amount > 0) {
-                            val yuanText = AmountUtils.fenToYuan(first.amount)
-                            _uiState.update { it.copy(amountText = yuanText, amountFen = first.amount) }
-                        }
-                        // 填充类型
-                        first.type?.let { type ->
-                            val typeStr = type.value // TransactionType enum → string
-                            onTypeChanged(typeStr)
-                        }
-                        // 填充分类
-                        first.categoryId?.let { catId ->
-                            _uiState.update { it.copy(selectedCategoryId = catId) }
-                        }
-                        // 填充备注
-                        first.description?.let { desc ->
-                            _uiState.update { it.copy(description = desc) }
-                        }
+                        if (first.amount > 0) onAmountTextChanged(AmountUtils.fenToYuan(first.amount))
+                        first.type?.let { onTypeChanged(it.value) }
+                        first.categoryId?.let(::onCategorySelected)
+                        first.description?.let(::onDescriptionChanged)
                         _uiState.update { it.copy(isAiParsing = false, aiInputText = "") }
                         _uiEvent.send(UiEvent.ShowToast("✨ AI 已填充"))
                     } else {
@@ -235,94 +197,87 @@ class ManualRecordViewModel @Inject constructor(
         }
     }
 
-    fun onDescriptionChanged(text: String) {
-        _uiState.update { it.copy(description = text) }
-    }
+    fun onDescriptionChanged(text: String) = editForm { it.copy(description = text) }
 
-    fun onDateChanged(date: String) {
-        _uiState.update { it.copy(date = date) }
-    }
+    fun onDateChanged(date: String) = editForm { it.copy(date = date) }
 
     /**
-     * 保存。
-     *
-     * ## 成功判据在服务端手里
-     *
-     * `createTransactions` 只有在服务端回执（`created` / `duplicates`）+ `client_id` 匹配时才返回
-     * [Result.Success]，所以走到这里就意味着「真的记上了」。
-     *
-     * ## 失败当场告知，且**保留表单输入**
-     *
-     * 任何失败都只报错、不落库、不清表单：用户原地改一改就能重试。
-     * 无网时给的是「没网，记不上」而不是兜底成一条待补传的本地记录——
-     * 本工程没有离线队列，写了就是谎报。
+     * 仓库核验服务端 created/duplicates + client_id 后才返回成功。
+     * 失败保留表单和未确认请求；不落本地行，也不承诺离线补传。
      */
+    @Synchronized
     fun onSave() {
         val state = _uiState.value
-        if (state.amountFen <= 0) {
-            viewModelScope.launch { _uiEvent.send(UiEvent.ShowToast("请输入金额")) }
+        if (state.isSaving) return
+        val amount = AmountUtils.parseExpression(state.amountText)
+        val error = when {
+            state.amountText.isBlank() -> "请输入金额"
+            amount == null || amount > AmountUtils.MAX_AMOUNT_FEN -> "金额表达式无效或超出上限，请检查"
+            amount <= 0 -> "金额必须大于 0"
+            state.selectedCategoryId == null && state.type != "transfer" -> "请选择分类"
+            else -> null
+        }
+        if (error != null) {
+            viewModelScope.launch { _uiEvent.send(UiEvent.ShowToast(error)) }
             return
         }
-        if (state.selectedCategoryId == null && state.type != "transfer") {
-            viewModelScope.launch { _uiEvent.send(UiEvent.ShowToast("请选择分类")) }
-            return
+        val transaction = pendingTransaction ?: buildTransaction(state, requireNotNull(amount)).also {
+            pendingTransaction = it
         }
-
+        // 必须在 launch 之前占位：同一调度轮次的双击也只能发出一个请求。
+        _uiState.update { it.copy(isSaving = true) }
         viewModelScope.launch {
-            _uiState.update { it.copy(isSaving = true) }
-            val selectedCategory = state.categories.find { it.id == state.selectedCategoryId }
-            val transaction = Transaction(
-                clientId = UUID.randomUUID().toString(),
-                type = TransactionType.fromValue(state.type) ?: TransactionType.EXPENSE,
-                amount = state.amountFen,
-                categoryId = state.selectedCategoryId,
-                categoryName = selectedCategory?.name,
-                categoryIcon = selectedCategory?.icon,
-                accountId = state.accountId,
-                targetAccountId = state.targetAccountId,
-                description = state.description.ifBlank { null },
-                date = state.date,
-                time = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
-                source = TransactionSource.MANUAL,
-                tags = state.tags.ifEmpty { null },
-            )
-
-            val result = transactionRepository.createTransactions(listOf(transaction))
-            when (result) {
-                is Result.Success -> {
-                    _uiEvent.send(UiEvent.SaveSuccess("已记录，继续记下一笔"))
-                    streakTracker.onTransactionRecorded()
-                    resetForm()
-                }
-                is Result.Error -> {
-                    // 没记上就是没记上：不落库、不清表单，用户当场重试。
-                    // 无网与业务失败分开措辞，避免把「422 让你改字段」说成「没网」。
-                    _uiEvent.send(
+            try {
+                when (val result = transactionRepository.createTransactions(listOf(transaction))) {
+                    is Result.Success -> {
+                        // 保存途中用户已编辑的是下一份草稿，不能被旧回执清掉。
+                        if (pendingTransaction === transaction) {
+                            pendingTransaction = null
+                            resetForm()
+                        }
+                        _uiEvent.send(UiEvent.SaveSuccess("已记录，继续记下一笔"))
+                        streakTracker.onTransactionRecorded()
+                    }
+                    is Result.Error -> _uiEvent.send(
                         UiEvent.ShowToast(
-                            if (result.code == Result.ERROR_NETWORK) {
-                                "没网，记不上"
-                            } else {
-                                "保存失败: ${result.message}"
-                            },
+                            if (result.code == Result.ERROR_NETWORK) "没网，记不上"
+                            else "保存失败: ${result.message}",
                         ),
                     )
+                    is Result.Loading -> Unit
                 }
-                is Result.Loading -> Unit
+            } finally {
+                _uiState.update { it.copy(isSaving = false) }
             }
-            _uiState.update { it.copy(isSaving = false) }
         }
+    }
+
+    private fun buildTransaction(state: RecordUiState, amount: Int): Transaction {
+        val category = state.categories.find { it.id == state.selectedCategoryId }
+        return Transaction(
+            clientId = UUID.randomUUID().toString(),
+            type = TransactionType.fromValue(state.type) ?: TransactionType.EXPENSE,
+            amount = amount,
+            categoryId = state.selectedCategoryId,
+            categoryName = category?.name,
+            categoryIcon = category?.icon,
+            accountId = state.accountId,
+            targetAccountId = state.targetAccountId,
+            description = state.description.ifBlank { null },
+            date = state.date,
+            time = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
+            source = TransactionSource.MANUAL,
+            tags = state.tags.ifEmpty { null },
+        )
     }
 
     private fun resetForm() {
-        val type = _uiState.value.type
-        val categories = _uiState.value.categories
-        val availableTags = _uiState.value.availableTags
         _uiState.update {
             RecordUiState(
-                type = type,
-                categories = categories,
-                date = LocalDate.now().toString(),
-                availableTags = availableTags,
+                type = it.type,
+                categories = it.categories,
+                isSaving = it.isSaving,
+                availableTags = it.availableTags,
             )
         }
     }

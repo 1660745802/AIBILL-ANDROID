@@ -105,6 +105,7 @@ fun NotificationCenterScreen(
     editItem?.let { item ->
         val categoriesByType by viewModel.categoriesByType.collectAsStateWithLifecycle()
         val availableTags by viewModel.availableTags.collectAsStateWithLifecycle()
+        val accounts by viewModel.accounts.collectAsStateWithLifecycle()
         com.aibill.android.presentation.ui.common.TransactionEditDialog(
             initial = com.aibill.android.presentation.ui.common.TransactionEditDialogInitial(
                 amount = item.parsedAmount ?: 0,
@@ -113,10 +114,14 @@ fun NotificationCenterScreen(
             ),
             categoriesByType = categoriesByType,
             availableTags = availableTags,
-            accounts = emptyList(),
+            accounts = accounts,
             onDismiss = { editItem = null },
             onConfirm = { amount, type, categoryId, desc, accountId, targetAccountId, tags ->
-                viewModel.confirmWithEdit(item.id, type, amount, desc, categoryId, tags)
+                viewModel.confirmWithEdit(
+                    id = item.id, type = type, amountCents = amount, description = desc,
+                    categoryId = categoryId, tags = tags,
+                    accountId = accountId, targetAccountId = targetAccountId,
+                )
                 editItem = null
             },
         )
