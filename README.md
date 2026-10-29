@@ -23,7 +23,7 @@ AI 驱动的智能记账 Android 原生应用，复用 [AIBILL 后端](https://g
 | UI | Jetpack Compose + Material 3 |
 | 架构 | MVVM + Clean Architecture（UI / Domain / Data） |
 | DI | Hilt（含 `@HiltWorker`） |
-| 本地存储 | Room（DB v9，6 张表） + DataStore Preferences |
+| 本地存储 | Room（DB v11，7 张表） + DataStore Preferences |
 | 网络 | Retrofit + OkHttp + Moshi（codegen） |
 | 后台 | WorkManager（4 个 Worker：RulesSync / UpdateCheck / NlsHealth / A11yHealth） |
 | 通知监听 | NotificationListenerService + 无障碍 + SMS 三渠道 |

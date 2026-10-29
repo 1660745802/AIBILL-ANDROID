@@ -74,6 +74,7 @@ com.aibill/android/
 | **RecordIntake**（入账） | clientId、时钟、entity 装配、提交服务端、分类预测/学习、widget、回执、隐私档 | `intake(intent)`：4 个意图 subtype = 4 条入账路径的全部差异 |
 | **NotificationPrefilter**（预筛） | 「这条通知值不值得当账」的全部判据 + 每源状态 | `evaluate(Capture): Verdict` |
 | **LocalDataOwnership**（本地归属） | 哪些表归 server × account、三种处置 | `currentOwnership` / `dispose(intent)` |
+| **CaptureSession**（会话协程边界） | 换号/换服务器/登出时取消在途识别，登录后恢复；嵌套任务共用同一会话票据 | `run` / `pause` / `resume` |
 | **RecordUndo**（撤销） | 「这笔还撤不撤得掉」的判据与文案 | `undo(clientId): UndoOutcome` |
 
 > 通知核心循环另有 4 个**策略 module**（解析与校验 / 评分窗口与判重 / 捕获与补偿 / AI 熔断）。
@@ -99,7 +100,7 @@ suspend lambda。**测试里跑的是 `DirectRecordWriter`，不提供原子性�
   `source_detail="tasker_quick_record"` 承担，用户可见来源名仍是 Tasker。
 - `clientId` = UUID v4，是幂等与撤销的唯一凭据。
 
-**入账路径之间的差异是历史事实，不要顺手统一**（收口只搬运）：
+**入账路径之间的差异必须保留**（收口只搬运）：
 弹窗直接确认不学习、带备注确认才学；弹窗确认隐私档写死 `false` 而 AI 自动入账读偏好；
 AI 自动入账的 `source_detail` 走云控来源名映射、其余走硬编码；弹窗确认只写 `category_id`、
 通知中心确认冗余写 `category_name/category_icon`；静默入账不刷 widget；
@@ -279,8 +280,7 @@ DELETE /api/transactions/:id/permanent   # 彻底删除
 POST /api/ai/parse               # { input } 必填；可选上下文 channel/source/title/body/received_at/hints
                                  # 响应 items 含 S3 机械抽取字段（merchant/card_tail/balance_*/time）
                                  # 与 needs_review（**服务端唯一待审阈值**）/confidence（仅展示）
-                                 # 成功形态带 parse_log_id；预筛挡下/超时等形态没有
-                                 # （该字段客户端已不消费：parse-feedback 已下线，见 §6.1）
+                                 # 成功形态带 parse_log_id；预筛挡下/超时等形态没有（客户端不消费该字段）
                                  # **items 恒 ≤ 1**（单笔契约不变量：挑笔标准在服务端 lib/main-item.ts，
                                  #   客户端只取 items[0] 不自挑）；多余条数见 data.extra_items_dropped
                                  #   通知链路：0 笔 = 手动兜底，1 笔 = 正常入账
@@ -353,7 +353,7 @@ GitHub 更新检查连接 15s / 读 30s。
 |---|---|
 | `client_id` | 幂等与撤销的唯一凭据 |
 | `server_transaction_id` | 服务端那一笔的 id；**撤销时删的就是它** |
-| `parse_log_id` | 该笔来自哪一次 AI 解析（服务端 `ai_parse_logs.id`）。**已废弃**：仍随 AI 解析落库，但客户端不再读取（消费方 parse-feedback 已下线）；null = 非 AI 路径或服务端未返回。列保留、不写 migration |
+| `parse_log_id` | 该笔来自哪一次 AI 解析（服务端 `ai_parse_logs.id`）。**已废弃**：仍随 AI 解析落库，但客户端不再读取；null = 非 AI 路径或服务端未返回。列保留、不写 migration |
 | `sync_status` / `retry_count` / `last_error` | **已废弃**：新写入恒为 `synced` / `0` / `null`，不再被读取。列保留、不写 migration |
 
 `sync_status` 的唯一残留用途是**区分历史遗留行**：只有 `synced` 才当缓存；老版本写下的
@@ -376,7 +376,8 @@ GitHub 更新检查连接 15s / 读 30s。
 | 切换服务器 | `SwitchingServer` | 清空（**同样 4 张**） | — |
 
 **判定必须在 `saveSession()` 之前**（它会覆盖归属判据），处置也必须在之前
-（否则 user B 的 session 盖在没清掉的 user A 数据上）。换服务器路径直接处置
+（否则 user B 的 session 盖在没清掉的 user A 数据上）。清空前先取消并等待在途通知任务、
+清空评分窗口，再清表；新会话开始后恢复通知处理。换服务器路径直接处置
 （`ServerConfig` 只在未登录态可达，没有有效会话）；登录路径只有四步：
 「先问归属 → 发登录请求 → 处置 → 写 session」。
 
@@ -388,6 +389,8 @@ GitHub 更新检查连接 15s / 读 30s。
 ⚠️ **登出只结束会话，不删本地数据**：`last_known_user_id` 不是 session 的一部分，
 任何会话结束路径都不清除它。换号防护靠 `accountId != incomingUserId` 的**比较**，
 不靠「有没有旧 id」—— 用后者会退化成「登出→登回同号」也清本地数据。
+登出会暂停通知处理（`CaptureSession.pause()` + 空评分窗口），登录成功后恢复；
+未登录冷启动默认暂停，避免无 token 仍持续采集通知原文。
 
 ### 6.3 会话生命周期
 
@@ -412,13 +415,14 @@ GitHub 更新检查连接 15s / 读 30s。
 
 ## 七、数据模型
 
-### 7.1 Room（6 张表）
+### 7.1 Room（7 张表）
 
 `pending_transactions`（已确认记录的本地缓存）· `categories` / `accounts`（服务端派生缓存）·
-`notification_records`（通知审计）· `category_rules`（分类学习）· `app_logs`。
+`notification_records`（通知审计）· `category_rules`（分类学习）· `app_logs` ·
+`capture_samples`（被拦内容本地留存）。
 `notification_records` 有两条热路径复合索引（`package_name+content+received_at`、
 `parsed_amount+status+received_at`）——该表只增不减（§12.1#3），无索引会让 DB 1s 去重与
-跨渠道判重退化成全表扫描。Migration 显式列出（当前 5→9），禁 destructive fallback。
+跨渠道判重退化成全表扫描。Migration 显式列出（当前 5→11），禁 destructive fallback。
 迁移链起点是 v5（仓库首个提交即 v5），写在 `AppDatabase` 注释里。
 导出 schema 已入库（`app/schemas/`）：迁移历史的机器可读记录，也是将来写
 `MigrationTestHelper` 迁移测试的必需输入。
@@ -489,7 +493,7 @@ R8 开启（保留 DTO/Entity/Retrofit 接口）· `allowBackup=false` · 权限
 |---|---|---|
 | 1 | 跨服务器 `userId` 命名空间碰撞 | 归属已收进 `LocalOwnership`（server × account），**server 维度仍为空**，换服务器仍是「整表作废」。当前唯一还在丢数据的根因 |
 | 2 | 撤销时服务端删除失败无自动重试 | 删除失败保留本地缓存行并提示去流水页手动删。撤销失败各分支都返回 `UndoOutcome` 由 receiver 播报（不静默，符合 [PRODUCT.md §五.5](PRODUCT.md)）；残余风险是播报可能被忽略、无自动重试 |
-| 3 | `pending_transactions` / `notification_records` 只增不减 | 两张表都没有清理窗口：原本定义的 `cleanSyncedBefore` / `cleanIgnoredBefore` / `cleanAuthPendingBefore` 零调用，已随死代码一并删除。DB 体积随使用时长单调增长，将来要清必须先补清理时机。`notification_records` 的热路径查询已补复合索引（§7.1），所以增长只影响体积，不再拖慢每条通知的判定 |
+| 3 | `pending_transactions` / `notification_records` 只增不减 | 两张表都没有清理窗口。DB 体积随使用时长单调增长，将来要清必须先补清理时机。`notification_records` 的热路径查询已补复合索引（§7.1），所以增长只影响体积，不拖慢每条通知的判定 |
 
 ### 12.2 认知陷阱
 
