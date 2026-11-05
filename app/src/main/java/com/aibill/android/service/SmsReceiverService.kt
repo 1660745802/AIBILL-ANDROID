@@ -54,6 +54,12 @@ class SmsReceiverService : BroadcastReceiver() {
 
         val fullText = messages.joinToString("") { it.messageBody ?: "" }
         val sender = messages.firstOrNull()?.originatingAddress.orEmpty()
+        val now = System.currentTimeMillis()
+        val receivedAt = messages.firstOrNull()
+            ?.timestampMillis
+            ?.takeIf { it > 0L }
+            ?.coerceAtMost(now)
+            ?: now
 
         captureFunnelStats.recordReceived(SourceChannel.SMS)
         if (fullText.isBlank()) {
@@ -73,7 +79,7 @@ class SmsReceiverService : BroadcastReceiver() {
                 packageName = "sms:$sender",
                 title = sender,
                 fullText = fullText,
-                receivedAt = System.currentTimeMillis(),
+                receivedAt = receivedAt,
             )
         ).invokeOnCompletion { pendingResult.finish() }
     }

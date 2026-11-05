@@ -32,6 +32,7 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
+import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -205,13 +206,13 @@ class PaymentAccessibilityService : AccessibilityService() {
         try {
             handleAccessibilityEvent(ev)
         } catch (e: Throwable) {
-            if (::appLogger.isInitialized) {
-                appLogger.error(
-                    "A11Y",
-                    "事件处理异常（已兜住，服务保活）: ${e.javaClass.simpleName}: ${e.message} " +
-                        "pkg=${ev.packageName}",
-                )
-            }
+            val message =
+                "事件处理异常（已兜住，服务保活）: ${e.javaClass.simpleName}: ${e.message} " +
+                    "pkg=${ev.packageName}"
+            // 初始化失败时 AppLogger 可能还不可用；Timber 必须作为无依赖兜底，
+            // 否则异常保护本身再次抛错，仍会把无障碍进程带崩。
+            Timber.tag("A11Y").e(e, message)
+            if (::appLogger.isInitialized) appLogger.error("A11Y", message)
         } finally {
             serviceInfoGate.exitEvent()
         }
@@ -459,24 +460,34 @@ class PaymentAccessibilityService : AccessibilityService() {
      */
     private fun scheduleRetry(packageName: String, plan: RetryPlan) {
         handler.postDelayed({
-            val retryRoot = rootInActiveWindow
-            val usableRoot = retryRoot?.takeIf {
-                A11yRecognition.isRootForEvent(it.packageName?.toString(), packageName)
-            }
-            val currentTexts = if (usableRoot != null) {
-                mutableListOf<String>().also { collectAllNodeTexts(usableRoot, it) }
-            } else {
-                emptyList()
-            }
-            val now = clock.now()
-            // 无论 root 是否可用都调 onRetryDue：让它清理挂起态（不可用时 anchor 必不匹配 → 放弃）。
-            when (val outcome = gate.onRetryDue(plan.token, currentTexts, now)) {
-                is RetryOutcome.Reread -> {
-                    val root = usableRoot ?: return@postDelayed
-                    val activity = currentActivity[packageName] ?: return@postDelayed
-                    processSnapshot(root, packageName, activity, outcome.token, now)
+            // Handler 回调已经离开 onAccessibilityEvent 的异常边界；这里必须单独兜住。
+            // 否则一次延迟重读异常会落到主线程并终止进程，表现为无障碍服务突然解绑。
+            try {
+                val retryRoot = rootInActiveWindow
+                val usableRoot = retryRoot?.takeIf {
+                    A11yRecognition.isRootForEvent(it.packageName?.toString(), packageName)
                 }
-                is RetryOutcome.Abandoned -> Unit
+                val currentTexts = if (usableRoot != null) {
+                    mutableListOf<String>().also { collectAllNodeTexts(usableRoot, it) }
+                } else {
+                    emptyList()
+                }
+                val now = clock.now()
+                // 无论 root 是否可用都调 onRetryDue：让它清理挂起态（不可用时 anchor 必不匹配 → 放弃）。
+                when (val outcome = gate.onRetryDue(plan.token, currentTexts, now)) {
+                    is RetryOutcome.Reread -> {
+                        val root = usableRoot ?: return@postDelayed
+                        val activity = currentActivity[packageName] ?: return@postDelayed
+                        processSnapshot(root, packageName, activity, outcome.token, now)
+                    }
+                    is RetryOutcome.Abandoned -> Unit
+                }
+            } catch (e: Throwable) {
+                val message =
+                    "延迟重试异常（已兜住，服务保活）: ${e.javaClass.simpleName}: ${e.message} " +
+                        "pkg=$packageName"
+                Timber.tag("A11Y").e(e, message)
+                if (::appLogger.isInitialized) appLogger.error("A11Y", message)
             }
         }, plan.delayMs)
     }
@@ -496,21 +507,23 @@ class PaymentAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         isServiceConnected = false
+        if (::appLogger.isInitialized) appLogger.warn("A11Y", "无障碍服务解绑")
         return super.onUnbind(intent)
     }
 
     override fun onInterrupt() {
-        isServiceConnected = false
-        appLogger.warn("A11Y", "无障碍服务被中断")
+        // onInterrupt 只表示系统要求中断当前反馈（如停止语音），不代表服务已解绑。
+        // 这里不能把连接态置 false，否则心跳会把仍在工作的服务误报为“已断开”。
+        if (::appLogger.isInitialized) appLogger.warn("A11Y", "无障碍反馈被系统中断")
     }
 
     override fun onDestroy() {
         isServiceConnected = false
-        super.onDestroy()
-        appLogger.warn("A11Y", "无障碍服务销毁")
         handler.removeCallbacksAndMessages(null)
         // gate 是进程级 @Singleton：显式清瞬时状态，等价于改前「Service 重建即归零」。
         if (::gate.isInitialized) gate.reset()
+        if (::appLogger.isInitialized) appLogger.warn("A11Y", "无障碍服务销毁")
+        super.onDestroy()
     }
 
     /** 查找匹配的关键词（系统 findByText 是模糊匹配，需二次精确校验）。 */

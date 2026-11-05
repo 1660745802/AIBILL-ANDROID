@@ -3,6 +3,9 @@ package com.aibill.android.service
 import com.aibill.android.domain.notification.CaptureDrop
 import com.aibill.android.domain.notification.CaptureDropHandler
 import android.app.Notification
+import android.os.Build
+import android.os.Bundle
+import android.os.Parcelable
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.aibill.android.domain.notification.Capture
@@ -108,19 +111,19 @@ class NotificationMonitorService : NotificationListenerService() {
 
     /** 平台翻译：`StatusBarNotification` → [Capture]，判定与放行都交给预筛 module。 */
     private fun handleNotification(sbn: StatusBarNotification) {
-        captureFunnelStats.recordReceived(SourceChannel.NLS)
         // 绝不让异常逃出 onNotificationPosted：它跑在 **NLS 的 binder 线程**上，
         // 抛出 = 监听服务崩溃 = 「通知监听不到」，而进程被杀时 onListenerDisconnected
         // 根本不会被调用，只能靠系统重绑（MIUI 上经常不重绑）。
-        // catch Throwable：单条畸形通知不该让整个监听服务挂掉。
+        // receipt 计数也必须在保护边界内，异常契约才能覆盖整条回调。
         try {
+            captureFunnelStats.recordReceived(SourceChannel.NLS)
             translateAndAdmit(sbn)
         } catch (e: Throwable) {
-            appLogger.error(
-                "NLS",
+            val message =
                 "通知处理异常（已兜住，服务保活）: ${e.javaClass.simpleName}: ${e.message} " +
-                    "pkg=${sbn.packageName}",
-            )
+                    "pkg=${sbn.packageName}"
+            timber.log.Timber.tag("NLS").e(e, message)
+            if (::appLogger.isInitialized) appLogger.error("NLS", message)
         }
     }
 
@@ -142,13 +145,19 @@ class NotificationMonitorService : NotificationListenerService() {
         )
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+        val messagingText = latestMessagingText(extras)
+        val textLine = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            ?.lastOrNull()
+            ?.toString()
+            .orEmpty()
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()
         val infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString().orEmpty()
 
-        // 合并文本：bigText 是 text 的展开完整版，优先用 bigText（text 可能是截断摘要）。
-        // 群聊类通知（QQ/微信）的 bigText 往往以 title 开头，此时不再重复拼 title，
-        // 否则 AI 会收到「209嗨 209嗨 太越林上火型: …」这种双份噪音。
-        val body = sanitizeNotificationText(bigText.ifBlank { text })
+        // BigText 优先；MessagingStyle / InboxStyle 是不少银行和短信 App 的唯一完整正文来源。
+        // 每种样式只取最新一条，避免把会话历史里的多笔金额拼成一条账。
+        val body = sanitizeNotificationText(
+            bigText.ifBlank { messagingText }.ifBlank { text }.ifBlank { textLine }
+        )
         val fullText = buildFullText(title, body, subText, infoText)
 
         // 交给入管道：预筛 → 放行则入账（C02 收口；不再各自 launch/evaluate/process）
@@ -158,9 +167,37 @@ class NotificationMonitorService : NotificationListenerService() {
                 packageName = packageName,
                 title = title,
                 fullText = fullText,
-                receivedAt = System.currentTimeMillis(),
+                receivedAt = platformEventTime(sbn.postTime),
             )
         )
+    }
+
+    /** MessagingStyle 只取最新消息，避免把会话历史中的多笔金额合成一条输入。 */
+    private fun latestMessagingText(extras: Bundle): String {
+        val bundles = messagingBundles(extras) ?: return ""
+        return runCatching {
+            Notification.MessagingStyle.Message
+                .getMessagesFromBundleArray(bundles)
+                .lastOrNull()
+                ?.text
+                ?.toString()
+                .orEmpty()
+        }.getOrDefault("")
+    }
+
+    /** API 33 起使用类型安全重载；旧系统保留兼容读取。 */
+    @Suppress("DEPRECATION")
+    private fun messagingBundles(extras: Bundle): Array<out Parcelable>? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            extras.getParcelableArray(Notification.EXTRA_MESSAGES, Parcelable::class.java)
+        } else {
+            extras.getParcelableArray(Notification.EXTRA_MESSAGES)
+        }
+
+    /** 使用平台投递时间；异常或未来时间回退到当前时间，避免破坏去重窗口。 */
+    private fun platformEventTime(postTime: Long): Long {
+        val now = System.currentTimeMillis()
+        return postTime.takeIf { it > 0L }?.coerceAtMost(now) ?: now
     }
 
     /**

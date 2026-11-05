@@ -1,5 +1,9 @@
 package com.aibill.android.presentation.ui.settings
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -36,8 +40,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.aibill.android.presentation.components.AppTopBar
@@ -85,6 +90,22 @@ fun PermissionGuideScreen(
     var isPostNotificationEnabled by remember {
         mutableStateOf(BatteryOptimizationHelper.isPostNotificationEnabled(context))
     }
+    val supportsSms = remember {
+        context.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
+    }
+    var isSmsPermissionEnabled by remember {
+        mutableStateOf(
+            !supportsSms || ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECEIVE_SMS,
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val smsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        isSmsPermissionEnabled = granted
+    }
 
     // 返回时自动刷新权限状态（用户在系统设置里改完会回到这里）
     DisposableEffect(lifecycleOwner) {
@@ -96,6 +117,10 @@ fun PermissionGuideScreen(
                     BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
                 isPostNotificationEnabled =
                     BatteryOptimizationHelper.isPostNotificationEnabled(context)
+                isSmsPermissionEnabled = !supportsSms || ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.RECEIVE_SMS,
+                ) == PackageManager.PERMISSION_GRANTED
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -180,6 +205,22 @@ fun PermissionGuideScreen(
                             BatteryOptimizationHelper.requestIgnoreBatteryOptimization(context)
                         },
                     )
+                }
+
+                // 短信是补充监听渠道，不影响上面的核心权限进度；有电话能力的设备才展示。
+                if (supportsSms) {
+                    SectionHeader(title = "补充监听", subtitle = "可选，识别银行交易短信")
+                    GroupedList {
+                        PermissionItem(
+                            title = "银行短信权限",
+                            description = "允许读取新收到的交易短信，用于补充通知和支付页未覆盖的账单",
+                            isGranted = isSmsPermissionEnabled,
+                            actionText = "去授权",
+                            onAction = {
+                                smsPermissionLauncher.launch(Manifest.permission.RECEIVE_SMS)
+                            },
+                        )
+                    }
                 }
 
                 // ===== 无法自动检测的两项 =====
